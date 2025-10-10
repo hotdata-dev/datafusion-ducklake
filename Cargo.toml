@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+datafusion = "50.1.0"
+datafusion-table-providers = { version = "0.8.1", features = ["duckdb"] }
+arrow = "56.2.0"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
