@@ -36,6 +36,8 @@ pub mod catalog;
 pub mod error;
 pub mod schema;
 pub mod table;
+mod metadata_provider;
+mod metadata_provider_duckdb;
 
 // Re-export main types for convenience
 pub use catalog::DuckLakeCatalog;
