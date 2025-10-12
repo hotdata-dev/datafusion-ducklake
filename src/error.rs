@@ -2,9 +2,6 @@
 
 use std::fmt;
 
-/// Result type for DuckLake operations
-pub type Result<T> = std::result::Result<T, DuckLakeError>;
-
 /// Error type for DuckLake operations
 #[derive(Debug)]
 pub enum DuckLakeError {
@@ -13,6 +10,9 @@ pub enum DuckLakeError {
 
     /// Error from Arrow
     Arrow(arrow::error::ArrowError),
+
+    /// DuckDB error
+    DuckDb(duckdb::Error),
 
     /// Catalog not found
     CatalogNotFound(String),
@@ -41,6 +41,7 @@ impl fmt::Display for DuckLakeError {
         match self {
             DuckLakeError::DataFusion(e) => write!(f, "DataFusion error: {}", e),
             DuckLakeError::Arrow(e) => write!(f, "Arrow error: {}", e),
+            DuckLakeError::DuckDb(e) => write!(f, "DuckDB error: {}", e),
             DuckLakeError::CatalogNotFound(name) => write!(f, "Catalog not found: {}", name),
             DuckLakeError::SchemaNotFound(name) => write!(f, "Schema not found: {}", name),
             DuckLakeError::TableNotFound(name) => write!(f, "Table not found: {}", name),
@@ -57,6 +58,7 @@ impl std::error::Error for DuckLakeError {
         match self {
             DuckLakeError::DataFusion(e) => Some(e),
             DuckLakeError::Arrow(e) => Some(e),
+            DuckLakeError::DuckDb(e) => Some(e),
             DuckLakeError::Io(e) => Some(e),
             _ => None,
         }
@@ -78,5 +80,11 @@ impl From<arrow::error::ArrowError> for DuckLakeError {
 impl From<std::io::Error> for DuckLakeError {
     fn from(err: std::io::Error) -> Self {
         DuckLakeError::Io(err)
+    }
+}
+
+impl From<duckdb::Error> for DuckLakeError {
+    fn from(err: duckdb::Error) -> Self {
+        DuckLakeError::DuckDb(err)
     }
 }

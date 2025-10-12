@@ -36,11 +36,14 @@ pub mod catalog;
 pub mod error;
 pub mod schema;
 pub mod table;
-mod metadata_provider;
+pub(crate) mod metadata_provider;
 mod metadata_provider_duckdb;
+
+// Result type for DuckLake operations
+pub type Result<T> = std::result::Result<T, DuckLakeError>;
 
 // Re-export main types for convenience
 pub use catalog::DuckLakeCatalog;
-pub use error::{DuckLakeError, Result};
+pub use error::DuckLakeError;
 pub use schema::DuckLakeSchema;
 pub use table::DuckLakeTable;

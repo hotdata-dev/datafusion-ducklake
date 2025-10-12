@@ -10,7 +10,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 
-use crate::error::Result;
+use crate::Result;
 
 /// DuckLake table provider
 ///

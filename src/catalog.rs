@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 
-use crate::error::Result;
+use crate::Result;
 
 /// DuckLake catalog provider
 ///
