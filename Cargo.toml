@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 datafusion = "50.1.0"
 arrow = "56.2.0"
+parquet = "56.2.0"
+object_store = "0.12.4"
+url = "2.5"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 duckdb = { version = "1.4.1", features = ["bundled"] }

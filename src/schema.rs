@@ -16,7 +16,9 @@ use crate::table::DuckLakeTable;
 /// Represents a schema within a DuckLake catalog and provides access to tables.
 #[derive(Debug)]
 pub struct DuckLakeSchema {
+    #[allow(dead_code)]
     schema_id: i64,
+    #[allow(dead_code)]
     schema_name: String,
     provider: Arc<dyn MetadataProvider>,
     snapshot_id: i64,

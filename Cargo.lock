@@ -991,7 +991,10 @@ dependencies = [
  "async-trait",
  "datafusion",
  "duckdb",
+ "object_store",
+ "parquet",
  "tokio",
+ "url",
 ]
 
 [[package]]

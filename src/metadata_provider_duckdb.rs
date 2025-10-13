@@ -1,4 +1,6 @@
-use duckdb::Connection;
+use duckdb::{Config, Connection};
+use duckdb::AccessMode::ReadOnly;
+use crate::DuckLakeError;
 use crate::metadata_provider::{
     DuckLakeTableColumn, DuckLakeTableFile, DuckLakeFileData, MetadataProvider,
     SchemaMetadata, TableMetadata,
@@ -20,7 +22,7 @@ impl DuckdbMetadataProvider {
     /// Create a new DuckDB metadata provider
     pub fn new(catalog_path: impl Into<String>) -> crate::Result<Self> {
         let catalog_path = catalog_path.into();
-        let conn = Connection::open(&catalog_path)?;
+        let conn = DuckdbMetadataProvider::open_connection_with_path(&catalog_path)?;
 
         // Query latest snapshot
         let snapshot_id: i64 = conn.query_row(SQL_GET_LATEST_SNAPSHOT, [], |row| row.get(0))?;
@@ -31,9 +33,24 @@ impl DuckdbMetadataProvider {
         })
     }
 
-    /// Open a connection to the catalog database
     fn open_connection(&self) -> crate::Result<Connection> {
-        Ok(Connection::open(&self.catalog_path)?)
+        DuckdbMetadataProvider::open_connection_with_path(&self.catalog_path)
+    }
+
+    /// Open a connection to the catalog database
+    fn open_connection_with_path(catalog_path: &str) -> crate::Result<Connection> {
+        let config = Config::default().access_mode(ReadOnly)?;
+        match Connection::open_with_flags(catalog_path, config) {
+            Ok(con)=> Ok(con),
+            Err(msg) if msg.to_string().starts_with("IO Error: Could not set lock on file") => {
+                println!("Duckdb file likely already open in write mode. Cannot connect");
+                Err(DuckLakeError::DuckDb(msg))
+            }
+            Err(msg) => { 
+                println!("Failed to open duckdb");
+                Err(DuckLakeError::DuckDb(msg))
+            }
+        }
     }
 }
 
