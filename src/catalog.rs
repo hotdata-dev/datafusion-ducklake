@@ -71,12 +71,21 @@ impl CatalogProvider for DuckLakeCatalog {
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
         self.schemas.get(name).map(|meta| {
+            // Resolve schema path hierarchically
+            let schema_path = if meta.path_is_relative {
+                // Schema path is relative to global data_path
+                format!("{}{}", self.data_path, meta.path)
+            } else {
+                // Schema path is absolute
+                meta.path.clone()
+            };
+
             Arc::new(DuckLakeSchema::new(
                 meta.schema_id,
                 meta.schema_name.clone(),
                 Arc::clone(&self.provider),
                 self.snapshot_id,
-                self.data_path.clone(),
+                schema_path,
             )) as Arc<dyn SchemaProvider>
         })
     }

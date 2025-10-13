@@ -6,11 +6,11 @@ pub const SQL_GET_LATEST_SNAPSHOT: &str =
     "SELECT COALESCE(MAX(snapshot_id), 0) FROM ducklake_snapshot";
 
 pub const SQL_LIST_SCHEMAS: &str =
-    "SELECT schema_id, schema_name FROM ducklake_schema
+    "SELECT schema_id, schema_name, path, path_is_relative FROM ducklake_schema
      WHERE ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)";
 
 pub const SQL_LIST_TABLES: &str =
-    "SELECT table_id, table_name FROM ducklake_table
+    "SELECT table_id, table_name, path, path_is_relative FROM ducklake_table
      WHERE schema_id = ?
        AND ? >= begin_snapshot
        AND (? < end_snapshot OR end_snapshot IS NULL)";
@@ -34,6 +34,8 @@ pub const SQL_GET_DATA_PATH: &str =
 pub struct SchemaMetadata {
     pub schema_id: i64,
     pub schema_name: String,
+    pub path: String,
+    pub path_is_relative: bool,
 }
 
 /// Simple table metadata returned by MetadataProvider
@@ -41,6 +43,8 @@ pub struct SchemaMetadata {
 pub struct TableMetadata {
     pub table_id: i64,
     pub table_name: String,
+    pub path: String,
+    pub path_is_relative: bool,
 }
 
 pub struct DuckLakeTableColumn {

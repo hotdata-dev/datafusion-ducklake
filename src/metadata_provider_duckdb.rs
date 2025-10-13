@@ -72,7 +72,9 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let schemas = stmt.query_map([self.snapshot_id, self.snapshot_id], |row| {
             let schema_id: i64 = row.get(0)?;
             let schema_name: String = row.get(1)?;
-            Ok(SchemaMetadata { schema_id, schema_name })
+            let path: String = row.get(2)?;
+            let path_is_relative: bool = row.get(3)?;
+            Ok(SchemaMetadata { schema_id, schema_name, path, path_is_relative })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -86,7 +88,9 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let tables = stmt.query_map([schema_id, self.snapshot_id, self.snapshot_id], |row| {
             let table_id: i64 = row.get(0)?;
             let table_name: String = row.get(1)?;
-            Ok(TableMetadata { table_id, table_name })
+            let path: String = row.get(2)?;
+            let path_is_relative: bool = row.get(3)?;
+            Ok(TableMetadata { table_id, table_name, path, path_is_relative })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 

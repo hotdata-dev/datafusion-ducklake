@@ -69,12 +69,21 @@ impl SchemaProvider for DuckLakeSchema {
     async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
         match self.tables.get(name) {
             Some(meta) => {
+                // Resolve table path hierarchically
+                let table_path = if meta.path_is_relative {
+                    // Table path is relative to schema path
+                    format!("{}{}", self.data_path, meta.path)
+                } else {
+                    // Table path is absolute
+                    meta.path.clone()
+                };
+
                 let table = DuckLakeTable::new(
                     meta.table_id,
                     meta.table_name.clone(),
                     Arc::clone(&self.provider),
                     self.snapshot_id,
-                    self.data_path.clone(),
+                    table_path,
                 )
                 .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
