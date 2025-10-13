@@ -1,4 +1,4 @@
-use crate::{DuckLakeSchema, DuckLakeTable, Result};
+use crate::Result;
 
 // SQL queries for DuckLake catalog tables
 // These queries are database-agnostic and work with DuckDB, SQLite, PostgreSQL, MySQL
@@ -25,6 +25,20 @@ pub const SQL_GET_DATA_FILES: &str =
     "SELECT path, file_size_bytes
      FROM ducklake_data_file
      WHERE table_id = ?";
+
+/// Simple schema metadata returned by MetadataProvider
+#[derive(Debug, Clone)]
+pub struct SchemaMetadata {
+    pub schema_id: i64,
+    pub schema_name: String,
+}
+
+/// Simple table metadata returned by MetadataProvider
+#[derive(Debug, Clone)]
+pub struct TableMetadata {
+    pub table_id: i64,
+    pub table_name: String,
+}
 
 pub struct DuckLakeTableColumn {
     pub column_id: i64,
@@ -80,10 +94,10 @@ impl DuckLakeTableFile {
     }
 }
 
-pub trait MetadataProvider {
+pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     fn get_current_snapshot(&self) -> Result<i64>;
-    fn list_schemas(&self) -> Result<Vec<DuckLakeSchema>>;
-    fn list_tables(&self, schema_id: i64) -> Result<Vec<DuckLakeTable>>;
+    fn list_schemas(&self) -> Result<Vec<SchemaMetadata>>;
+    fn list_tables(&self, schema_id: i64) -> Result<Vec<TableMetadata>>;
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;
     fn get_table_files_for_select(&self, table_id: i64) -> Result<Vec<DuckLakeTableFile>>;
 //     todo: support select with file pruning

@@ -10,6 +10,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 
+use crate::metadata_provider::MetadataProvider;
 use crate::Result;
 
 /// DuckLake table provider
@@ -19,7 +20,8 @@ use crate::Result;
 pub struct DuckLakeTable {
     table_id: i64,
     table_name: String,
-    catalog_path: String,
+    #[allow(dead_code)]
+    provider: Arc<dyn MetadataProvider>,
     snapshot_id: i64,
     schema: SchemaRef,
     data_files: Vec<String>,
@@ -30,20 +32,29 @@ impl DuckLakeTable {
     pub fn new(
         table_id: i64,
         table_name: impl Into<String>,
-        catalog_path: impl Into<String>,
+        provider: Arc<dyn MetadataProvider>,
         snapshot_id: i64,
     ) -> Result<Self> {
-        // TODO: Query ducklake_column to get column definitions
-        // TODO: Build Arrow schema from column definitions
-        // TODO: Query ducklake_data_file to get Parquet file paths
+        // Get table structure (columns)
+        let _columns = provider.get_table_structure(table_id)?;
+
+        // TODO: Build Arrow schema from column definitions (Phase 3)
+        let schema = Arc::new(arrow::datatypes::Schema::empty());
+
+        // Get data files
+        let table_files = provider.get_table_files_for_select(table_id)?;
+        let data_files = table_files
+            .into_iter()
+            .map(|tf| tf.file.path)
+            .collect();
 
         Ok(Self {
             table_id,
             table_name: table_name.into(),
-            catalog_path: catalog_path.into(),
+            provider,
             snapshot_id,
-            schema: Arc::new(arrow::datatypes::Schema::empty()), // TODO: Build actual schema
-            data_files: vec![], // TODO: Get actual data files
+            schema,
+            data_files,
         })
     }
 }

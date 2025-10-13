@@ -16,13 +16,16 @@
 //! ```no_run
 //! # async fn example() -> datafusion_ducklake::error::Result<()> {
 //! use datafusion::prelude::*;
-//! use datafusion_ducklake::DuckLakeCatalog;
+//! use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
 //!
 //! // Create a DataFusion session context
 //! let ctx = SessionContext::new();
 //!
-//! // Register a DuckLake catalog
-//! let catalog = DuckLakeCatalog::new("path/to/catalog.ducklake")?;
+//! // Create a DuckDB metadata provider
+//! let provider = DuckdbMetadataProvider::new("path/to/catalog.ducklake")?;
+//!
+//! // Register a DuckLake catalog with the provider
+//! let catalog = DuckLakeCatalog::new(provider)?;
 //! ctx.register_catalog("ducklake", std::sync::Arc::new(catalog));
 //!
 //! // Query tables from the catalog
@@ -36,8 +39,8 @@ pub mod catalog;
 pub mod error;
 pub mod schema;
 pub mod table;
-pub(crate) mod metadata_provider;
-mod metadata_provider_duckdb;
+pub mod metadata_provider;
+pub mod metadata_provider_duckdb;
 
 // Result type for DuckLake operations
 pub type Result<T> = std::result::Result<T, DuckLakeError>;
@@ -47,3 +50,5 @@ pub use catalog::DuckLakeCatalog;
 pub use error::DuckLakeError;
 pub use schema::DuckLakeSchema;
 pub use table::DuckLakeTable;
+pub use metadata_provider::MetadataProvider;
+pub use metadata_provider_duckdb::DuckdbMetadataProvider;

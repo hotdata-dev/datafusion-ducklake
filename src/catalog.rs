@@ -1,10 +1,13 @@
 //! DuckLake catalog provider implementation
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 
+use crate::metadata_provider::{MetadataProvider, SchemaMetadata};
+use crate::schema::DuckLakeSchema;
 use crate::Result;
 
 /// DuckLake catalog provider
@@ -12,23 +15,34 @@ use crate::Result;
 /// Connects to a DuckLake catalog database and provides access to schemas and tables.
 #[derive(Debug)]
 pub struct DuckLakeCatalog {
-    /// Connection to the catalog database
-    catalog_path: String,
+    /// Metadata provider for querying catalog
+    provider: Arc<dyn MetadataProvider>,
     /// Latest snapshot ID
     snapshot_id: i64,
+    /// Cached schema metadata (schema_name -> SchemaMetadata)
+    schemas: HashMap<String, SchemaMetadata>,
 }
 
 impl DuckLakeCatalog {
     /// Create a new DuckLake catalog
-    pub fn new(catalog_path: impl Into<String>) -> Result<Self> {
-        let catalog_path = catalog_path.into();
+    pub fn new(provider: impl MetadataProvider + 'static) -> Result<Self> {
+        // Wrap provider in Arc for sharing
+        let provider = Arc::new(provider) as Arc<dyn MetadataProvider>;
 
-        // TODO: Connect to catalog database
-        // TODO: Query ducklake_snapshot to get latest snapshot ID
+        // Get current snapshot
+        let snapshot_id = provider.get_current_snapshot()?;
+
+        // List and cache schemas
+        let schema_list = provider.list_schemas()?;
+        let schemas = schema_list
+            .into_iter()
+            .map(|meta| (meta.schema_name.clone(), meta))
+            .collect();
 
         Ok(Self {
-            catalog_path,
-            snapshot_id: 0, // TODO: Get actual latest snapshot
+            provider,
+            snapshot_id,
+            schemas,
         })
     }
 
@@ -44,13 +58,17 @@ impl CatalogProvider for DuckLakeCatalog {
     }
 
     fn schema_names(&self) -> Vec<String> {
-        // TODO: Query ducklake_schema table to get schema names for current snapshot
-        vec![]
+        self.schemas.keys().cloned().collect()
     }
 
-    fn schema(&self, _name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        // TODO: Query ducklake_schema to get schema_id for this name
-        // TODO: Create and return DuckLakeSchema
-        None
+    fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
+        self.schemas.get(name).map(|meta| {
+            Arc::new(DuckLakeSchema::new(
+                meta.schema_id,
+                meta.schema_name.clone(),
+                Arc::clone(&self.provider),
+                self.snapshot_id,
+            )) as Arc<dyn SchemaProvider>
+        })
     }
 }

@@ -1,11 +1,15 @@
 //! DuckLake schema provider implementation
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::error::Result as DataFusionResult;
+
+use crate::metadata_provider::{MetadataProvider, TableMetadata};
+use crate::table::DuckLakeTable;
 
 /// DuckLake schema provider
 ///
@@ -14,8 +18,10 @@ use datafusion::error::Result as DataFusionResult;
 pub struct DuckLakeSchema {
     schema_id: i64,
     schema_name: String,
-    catalog_path: String,
+    provider: Arc<dyn MetadataProvider>,
     snapshot_id: i64,
+    /// Cached table metadata (table_name -> TableMetadata)
+    tables: HashMap<String, TableMetadata>,
 }
 
 impl DuckLakeSchema {
@@ -23,14 +29,23 @@ impl DuckLakeSchema {
     pub fn new(
         schema_id: i64,
         schema_name: impl Into<String>,
-        catalog_path: impl Into<String>,
+        provider: Arc<dyn MetadataProvider>,
         snapshot_id: i64,
     ) -> Self {
+        // Query and cache tables for this schema
+        let tables = provider
+            .list_tables(schema_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|meta| (meta.table_name.clone(), meta))
+            .collect();
+
         Self {
             schema_id,
             schema_name: schema_name.into(),
-            catalog_path: catalog_path.into(),
+            provider,
             snapshot_id,
+            tables,
         }
     }
 }
@@ -42,17 +57,27 @@ impl SchemaProvider for DuckLakeSchema {
     }
 
     fn table_names(&self) -> Vec<String> {
-        // TODO: Query ducklake_table to get table names for this schema
-        vec![]
+        self.tables.keys().cloned().collect()
     }
 
-    async fn table(&self, _name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
-        // TODO: Query ducklake_table to get table_id for this name
-        // TODO: Create and return DuckLakeTable
-        Ok(None)
+    async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
+        match self.tables.get(name) {
+            Some(meta) => {
+                let table = DuckLakeTable::new(
+                    meta.table_id,
+                    meta.table_name.clone(),
+                    Arc::clone(&self.provider),
+                    self.snapshot_id,
+                )
+                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+
+                Ok(Some(Arc::new(table) as Arc<dyn TableProvider>))
+            }
+            None => Ok(None),
+        }
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        self.table_names().contains(&name.to_string())
+        self.tables.contains_key(name)
     }
 }
