@@ -41,6 +41,7 @@ pub mod schema;
 pub mod table;
 pub mod metadata_provider;
 pub mod metadata_provider_duckdb;
+pub mod types;
 
 // Result type for DuckLake operations
 pub type Result<T> = std::result::Result<T, DuckLakeError>;

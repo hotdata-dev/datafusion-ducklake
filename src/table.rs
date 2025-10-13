@@ -11,6 +11,7 @@ use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 
 use crate::metadata_provider::MetadataProvider;
+use crate::types::build_arrow_schema;
 use crate::Result;
 
 /// DuckLake table provider
@@ -36,10 +37,10 @@ impl DuckLakeTable {
         snapshot_id: i64,
     ) -> Result<Self> {
         // Get table structure (columns)
-        let _columns = provider.get_table_structure(table_id)?;
+        let columns = provider.get_table_structure(table_id)?;
 
-        // TODO: Build Arrow schema from column definitions (Phase 3)
-        let schema = Arc::new(arrow::datatypes::Schema::empty());
+        // Build Arrow schema from column definitions
+        let schema = Arc::new(build_arrow_schema(&columns)?);
 
         // Get data files
         let table_files = provider.get_table_files_for_select(table_id)?;
