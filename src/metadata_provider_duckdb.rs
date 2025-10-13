@@ -5,7 +5,7 @@ use crate::metadata_provider::{
     DuckLakeTableColumn, DuckLakeTableFile, DuckLakeFileData, MetadataProvider,
     SchemaMetadata, TableMetadata,
     SQL_GET_LATEST_SNAPSHOT, SQL_LIST_SCHEMAS, SQL_LIST_TABLES,
-    SQL_GET_TABLE_COLUMNS, SQL_GET_DATA_FILES,
+    SQL_GET_TABLE_COLUMNS, SQL_GET_DATA_FILES, SQL_GET_DATA_PATH,
 };
 
 /// DuckDB metadata provider
@@ -59,6 +59,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(self.snapshot_id)
     }
 
+    fn get_data_path(&self) -> crate::Result<String> {
+        let conn = self.open_connection()?;
+        let data_path: String = conn.query_row(SQL_GET_DATA_PATH, [], |row| row.get(0))?;
+        Ok(data_path)
+    }
+
     fn list_schemas(&self) -> crate::Result<Vec<SchemaMetadata>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_LIST_SCHEMAS)?;
@@ -108,8 +114,9 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
         let files = stmt.query_map([table_id], |row| {
             let path: String = row.get(0)?;
-            let file_size_bytes: i64 = row.get(1)?;
-            Ok(DuckLakeTableFile::new(DuckLakeFileData::new(path, file_size_bytes)))
+            let path_is_relative: bool = row.get(1)?;
+            let file_size_bytes: i64 = row.get(2)?;
+            Ok(DuckLakeTableFile::new(DuckLakeFileData::new(path, path_is_relative, file_size_bytes)))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 

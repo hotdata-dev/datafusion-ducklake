@@ -32,6 +32,9 @@ pub enum DuckLakeError {
     /// Unsupported DuckLake type
     UnsupportedType(String),
 
+    /// Unsupported feature
+    Unsupported(String),
+
     /// IO error
     Io(std::io::Error),
 
@@ -51,6 +54,7 @@ impl fmt::Display for DuckLakeError {
             DuckLakeError::InvalidSnapshot(msg) => write!(f, "Invalid snapshot: {}", msg),
             DuckLakeError::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
             DuckLakeError::UnsupportedType(type_name) => write!(f, "Unsupported DuckLake type: {}", type_name),
+            DuckLakeError::Unsupported(msg) => write!(f, "Unsupported feature: {}", msg),
             DuckLakeError::Io(e) => write!(f, "IO error: {}", e),
             DuckLakeError::Internal(msg) => write!(f, "Internal error: {}", msg),
         }

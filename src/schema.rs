@@ -22,6 +22,8 @@ pub struct DuckLakeSchema {
     schema_name: String,
     provider: Arc<dyn MetadataProvider>,
     snapshot_id: i64,
+    /// Base data path for resolving relative file paths
+    data_path: String,
     /// Cached table metadata (table_name -> TableMetadata)
     tables: HashMap<String, TableMetadata>,
 }
@@ -33,6 +35,7 @@ impl DuckLakeSchema {
         schema_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
         snapshot_id: i64,
+        data_path: String,
     ) -> Self {
         // Query and cache tables for this schema
         let tables = provider
@@ -47,6 +50,7 @@ impl DuckLakeSchema {
             schema_name: schema_name.into(),
             provider,
             snapshot_id,
+            data_path,
             tables,
         }
     }
@@ -70,6 +74,7 @@ impl SchemaProvider for DuckLakeSchema {
                     meta.table_name.clone(),
                     Arc::clone(&self.provider),
                     self.snapshot_id,
+                    self.data_path.clone(),
                 )
                 .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 

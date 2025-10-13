@@ -22,9 +22,12 @@ pub const SQL_GET_TABLE_COLUMNS: &str =
      ORDER BY column_order";
 
 pub const SQL_GET_DATA_FILES: &str =
-    "SELECT path, file_size_bytes
+    "SELECT path, path_is_relative, file_size_bytes
      FROM ducklake_data_file
      WHERE table_id = ?";
+
+pub const SQL_GET_DATA_PATH: &str =
+    "SELECT value FROM ducklake_metadata WHERE key = 'data_path' AND scope IS NULL";
 
 /// Simple schema metadata returned by MetadataProvider
 #[derive(Debug, Clone)]
@@ -58,15 +61,17 @@ impl DuckLakeTableColumn {
 
 pub struct DuckLakeFileData {
     pub path: String,
+    pub path_is_relative: bool,
     pub encryption_key: String,
     pub file_size_bytes: i64,
     pub footer_size: Option<i64>,
 }
 
 impl DuckLakeFileData {
-    pub fn new(path: String, file_size_bytes: i64) -> Self {
+    pub fn new(path: String, path_is_relative: bool, file_size_bytes: i64) -> Self {
         Self {
             path,
+            path_is_relative,
             encryption_key: String::new(),
             file_size_bytes,
             footer_size: None,
@@ -96,6 +101,7 @@ impl DuckLakeTableFile {
 
 pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     fn get_current_snapshot(&self) -> Result<i64>;
+    fn get_data_path(&self) -> Result<String>;
     fn list_schemas(&self) -> Result<Vec<SchemaMetadata>>;
     fn list_tables(&self, schema_id: i64) -> Result<Vec<TableMetadata>>;
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;

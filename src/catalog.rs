@@ -19,6 +19,8 @@ pub struct DuckLakeCatalog {
     provider: Arc<dyn MetadataProvider>,
     /// Latest snapshot ID
     snapshot_id: i64,
+    /// Base data path for resolving relative file paths
+    data_path: String,
     /// Cached schema metadata (schema_name -> SchemaMetadata)
     schemas: HashMap<String, SchemaMetadata>,
 }
@@ -32,6 +34,9 @@ impl DuckLakeCatalog {
         // Get current snapshot
         let snapshot_id = provider.get_current_snapshot()?;
 
+        // Get data path for file resolution
+        let data_path = provider.get_data_path()?;
+
         // List and cache schemas
         let schema_list = provider.list_schemas()?;
         println!("schemas: {:?}", &schema_list);
@@ -39,11 +44,12 @@ impl DuckLakeCatalog {
             .into_iter()
             .map(|meta| (meta.schema_name.clone(), meta))
             .collect();
-        
+
 
         Ok(Self {
             provider,
             snapshot_id,
+            data_path,
             schemas,
         })
     }
@@ -70,6 +76,7 @@ impl CatalogProvider for DuckLakeCatalog {
                 meta.schema_name.clone(),
                 Arc::clone(&self.provider),
                 self.snapshot_id,
+                self.data_path.clone(),
             )) as Arc<dyn SchemaProvider>
         })
     }
