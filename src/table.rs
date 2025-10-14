@@ -31,7 +31,9 @@ pub struct DuckLakeTable {
     provider: Arc<dyn MetadataProvider>,
     #[allow(dead_code)]
     snapshot_id: i64,
-    /// Base data path for resolving relative file paths
+    /// the base path to the data, e.g. s3://ducklake-data
+    base_data_url: Arc<ObjectStoreUrl>,
+    /// relative data path from catalog/schema to this table for resolving relative file paths
     #[allow(dead_code)]
     data_path: String,
     schema: SchemaRef,
@@ -46,6 +48,7 @@ impl DuckLakeTable {
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
         snapshot_id: i64,
+        base_data_url: Arc<ObjectStoreUrl>,
         data_path: String,
     ) -> Result<Self> {
         // Get table structure (columns)
@@ -77,6 +80,7 @@ impl DuckLakeTable {
             table_name: table_name.into(),
             provider,
             snapshot_id,
+            base_data_url,
             data_path,
             schema,
             data_files,
@@ -89,55 +93,12 @@ impl DuckLakeTable {
     /// 1. Normalizes S3 paths (s3:/ -> s3://)
     /// 2. Extracts the bucket to construct ObjectStoreUrl
     /// 3. Strips the bucket prefix to get relative paths for DataFusion
-    fn resolve_file_paths(&self) -> DataFusionResult<(ObjectStoreUrl, Vec<String>)> {
+    fn resolve_file_paths(&self) -> DataFusionResult<(Vec<String>)> {
         if self.data_files.is_empty() {
             return Err(datafusion::error::DataFusionError::Internal(
                 "No data files found for table".to_string(),
             ));
         }
-
-        // Take the first file to determine the storage scheme and bucket
-        let first_file = &self.data_files[0];
-
-        // Normalize the path: convert "s3:/" to "s3://"
-        let normalized = self.normalize_path(first_file);
-
-        // Determine scheme and extract object store URL
-        let object_store_url = if normalized.starts_with("s3://") {
-            // Extract bucket from s3://bucket/path
-            let url = url::Url::parse(&normalized).map_err(|e| {
-                datafusion::error::DataFusionError::Internal(format!(
-                    "Failed to parse S3 URL '{}': {}",
-                    normalized, e
-                ))
-            })?;
-
-            let bucket = url.host_str().ok_or_else(|| {
-                datafusion::error::DataFusionError::Internal(format!(
-                    "S3 URL missing bucket: {}",
-                    normalized
-                ))
-            })?;
-
-            ObjectStoreUrl::parse(format!("s3://{}/", bucket)).map_err(|e| {
-                datafusion::error::DataFusionError::Internal(format!(
-                    "Failed to create ObjectStoreUrl: {}",
-                    e
-                ))
-            })?
-        } else if normalized.starts_with("file://") || normalized.starts_with('/') {
-            ObjectStoreUrl::parse("file:///").map_err(|e| {
-                datafusion::error::DataFusionError::Internal(format!(
-                    "Failed to create file ObjectStoreUrl: {}",
-                    e
-                ))
-            })?
-        } else {
-            return Err(datafusion::error::DataFusionError::Internal(format!(
-                "Unsupported storage scheme in path: {}",
-                first_file
-            )));
-        };
 
         // Extract relative paths for all files
         let relative_paths: Result<Vec<String>> = self
@@ -152,7 +113,7 @@ impl DuckLakeTable {
         let relative_paths = relative_paths
             .map_err(|e| datafusion::error::DataFusionError::Internal(e.to_string()))?;
 
-        Ok((object_store_url, relative_paths))
+        Ok((relative_paths))
     }
 
     /// Normalize path by converting "s3:/" to "s3://"
@@ -222,10 +183,10 @@ impl TableProvider for DuckLakeTable {
         // 1. Register the object store with "s3://bucket/"
         // 2. Provide "path/file.parquet" as the relative path
 
-        let (object_store_url, relative_paths) = self.resolve_file_paths()?;
+        let relative_paths = self.resolve_file_paths()?;
 
         let file_scan_config = FileScanConfigBuilder::new(
-            object_store_url,
+            self.base_data_url.as_ref().clone(),
             self.schema.clone(),
             Arc::new(ParquetSource::default()),
         )

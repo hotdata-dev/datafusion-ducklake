@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::catalog::{SchemaProvider, TableProvider};
+use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::error::Result as DataFusionResult;
 
 use crate::metadata_provider::{MetadataProvider, TableMetadata};
@@ -20,6 +21,8 @@ pub struct DuckLakeSchema {
     schema_id: i64,
     #[allow(dead_code)]
     schema_name: String,
+    /// the base path to the data, e.g. s3://ducklake-data
+    base_data_url: Arc<ObjectStoreUrl>,
     provider: Arc<dyn MetadataProvider>,
     snapshot_id: i64,
     /// Base data path for resolving relative file paths
@@ -35,6 +38,7 @@ impl DuckLakeSchema {
         schema_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
         snapshot_id: i64,
+        base_data_url: Arc<ObjectStoreUrl>,
         data_path: String,
     ) -> Self {
         // Query and cache tables for this schema
@@ -50,6 +54,7 @@ impl DuckLakeSchema {
             schema_name: schema_name.into(),
             provider,
             snapshot_id,
+            base_data_url,
             data_path,
             tables,
         }
@@ -83,6 +88,7 @@ impl SchemaProvider for DuckLakeSchema {
                     meta.table_name.clone(),
                     Arc::clone(&self.provider),
                     self.snapshot_id,
+                    self.base_data_url.clone(),
                     table_path,
                 )
                 .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
