@@ -3,7 +3,6 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use crate::data_store_provider::DataStoreProvider;
 use crate::metadata_provider::MetadataProvider;
 use crate::types::build_arrow_schema;
 use crate::Result;
@@ -31,8 +30,6 @@ pub struct DuckLakeTable {
     #[allow(dead_code)]
     provider: Arc<dyn MetadataProvider>,
     #[allow(dead_code)]
-    data_store_provider: Arc<dyn DataStoreProvider>,
-    #[allow(dead_code)]
     snapshot_id: i64,
     /// Base data path for resolving relative file paths
     #[allow(dead_code)]
@@ -48,7 +45,6 @@ impl DuckLakeTable {
         table_id: i64,
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
-        data_store_provider: Arc<dyn DataStoreProvider>,
         snapshot_id: i64,
         data_path: String,
     ) -> Result<Self> {
@@ -73,14 +69,13 @@ impl DuckLakeTable {
                 }
             })
             .collect();
-        
+
         println!("data files: {:?}", data_files);
 
         Ok(Self {
             table_id,
             table_name: table_name.into(),
             provider,
-            data_store_provider,
             snapshot_id,
             data_path,
             schema,

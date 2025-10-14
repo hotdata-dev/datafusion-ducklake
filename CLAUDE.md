@@ -39,22 +39,13 @@ The codebase follows a layered architecture with clear separation of concerns:
    - `DuckdbMetadataProvider` implements the trait using DuckDB as the catalog backend
    - Executes SQL queries against standard DuckLake catalog tables (`ducklake_snapshot`, `ducklake_schema`, `ducklake_table`, `ducklake_column`, `ducklake_data_file`, `ducklake_metadata`)
 
-2. **DataStoreProvider Layer** (`src/data_store_provider.rs`)
-   - Abstraction for object storage backends (local filesystem, S3, MinIO)
-   - Three implementations:
-     - `AutoDetectProvider`: Automatically detects storage type from path schemes
-     - `LocalFileSystemProvider`: Local filesystem only
-     - `S3Provider`: S3 with explicit configuration (credentials, endpoint, region)
-   - Handles object store registration with DataFusion's RuntimeEnv
-   - Path resolution and normalization (e.g., `s3://bucket/path` -> bucket registration + relative path)
-
-3. **DataFusion Integration Layer** (`src/catalog.rs`, `src/schema.rs`, `src/table.rs`)
+2. **DataFusion Integration Layer** (`src/catalog.rs`, `src/schema.rs`, `src/table.rs`)
    - Bridges DuckLake concepts to DataFusion's catalog system
    - `DuckLakeCatalog`: Implements `CatalogProvider`, manages schemas and snapshot resolution
    - `DuckLakeSchema`: Implements `SchemaProvider`, lists and provides access to tables
-   - `DuckLakeTable`: Implements `TableProvider`, executes queries against Parquet files
+   - `DuckLakeTable`: Implements `TableProvider`, executes queries against Parquet files and handles object store URL resolution
 
-4. **Type Mapping** (`src/types.rs`)
+3. **Type Mapping** (`src/types.rs`)
    - Converts DuckLake type strings to Arrow DataTypes
    - Handles basic types (integers, floats, strings, dates, timestamps)
    - Supports decimals with precision/scale parsing
@@ -64,17 +55,18 @@ The codebase follows a layered architecture with clear separation of concerns:
 ### Data Flow
 
 When querying a DuckLake table:
-1. User creates a `SessionContext` and registers a `DuckLakeCatalog`
-2. SQL query references table as `catalog.schema.table`
-3. DataFusion resolves path: catalog -> schema -> table
-4. `DuckLakeTable` queries metadata provider for table structure and data files
-5. Paths are resolved hierarchically:
+1. User creates a `SessionContext` with a `RuntimeEnv` and registers a `DuckLakeCatalog`
+2. User registers required object stores (S3, MinIO, etc.) with the `RuntimeEnv`
+3. SQL query references table as `catalog.schema.table`
+4. DataFusion resolves path: catalog -> schema -> table
+5. `DuckLakeTable` queries metadata provider for table structure and data files
+6. Paths are resolved hierarchically:
    - Global `data_path` from `ducklake_metadata` table
    - Schema path (relative to `data_path` or absolute)
    - Table path (relative to schema path or absolute)
    - File paths (relative to table path or absolute)
-6. Object stores are registered via DataStoreProvider
-7. DataFusion scans Parquet files using registered object stores
+7. `DuckLakeTable` resolves file paths to ObjectStoreUrl and relative paths
+8. DataFusion scans Parquet files using registered object stores
 
 ### Path Resolution Hierarchy
 
@@ -88,10 +80,16 @@ See `catalog.rs:91-106` and `table.rs:66-74` for path resolution logic.
 
 ### Object Store Registration
 
-The DataStoreProvider pattern allows flexible storage configuration:
-- `AutoDetectProvider` uses environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION)
-- `S3Provider` allows explicit credentials and endpoint configuration (useful for MinIO)
+Object stores must be registered with DataFusion's `RuntimeEnv` before querying:
+- **Local filesystem**: Automatically available via DataFusion's default object store
+- **S3/MinIO**: Must be explicitly registered using `AmazonS3Builder` and `RuntimeEnv::register_object_store()`
 - Object stores are registered per-bucket (S3) or globally (local filesystem)
+- See `examples/basic_query.rs` for S3/MinIO configuration examples
+
+The `DuckLakeTable` provider handles URL resolution by:
+- Parsing file paths to determine storage scheme (s3://, file://, etc.)
+- Extracting bucket names and relative paths for DataFusion's file scan operations
+- See `table.rs:91-197` for path resolution and normalization logic
 
 ## Key Implementation Details
 
@@ -113,13 +111,20 @@ The DataStoreProvider pattern allows flexible storage configuration:
 ## Development Notes
 
 ### Testing with MinIO
-The example in `examples/basic_query.rs` shows S3Provider configuration for MinIO:
+The example in `examples/basic_query.rs` shows object store registration for MinIO:
 ```rust
-let s3_provider = S3Provider::new()
-    .with_endpoint("http://localhost:9000")
-    .with_credentials("minioadmin", "minioadmin")
-    .with_region("us-east-1")
-    .with_allow_http(true);
+let runtime = Arc::new(RuntimeEnv::default());
+let s3: Arc<dyn ObjectStore> = Arc::new(
+    AmazonS3Builder::new()
+        .with_endpoint("http://localhost:9000")
+        .with_bucket_name("ducklake-data")
+        .with_access_key_id("minioadmin")
+        .with_secret_access_key("minioadmin")
+        .with_region("us-west-2")
+        .with_allow_http(true)
+        .build()?,
+);
+runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 ```
 
 ### Current Limitations

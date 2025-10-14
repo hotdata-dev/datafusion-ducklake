@@ -13,12 +13,12 @@
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
-use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, S3Provider};
-use object_store::aws::AmazonS3Builder;
-use object_store::ObjectStore;
+use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
 use std::env;
 use std::process::exit;
 use std::sync::Arc;
+use object_store::aws::AmazonS3Builder;
+use object_store::ObjectStore;
 use url::Url;
 
 #[tokio::main]
@@ -39,29 +39,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the metadata provider
     let provider = DuckdbMetadataProvider::new(catalog_path)?;
 
-    // Configure S3/MinIO provider
-    // For MinIO, you can configure like this:
-    let s3_provider = S3Provider::new()
-        .with_endpoint("http://localhost:9000")  // Your MinIO endpoint
-        .with_credentials("minioadmin", "minioadmin")  // Your MinIO credentials
-        .with_region("us-east-1")  // Any region works for MinIO
-        .with_allow_http(true);  // Required for http:// endpoints
-    
-    
+    // Create runtime and register object stores
+    // For MinIO or S3, register the object store with the runtime
     let runtime = Arc::new(RuntimeEnv::default());
-    let s3: Arc<dyn ObjectStore>  = Arc::new(AmazonS3Builder::new()
-        .with_endpoint("http://localhost:9000")
-        .with_bucket_name("ducklake-data")
-        .with_access_key_id("minioadmin")
-        .with_secret_access_key("minioadmin")
-        .with_region("us-west-2")
-        .with_allow_http(true)  // Required for http:// endpoints like MinIO
-        .build()?);
+
+    // Example: Register S3/MinIO object store
+    let s3: Arc<dyn ObjectStore> = Arc::new(
+        AmazonS3Builder::new()
+            .with_endpoint("http://localhost:9000")  // Your MinIO endpoint
+            .with_bucket_name("ducklake-data")       // Your bucket name
+            .with_access_key_id("minioadmin")         // Your credentials
+            .with_secret_access_key("minioadmin")     // Your credentials
+            .with_region("us-west-2")                 // Any region works for MinIO
+            .with_allow_http(true)                    // Required for http:// endpoints
+            .build()?,
+    );
     runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 
-    // Create the DuckLake catalog with explicit S3 provider
-    let ducklake_catalog = DuckLakeCatalog::new_with_store(provider, s3_provider)?;
-
+    // Create the DuckLake catalog
+    let ducklake_catalog = DuckLakeCatalog::new(provider)?;
     
     println!("✓ Connected to DuckLake catalog");
 
