@@ -86,73 +86,6 @@ impl DuckLakeTable {
             data_files,
         })
     }
-
-    /// Resolve file paths to ObjectStoreUrl and relative paths
-    ///
-    /// Takes the full file paths and:
-    /// 1. Normalizes S3 paths (s3:/ -> s3://)
-    /// 2. Extracts the bucket to construct ObjectStoreUrl
-    /// 3. Strips the bucket prefix to get relative paths for DataFusion
-    fn resolve_file_paths(&self) -> DataFusionResult<(Vec<String>)> {
-        if self.data_files.is_empty() {
-            return Err(datafusion::error::DataFusionError::Internal(
-                "No data files found for table".to_string(),
-            ));
-        }
-
-        // Extract relative paths for all files
-        let relative_paths: Result<Vec<String>> = self
-            .data_files
-            .iter()
-            .map(|path| {
-                let normalized = self.normalize_path(path);
-                self.extract_relative_path(&normalized)
-            })
-            .collect();
-
-        let relative_paths = relative_paths
-            .map_err(|e| datafusion::error::DataFusionError::Internal(e.to_string()))?;
-
-        Ok((relative_paths))
-    }
-
-    /// Normalize path by converting "s3:/" to "s3://"
-    fn normalize_path(&self, path: &str) -> String {
-        if path.starts_with("s3:/") && !path.starts_with("s3://") {
-            path.replacen("s3:/", "s3://", 1)
-        } else {
-            path.to_string()
-        }
-    }
-
-    /// Extract relative path from a full path
-    ///
-    /// Examples:
-    /// - "s3://bucket/path/file.parquet" -> "path/file.parquet"
-    /// - "file:///abs/path/file.parquet" -> "abs/path/file.parquet"
-    fn extract_relative_path(&self, full_path: &str) -> Result<String> {
-        if full_path.starts_with("s3://") {
-            let url = url::Url::parse(full_path).map_err(|e| {
-                crate::DuckLakeError::Internal(format!(
-                    "Failed to parse S3 URL '{}': {}",
-                    full_path, e
-                ))
-            })?;
-
-            // Get path without leading '/'
-            let path = url.path().strip_prefix('/').unwrap_or(url.path());
-            Ok(path.to_string())
-        } else if full_path.starts_with("file://") {
-            // Strip "file://" prefix
-            Ok(full_path.strip_prefix("file://").unwrap().to_string())
-        } else if full_path.starts_with('/') {
-            // Already a filesystem path, strip leading '/'
-            Ok(full_path.strip_prefix('/').unwrap().to_string())
-        } else {
-            // Assume it's already relative
-            Ok(full_path.to_string())
-        }
-    }
 }
 
 #[async_trait]
@@ -177,14 +110,7 @@ impl TableProvider for DuckLakeTable {
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let format = ParquetFormat::new();
-
-        // Determine the object store URL and extract relative file paths
-        // For S3 paths like "s3://bucket/path/file.parquet", we need to:
-        // 1. Register the object store with "s3://bucket/"
-        // 2. Provide "path/file.parquet" as the relative path
-
-        let relative_paths = self.resolve_file_paths()?;
-
+        
         let file_scan_config = FileScanConfigBuilder::new(
             self.base_data_url.as_ref().clone(),
             self.schema.clone(),
@@ -193,7 +119,7 @@ impl TableProvider for DuckLakeTable {
         .with_limit(limit)
         .with_file_group(FileGroup::new(
             // todo:  fix we're hardcoding file size. shouldn't do that
-            relative_paths
+            self.data_files
                 .iter()
                 .map(|f| PartitionedFile::new(f, 6329509))
                 .collect(),

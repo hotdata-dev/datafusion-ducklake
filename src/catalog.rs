@@ -4,11 +4,11 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use datafusion::catalog::{CatalogProvider, SchemaProvider};
-use datafusion::datasource::object_store::ObjectStoreUrl;
-use crate::{DuckLakeError, Result};
 use crate::metadata_provider::{MetadataProvider, SchemaMetadata};
 use crate::schema::DuckLakeSchema;
+use crate::{DuckLakeError, Result};
+use datafusion::catalog::{CatalogProvider, SchemaProvider};
+use datafusion::datasource::object_store::ObjectStoreUrl;
 
 /// DuckLake catalog provider
 ///
@@ -19,9 +19,13 @@ pub struct DuckLakeCatalog {
     provider: Arc<dyn MetadataProvider>,
     /// Latest snapshot ID
     snapshot_id: i64,
+    #[allow(dead_code)]
     /// Base data path for resolving relative file paths
-    /// example: s3://ducklake-data
+    /// example: s3://ducklake-data/prefix/
     base_data_path: String,
+    /// Base key path for data. this is used to compute the key for the table files
+    /// example: prefix/
+    base_key_path: String,
     /// the parsed ObjectStoreUrl of base_data_path
     base_data_url: Arc<ObjectStoreUrl>,
     /// Cached schema metadata (schema_name -> SchemaMetadata)
@@ -34,7 +38,8 @@ impl DuckLakeCatalog {
         let provider = Arc::new(provider) as Arc<dyn MetadataProvider>;
         let snapshot_id = provider.get_current_snapshot()?;
         let base_data_path = provider.get_data_path()?;
-        let base_data_url = Arc::new(DuckLakeCatalog::parse_object_store_url(&base_data_path)?);
+        let (base_data_url, base_key_path) =
+            DuckLakeCatalog::parse_object_store_url(&base_data_path)?;
 
         // List and cache schemas
         let schema_list = provider.list_schemas()?;
@@ -48,7 +53,8 @@ impl DuckLakeCatalog {
             provider,
             snapshot_id,
             base_data_path,
-            base_data_url,
+            base_key_path,
+            base_data_url: Arc::new(base_data_url),
             schemas,
         })
     }
@@ -58,15 +64,10 @@ impl DuckLakeCatalog {
         self.snapshot_id
     }
 
-    /// Resolve file paths to ObjectStoreUrl
-    ///
-    /// Takes the full file paths and:
-    /// 1. Normalizes S3 paths (s3:/ -> s3://)
-    /// 2. Extracts the bucket to construct ObjectStoreUrl
-    /// 3. Strips the bucket prefix to get relative paths for DataFusion
-    fn parse_object_store_url(data_path: &str) -> Result<ObjectStoreUrl> {
+    /// Resolve data paths to ObjectStoreUrl and Data key prefix
+    fn parse_object_store_url(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
         // Determine scheme and extract object store URL
-        let object_store_url = if data_path.starts_with("s3://") {
+        let result = if data_path.starts_with("s3://") {
             // Extract bucket from s3://bucket/path
             let url = url::Url::parse(data_path).map_err(|e| {
                 DuckLakeError::InvalidConfig(format!(
@@ -76,34 +77,24 @@ impl DuckLakeCatalog {
             })?;
 
             let bucket = url.host_str().ok_or_else(|| {
-                DuckLakeError::InvalidConfig(format!(
-                    "S3 URL missing bucket: {}",
-                    data_path
-                ))
+                DuckLakeError::InvalidConfig(format!("S3 URL missing bucket: {}", data_path))
             })?;
 
-            ObjectStoreUrl::parse(format!("s3://{}/", bucket)).map_err(|e| {
-                DuckLakeError::InvalidConfig(format!(
-                    "Failed to create ObjectStoreUrl: {}",
-                    e
-                ))
-            })?
-        } else if data_path.starts_with("file://") || data_path.starts_with('/') {
-            ObjectStoreUrl::parse("file:///").map_err(|e| {
-                DuckLakeError::InvalidConfig(format!(
-                    "Failed to create file ObjectStoreUrl: {}",
-                    e
-                ))
-            })?
+            let object_store_url =
+                ObjectStoreUrl::parse(format!("s3://{}/", bucket)).map_err(|e| {
+                    DuckLakeError::InvalidConfig(format!("Failed to create ObjectStoreUrl: {}", e))
+                });
+
+            (object_store_url?, url.path().to_owned())
+        // todo: add support for filepath
         } else {
             return Err(DuckLakeError::InvalidConfig(format!(
                 "Unsupported storage scheme in path: {}",
                 data_path
             )));
         };
-        
-        
-        Ok(object_store_url)
+
+        Ok(result)
     }
 }
 
@@ -121,7 +112,7 @@ impl CatalogProvider for DuckLakeCatalog {
             // Resolve schema path hierarchically
             let schema_path = if meta.path_is_relative {
                 // Schema path is relative to global data_path
-                format!("{}{}", self.base_data_path, meta.path)
+                format!("{}{}", self.base_key_path, meta.path)
             } else {
                 // Schema path is absolute
                 meta.path.clone()
@@ -139,3 +130,14 @@ impl CatalogProvider for DuckLakeCatalog {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_object_store_url() {
+        let (url, path) = DuckLakeCatalog::parse_object_store_url("s3://bucket/prefix").unwrap();
+        assert_eq!("/prefix", path);
+        assert_eq!(ObjectStoreUrl::parse("s3://bucket/").unwrap(), url);
+    }
+}
