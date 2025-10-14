@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 
+use crate::Result;
 use crate::metadata_provider::{MetadataProvider, SchemaMetadata};
 use crate::schema::DuckLakeSchema;
-use crate::Result;
 
 /// DuckLake catalog provider
 ///

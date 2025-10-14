@@ -3,9 +3,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::Result;
 use crate::metadata_provider::MetadataProvider;
 use crate::types::build_arrow_schema;
-use crate::Result;
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
@@ -101,7 +101,6 @@ impl DuckLakeTable {
 
         // Normalize the path: convert "s3:/" to "s3://"
         let normalized = self.normalize_path(first_file);
-        
 
         // Determine scheme and extract object store URL
         let object_store_url = if normalized.starts_with("s3://") {
@@ -150,8 +149,8 @@ impl DuckLakeTable {
             })
             .collect();
 
-        let relative_paths =
-            relative_paths.map_err(|e| datafusion::error::DataFusionError::Internal(e.to_string()))?;
+        let relative_paths = relative_paths
+            .map_err(|e| datafusion::error::DataFusionError::Internal(e.to_string()))?;
 
         Ok((object_store_url, relative_paths))
     }
@@ -173,7 +172,10 @@ impl DuckLakeTable {
     fn extract_relative_path(&self, full_path: &str) -> Result<String> {
         if full_path.starts_with("s3://") {
             let url = url::Url::parse(full_path).map_err(|e| {
-                crate::DuckLakeError::Internal(format!("Failed to parse S3 URL '{}': {}", full_path, e))
+                crate::DuckLakeError::Internal(format!(
+                    "Failed to parse S3 URL '{}': {}",
+                    full_path, e
+                ))
             })?;
 
             // Get path without leading '/'
@@ -213,7 +215,6 @@ impl TableProvider for DuckLakeTable {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-
         let format = ParquetFormat::new();
 
         // Determine the object store URL and extract relative file paths
@@ -226,15 +227,17 @@ impl TableProvider for DuckLakeTable {
         let file_scan_config = FileScanConfigBuilder::new(
             object_store_url,
             self.schema.clone(),
-            Arc::new(ParquetSource::default())
+            Arc::new(ParquetSource::default()),
         )
-            .with_limit(limit)
-            .with_file_group(FileGroup::new(
-                // todo:  fix we're hardcoding file size. shouldn't do that
-                relative_paths.iter().map(|f| PartitionedFile::new(f, 6329509)).collect()
-            ))
-
-            .build();
+        .with_limit(limit)
+        .with_file_group(FileGroup::new(
+            // todo:  fix we're hardcoding file size. shouldn't do that
+            relative_paths
+                .iter()
+                .map(|f| PartitionedFile::new(f, 6329509))
+                .collect(),
+        ))
+        .build();
 
         let exec = format.create_physical_plan(state, file_scan_config).await?;
 

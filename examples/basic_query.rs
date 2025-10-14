@@ -14,11 +14,11 @@
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+use object_store::ObjectStore;
+use object_store::aws::AmazonS3Builder;
 use std::env;
 use std::process::exit;
 use std::sync::Arc;
-use object_store::aws::AmazonS3Builder;
-use object_store::ObjectStore;
 use url::Url;
 
 #[tokio::main]
@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let catalog_path = &args[1];
     let sql = &args[2];
-    
+
     // // Path to your DuckLake catalog database
     // let catalog_path = "test_catalog.db";
 
@@ -46,23 +46,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example: Register S3/MinIO object store
     let s3: Arc<dyn ObjectStore> = Arc::new(
         AmazonS3Builder::new()
-            .with_endpoint("http://localhost:9000")  // Your MinIO endpoint
-            .with_bucket_name("ducklake-data")       // Your bucket name
-            .with_access_key_id("minioadmin")         // Your credentials
-            .with_secret_access_key("minioadmin")     // Your credentials
-            .with_region("us-west-2")                 // Any region works for MinIO
-            .with_allow_http(true)                    // Required for http:// endpoints
+            .with_endpoint("http://localhost:9000") // Your MinIO endpoint
+            .with_bucket_name("ducklake-data") // Your bucket name
+            .with_access_key_id("minioadmin") // Your credentials
+            .with_secret_access_key("minioadmin") // Your credentials
+            .with_region("us-west-2") // Any region works for MinIO
+            .with_allow_http(true) // Required for http:// endpoints
             .build()?,
     );
     runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 
     // Create the DuckLake catalog
     let ducklake_catalog = DuckLakeCatalog::new(provider)?;
-    
+
     println!("✓ Connected to DuckLake catalog");
 
-    let config = SessionConfig::new()
-        .with_default_catalog_and_schema("ducklake", "main");
+    let config = SessionConfig::new().with_default_catalog_and_schema("ducklake", "main");
 
     // Create DataFusion session context
     let ctx = SessionContext::new_with_config_rt(config, runtime.clone());
@@ -84,25 +83,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for schema_name in &schemas {
             if let Some(schema) = catalog.schema(schema_name) {
                 let tables = schema.table_names();
-                println!(
-                    "Available tables in schema '{}': {:?}",
-                    schema_name, tables
-                );
+                println!("Available tables in schema '{}': {:?}", schema_name, tables);
             }
         }
     }
 
     // Example query (adjust schema and table names to match your data)
     // Uncomment and modify this once you have actual DuckLake data:
-    
+
     println!("\nExecuting query...");
-    let df = ctx
-        .sql(sql)
-        .await?;
+    let df = ctx.sql(sql).await?;
 
     // Show the query results
     df.show().await?;
-    
 
     println!("\n✓ Example completed successfully!");
     println!("\nTo run a query, create a DuckLake database and uncomment the query section.");

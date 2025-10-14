@@ -53,7 +53,9 @@ impl fmt::Display for DuckLakeError {
             DuckLakeError::TableNotFound(name) => write!(f, "Table not found: {}", name),
             DuckLakeError::InvalidSnapshot(msg) => write!(f, "Invalid snapshot: {}", msg),
             DuckLakeError::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
-            DuckLakeError::UnsupportedType(type_name) => write!(f, "Unsupported DuckLake type: {}", type_name),
+            DuckLakeError::UnsupportedType(type_name) => {
+                write!(f, "Unsupported DuckLake type: {}", type_name)
+            }
             DuckLakeError::Unsupported(msg) => write!(f, "Unsupported feature: {}", msg),
             DuckLakeError::Io(e) => write!(f, "IO error: {}", e),
             DuckLakeError::Internal(msg) => write!(f, "Internal error: {}", msg),

@@ -1,12 +1,11 @@
-use duckdb::{Config, Connection};
-use duckdb::AccessMode::ReadOnly;
 use crate::DuckLakeError;
 use crate::metadata_provider::{
-    DuckLakeTableColumn, DuckLakeTableFile, DuckLakeFileData, MetadataProvider,
-    SchemaMetadata, TableMetadata,
-    SQL_GET_LATEST_SNAPSHOT, SQL_LIST_SCHEMAS, SQL_LIST_TABLES,
-    SQL_GET_TABLE_COLUMNS, SQL_GET_DATA_FILES, SQL_GET_DATA_PATH,
+    DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, MetadataProvider, SQL_GET_DATA_FILES,
+    SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT, SQL_GET_TABLE_COLUMNS, SQL_LIST_SCHEMAS,
+    SQL_LIST_TABLES, SchemaMetadata, TableMetadata,
 };
+use duckdb::AccessMode::ReadOnly;
+use duckdb::{Config, Connection};
 
 /// DuckDB metadata provider
 ///
@@ -41,12 +40,16 @@ impl DuckdbMetadataProvider {
     fn open_connection_with_path(catalog_path: &str) -> crate::Result<Connection> {
         let config = Config::default().access_mode(ReadOnly)?;
         match Connection::open_with_flags(catalog_path, config) {
-            Ok(con)=> Ok(con),
-            Err(msg) if msg.to_string().starts_with("IO Error: Could not set lock on file") => {
+            Ok(con) => Ok(con),
+            Err(msg)
+                if msg
+                    .to_string()
+                    .starts_with("IO Error: Could not set lock on file") =>
+            {
                 println!("Duckdb file likely already open in write mode. Cannot connect");
                 Err(DuckLakeError::DuckDb(msg))
             }
-            Err(msg) => { 
+            Err(msg) => {
                 println!("Failed to open duckdb");
                 Err(DuckLakeError::DuckDb(msg))
             }
@@ -69,14 +72,20 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_LIST_SCHEMAS)?;
 
-        let schemas = stmt.query_map([self.snapshot_id, self.snapshot_id], |row| {
-            let schema_id: i64 = row.get(0)?;
-            let schema_name: String = row.get(1)?;
-            let path: String = row.get(2)?;
-            let path_is_relative: bool = row.get(3)?;
-            Ok(SchemaMetadata { schema_id, schema_name, path, path_is_relative })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let schemas = stmt
+            .query_map([self.snapshot_id, self.snapshot_id], |row| {
+                let schema_id: i64 = row.get(0)?;
+                let schema_name: String = row.get(1)?;
+                let path: String = row.get(2)?;
+                let path_is_relative: bool = row.get(3)?;
+                Ok(SchemaMetadata {
+                    schema_id,
+                    schema_name,
+                    path,
+                    path_is_relative,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(schemas)
     }
@@ -85,14 +94,20 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_LIST_TABLES)?;
 
-        let tables = stmt.query_map([schema_id, self.snapshot_id, self.snapshot_id], |row| {
-            let table_id: i64 = row.get(0)?;
-            let table_name: String = row.get(1)?;
-            let path: String = row.get(2)?;
-            let path_is_relative: bool = row.get(3)?;
-            Ok(TableMetadata { table_id, table_name, path, path_is_relative })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let tables = stmt
+            .query_map([schema_id, self.snapshot_id, self.snapshot_id], |row| {
+                let table_id: i64 = row.get(0)?;
+                let table_name: String = row.get(1)?;
+                let path: String = row.get(2)?;
+                let path_is_relative: bool = row.get(3)?;
+                Ok(TableMetadata {
+                    table_id,
+                    table_name,
+                    path,
+                    path_is_relative,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(tables)
     }
@@ -101,13 +116,18 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_GET_TABLE_COLUMNS)?;
 
-        let columns = stmt.query_map([table_id], |row| {
-            let column_id: i64 = row.get(0)?;
-            let column_name: String = row.get(1)?;
-            let column_type: String = row.get(2)?;
-            Ok(DuckLakeTableColumn::new(column_id, column_name, column_type))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let columns = stmt
+            .query_map([table_id], |row| {
+                let column_id: i64 = row.get(0)?;
+                let column_name: String = row.get(1)?;
+                let column_type: String = row.get(2)?;
+                Ok(DuckLakeTableColumn::new(
+                    column_id,
+                    column_name,
+                    column_type,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(columns)
     }
@@ -116,13 +136,18 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES)?;
 
-        let files = stmt.query_map([table_id], |row| {
-            let path: String = row.get(0)?;
-            let path_is_relative: bool = row.get(1)?;
-            let file_size_bytes: i64 = row.get(2)?;
-            Ok(DuckLakeTableFile::new(DuckLakeFileData::new(path, path_is_relative, file_size_bytes)))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        let files = stmt
+            .query_map([table_id], |row| {
+                let path: String = row.get(0)?;
+                let path_is_relative: bool = row.get(1)?;
+                let file_size_bytes: i64 = row.get(2)?;
+                Ok(DuckLakeTableFile::new(DuckLakeFileData::new(
+                    path,
+                    path_is_relative,
+                    file_size_bytes,
+                )))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
     }

@@ -15,14 +15,12 @@ pub const SQL_LIST_TABLES: &str =
        AND ? >= begin_snapshot
        AND (? < end_snapshot OR end_snapshot IS NULL)";
 
-pub const SQL_GET_TABLE_COLUMNS: &str =
-    "SELECT column_id, column_name, column_type
+pub const SQL_GET_TABLE_COLUMNS: &str = "SELECT column_id, column_name, column_type
      FROM ducklake_column
      WHERE table_id = ?
      ORDER BY column_order";
 
-pub const SQL_GET_DATA_FILES: &str =
-    "SELECT path, path_is_relative, file_size_bytes
+pub const SQL_GET_DATA_FILES: &str = "SELECT path, path_is_relative, file_size_bytes
      FROM ducklake_data_file
      WHERE table_id = ?";
 
@@ -110,5 +108,5 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     fn list_tables(&self, schema_id: i64) -> Result<Vec<TableMetadata>>;
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;
     fn get_table_files_for_select(&self, table_id: i64) -> Result<Vec<DuckLakeTableFile>>;
-//     todo: support select with file pruning
+    //     todo: support select with file pruning
 }

@@ -1,7 +1,7 @@
 //! Type mapping from DuckLake types to Arrow types
 
-use arrow::datatypes::{DataType, Field, IntervalUnit, TimeUnit};
 use crate::{DuckLakeError, Result};
+use arrow::datatypes::{DataType, Field, IntervalUnit, TimeUnit};
 
 /// Convert a DuckLake type string to an Arrow DataType
 pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
@@ -36,9 +36,10 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
         "time" => Ok(DataType::Time64(TimeUnit::Microsecond)),
         "date" => Ok(DataType::Date32),
         "timestamp" => Ok(DataType::Timestamp(TimeUnit::Microsecond, None)),
-        "timestamptz" | "timestamp with time zone" => {
-            Ok(DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())))
-        }
+        "timestamptz" | "timestamp with time zone" => Ok(DataType::Timestamp(
+            TimeUnit::Microsecond,
+            Some("UTC".into()),
+        )),
         "timestamp_s" => Ok(DataType::Timestamp(TimeUnit::Second, None)),
         "timestamp_ms" => Ok(DataType::Timestamp(TimeUnit::Millisecond, None)),
         "timestamp_ns" => Ok(DataType::Timestamp(TimeUnit::Nanosecond, None)),
@@ -53,9 +54,8 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
         "uuid" => Ok(DataType::FixedSizeBinary(16)),
 
         // Geometry types (stored as binary WKB format)
-        "point" | "linestring" | "polygon" | "multipoint" |
-        "multilinestring" | "multipolygon" | "geometrycollection" |
-        "linestring z" | "geometry" => Ok(DataType::Binary),
+        "point" | "linestring" | "polygon" | "multipoint" | "multilinestring" | "multipolygon"
+        | "geometrycollection" | "linestring z" | "geometry" => Ok(DataType::Binary),
 
         // Time with timezone - not directly supported, use string
         "timetz" | "time with time zone" => Ok(DataType::Utf8),
@@ -65,7 +65,11 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
             if normalized.starts_with("list") || normalized.starts_with("array") {
                 // TODO: Parse nested list type
                 // For now, return generic list of utf8
-                Ok(DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))))
+                Ok(DataType::List(Arc::new(Field::new(
+                    "item",
+                    DataType::Utf8,
+                    true,
+                ))))
             } else if normalized.starts_with("struct") {
                 // TODO: Parse struct fields
                 // For now, return empty struct
@@ -76,10 +80,13 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
                 Ok(DataType::Map(
                     Arc::new(Field::new(
                         "entries",
-                        DataType::Struct(vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ].into()),
+                        DataType::Struct(
+                            vec![
+                                Field::new("key", DataType::Utf8, false),
+                                Field::new("value", DataType::Utf8, true),
+                            ]
+                            .into(),
+                        ),
                         false,
                     )),
                     false,
@@ -127,8 +134,8 @@ fn parse_decimal(type_str: &str) -> Option<DataType> {
     }
 }
 
-use std::sync::Arc;
 use crate::metadata_provider::DuckLakeTableColumn;
+use std::sync::Arc;
 
 /// Build an Arrow schema from a list of DuckLake table columns
 pub fn build_arrow_schema(columns: &[DuckLakeTableColumn]) -> Result<arrow::datatypes::Schema> {
@@ -149,10 +156,16 @@ mod tests {
 
     #[test]
     fn test_basic_types() {
-        assert_eq!(ducklake_to_arrow_type("boolean").unwrap(), DataType::Boolean);
+        assert_eq!(
+            ducklake_to_arrow_type("boolean").unwrap(),
+            DataType::Boolean
+        );
         assert_eq!(ducklake_to_arrow_type("int32").unwrap(), DataType::Int32);
         assert_eq!(ducklake_to_arrow_type("int64").unwrap(), DataType::Int64);
-        assert_eq!(ducklake_to_arrow_type("float64").unwrap(), DataType::Float64);
+        assert_eq!(
+            ducklake_to_arrow_type("float64").unwrap(),
+            DataType::Float64
+        );
         assert_eq!(ducklake_to_arrow_type("varchar").unwrap(), DataType::Utf8);
         assert_eq!(ducklake_to_arrow_type("blob").unwrap(), DataType::Binary);
     }
