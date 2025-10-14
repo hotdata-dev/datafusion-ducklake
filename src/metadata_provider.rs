@@ -61,6 +61,7 @@ impl DuckLakeTableColumn {
     }
 }
 
+#[derive(Debug)]
 pub struct DuckLakeFileData {
     pub path: String,
     pub path_is_relative: bool,
@@ -81,6 +82,7 @@ impl DuckLakeFileData {
     }
 }
 
+#[derive(Debug)]
 pub struct DuckLakeTableFile {
     pub file: DuckLakeFileData,
     pub delete_file: Option<DuckLakeFileData>,

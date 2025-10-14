@@ -37,8 +37,8 @@ pub struct DuckLakeTable {
     #[allow(dead_code)]
     data_path: String,
     schema: SchemaRef,
-    /// Resolved absolute paths to data files
-    data_files: Vec<String>,
+    /// Table files with resolved absolute paths and metadata
+    table_files: Vec<crate::metadata_provider::DuckLakeTableFile>,
 }
 
 impl DuckLakeTable {
@@ -59,21 +59,21 @@ impl DuckLakeTable {
 
         // Get data files and resolve paths
         let table_files = provider.get_table_files_for_select(table_id)?;
-        let data_files = table_files
+        let table_files: Vec<_> = table_files
             .into_iter()
-            .map(|tf| {
+            .map(|mut tf| {
+                // Resolve relative paths to absolute paths
                 if tf.file.path_is_relative {
                     // Join data_path with relative path
                     // data_path should end with '/' according to DuckLake spec
-                    format!("{}{}", data_path, tf.file.path)
-                } else {
-                    // Use absolute path as-is
-                    tf.file.path
+                    tf.file.path = format!("{}{}", data_path, tf.file.path);
+                    tf.file.path_is_relative = false;
                 }
+                tf
             })
             .collect();
 
-        println!("data files: {:?}", data_files);
+        println!("data files: {:?}", table_files.iter().map(|tf| &tf.file.path).collect::<Vec<_>>());
 
         Ok(Self {
             table_id,
@@ -83,7 +83,7 @@ impl DuckLakeTable {
             base_data_url,
             data_path,
             schema,
-            data_files,
+            table_files,
         })
     }
 }
@@ -118,10 +118,9 @@ impl TableProvider for DuckLakeTable {
         )
         .with_limit(limit)
         .with_file_group(FileGroup::new(
-            // todo:  fix we're hardcoding file size. shouldn't do that
-            self.data_files
+            self.table_files
                 .iter()
-                .map(|f| PartitionedFile::new(f, 6329509))
+                .map(|tf| PartitionedFile::new(&tf.file.path, tf.file.file_size_bytes as u64))
                 .collect(),
         ))
         .build();
