@@ -36,6 +36,7 @@
 //! ```
 
 pub mod catalog;
+pub mod data_store_provider;
 pub mod error;
 pub mod schema;
 pub mod table;
@@ -48,6 +49,7 @@ pub type Result<T> = std::result::Result<T, DuckLakeError>;
 
 // Re-export main types for convenience
 pub use catalog::DuckLakeCatalog;
+pub use data_store_provider::{AutoDetectProvider, DataStoreProvider, LocalFileSystemProvider, S3Provider};
 pub use error::DuckLakeError;
 pub use schema::DuckLakeSchema;
 pub use table::DuckLakeTable;

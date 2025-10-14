@@ -11,11 +11,15 @@
 //!
 //! Usage: cargo run --example basic_query
 
+use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
-use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, S3Provider};
+use object_store::aws::AmazonS3Builder;
+use object_store::ObjectStore;
 use std::env;
 use std::process::exit;
 use std::sync::Arc;
+use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,16 +39,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the metadata provider
     let provider = DuckdbMetadataProvider::new(catalog_path)?;
 
-    // Create the DuckLake catalog (provider is wrapped in Arc internally)
-    let ducklake_catalog = DuckLakeCatalog::new(provider)?;
+    // Configure S3/MinIO provider
+    // For MinIO, you can configure like this:
+    let s3_provider = S3Provider::new()
+        .with_endpoint("http://localhost:9000")  // Your MinIO endpoint
+        .with_credentials("minioadmin", "minioadmin")  // Your MinIO credentials
+        .with_region("us-east-1")  // Any region works for MinIO
+        .with_allow_http(true);  // Required for http:// endpoints
+    
+    
+    let runtime = Arc::new(RuntimeEnv::default());
+    let s3: Arc<dyn ObjectStore>  = Arc::new(AmazonS3Builder::new()
+        .with_endpoint("http://localhost:9000")
+        .with_bucket_name("ducklake-data")
+        .with_access_key_id("minioadmin")
+        .with_secret_access_key("minioadmin")
+        .with_region("us-west-2")
+        .with_allow_http(true)  // Required for http:// endpoints like MinIO
+        .build()?);
+    runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 
+    // Create the DuckLake catalog with explicit S3 provider
+    let ducklake_catalog = DuckLakeCatalog::new_with_store(provider, s3_provider)?;
+
+    
     println!("✓ Connected to DuckLake catalog");
 
     let config = SessionConfig::new()
         .with_default_catalog_and_schema("ducklake", "main");
 
     // Create DataFusion session context
-    let ctx = SessionContext::new_with_config(config);
+    let ctx = SessionContext::new_with_config_rt(config, runtime.clone());
 
     // Register the DuckLake catalog
     ctx.register_catalog("ducklake", Arc::new(ducklake_catalog));

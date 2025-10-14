@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 
+use crate::data_store_provider::{AutoDetectProvider, DataStoreProvider};
 use crate::metadata_provider::{MetadataProvider, SchemaMetadata};
 use crate::schema::DuckLakeSchema;
 use crate::Result;
@@ -17,6 +18,8 @@ use crate::Result;
 pub struct DuckLakeCatalog {
     /// Metadata provider for querying catalog
     provider: Arc<dyn MetadataProvider>,
+    /// Data store provider for object storage access
+    data_store_provider: Arc<dyn DataStoreProvider>,
     /// Latest snapshot ID
     snapshot_id: i64,
     /// Base data path for resolving relative file paths
@@ -26,10 +29,14 @@ pub struct DuckLakeCatalog {
 }
 
 impl DuckLakeCatalog {
-    /// Create a new DuckLake catalog
-    pub fn new(provider: impl MetadataProvider + 'static) -> Result<Self> {
-        // Wrap provider in Arc for sharing
+    /// Create a new DuckLake catalog with a metadata provider and data store provider
+    pub fn new_with_store(
+        provider: impl MetadataProvider + 'static,
+        data_store_provider: impl DataStoreProvider + 'static,
+    ) -> Result<Self> {
+        // Wrap providers in Arc for sharing
         let provider = Arc::new(provider) as Arc<dyn MetadataProvider>;
+        let data_store_provider = Arc::new(data_store_provider) as Arc<dyn DataStoreProvider>;
 
         // Get current snapshot
         let snapshot_id = provider.get_current_snapshot()?;
@@ -48,10 +55,19 @@ impl DuckLakeCatalog {
 
         Ok(Self {
             provider,
+            data_store_provider,
             snapshot_id,
             data_path,
             schemas,
         })
+    }
+
+    /// Create a new DuckLake catalog with auto-detecting data store provider
+    ///
+    /// This is a convenience method that uses `AutoDetectProvider` for storage.
+    /// It will automatically detect local filesystem or S3 based on path schemes.
+    pub fn new(provider: impl MetadataProvider + 'static) -> Result<Self> {
+        Self::new_with_store(provider, AutoDetectProvider::new())
     }
 
     /// Get the latest snapshot ID
@@ -84,6 +100,7 @@ impl CatalogProvider for DuckLakeCatalog {
                 meta.schema_id,
                 meta.schema_name.clone(),
                 Arc::clone(&self.provider),
+                Arc::clone(&self.data_store_provider),
                 self.snapshot_id,
                 schema_path,
             )) as Arc<dyn SchemaProvider>

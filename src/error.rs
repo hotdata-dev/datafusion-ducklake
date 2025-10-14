@@ -96,3 +96,14 @@ impl From<duckdb::Error> for DuckLakeError {
         DuckLakeError::DuckDb(err)
     }
 }
+
+impl From<DuckLakeError> for datafusion::error::DataFusionError {
+    fn from(err: DuckLakeError) -> Self {
+        match err {
+            // If it's already a DataFusion error, unwrap it
+            DuckLakeError::DataFusion(e) => e,
+            // For all other errors, wrap them as External
+            other => datafusion::error::DataFusionError::External(Box::new(other)),
+        }
+    }
+}

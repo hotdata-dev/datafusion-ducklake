@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::error::Result as DataFusionResult;
 
+use crate::data_store_provider::DataStoreProvider;
 use crate::metadata_provider::{MetadataProvider, TableMetadata};
 use crate::table::DuckLakeTable;
 
@@ -21,6 +22,7 @@ pub struct DuckLakeSchema {
     #[allow(dead_code)]
     schema_name: String,
     provider: Arc<dyn MetadataProvider>,
+    data_store_provider: Arc<dyn DataStoreProvider>,
     snapshot_id: i64,
     /// Base data path for resolving relative file paths
     data_path: String,
@@ -34,6 +36,7 @@ impl DuckLakeSchema {
         schema_id: i64,
         schema_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
+        data_store_provider: Arc<dyn DataStoreProvider>,
         snapshot_id: i64,
         data_path: String,
     ) -> Self {
@@ -49,6 +52,7 @@ impl DuckLakeSchema {
             schema_id,
             schema_name: schema_name.into(),
             provider,
+            data_store_provider,
             snapshot_id,
             data_path,
             tables,
@@ -82,6 +86,7 @@ impl SchemaProvider for DuckLakeSchema {
                     meta.table_id,
                     meta.table_name.clone(),
                     Arc::clone(&self.provider),
+                    Arc::clone(&self.data_store_provider),
                     self.snapshot_id,
                     table_path,
                 )
