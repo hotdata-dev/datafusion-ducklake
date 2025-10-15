@@ -138,7 +138,7 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
         let files = stmt
             .query_map(
-                [table_id, table_id, self.snapshot_id, self.snapshot_id, table_id],
+                [table_id, self.snapshot_id, self.snapshot_id, table_id],
                 |row| {
                     // Parse data file (columns 0-4)
                     let _data_file_id: i64 = row.get(0)?;

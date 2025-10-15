@@ -62,13 +62,22 @@ impl DuckLakeTable {
         let table_files: Vec<_> = table_files
             .into_iter()
             .map(|mut tf| {
-                // Resolve relative paths to absolute paths
+                // Resolve data file relative paths to absolute paths
                 if tf.file.path_is_relative {
                     // Join data_path with relative path
                     // data_path should end with '/' according to DuckLake spec
                     tf.file.path = format!("{}{}", data_path, tf.file.path);
                     tf.file.path_is_relative = false;
                 }
+
+                // Resolve delete file relative paths to absolute paths
+                if let Some(ref mut delete_file) = tf.delete_file {
+                    if delete_file.path_is_relative {
+                        delete_file.path = format!("{}{}", data_path, delete_file.path);
+                        delete_file.path_is_relative = false;
+                    }
+                }
+
                 tf
             })
             .collect();
