@@ -36,6 +36,7 @@
 //! ```
 
 pub mod catalog;
+pub mod delete_filter;
 pub mod error;
 pub mod metadata_provider;
 pub mod metadata_provider_duckdb;

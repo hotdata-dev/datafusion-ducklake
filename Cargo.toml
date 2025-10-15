@@ -12,3 +12,4 @@ url = "2.5"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 duckdb = { version = "1.4.1", features = ["bundled"] }
+futures = "0.3"
