@@ -20,9 +20,26 @@ pub const SQL_GET_TABLE_COLUMNS: &str = "SELECT column_id, column_name, column_t
      WHERE table_id = ?
      ORDER BY column_order";
 
-pub const SQL_GET_DATA_FILES: &str = "SELECT path, path_is_relative, file_size_bytes
-     FROM ducklake_data_file
-     WHERE table_id = ?";
+pub const SQL_GET_DATA_FILES: &str = "
+    SELECT
+        data.data_file_id,
+        data.path AS data_file_path,
+        data.path_is_relative AS data_path_is_relative,
+        data.file_size_bytes AS data_file_size,
+        data.footer_size AS data_footer_size,
+        del.delete_file_id,
+        del.path AS delete_file_path,
+        del.path_is_relative AS delete_path_is_relative,
+        del.file_size_bytes AS delete_file_size,
+        del.footer_size AS delete_footer_size,
+        del.delete_count
+    FROM ducklake_data_file AS data
+    LEFT JOIN ducklake_delete_file AS del
+        ON data.data_file_id = del.data_file_id
+        AND del.table_id = ?
+        AND ? >= del.begin_snapshot
+        AND (? < del.end_snapshot OR del.end_snapshot IS NULL)
+    WHERE data.table_id = ?";
 
 pub const SQL_GET_DATA_PATH: &str =
     "SELECT value FROM ducklake_metadata WHERE key = 'data_path' AND scope IS NULL";

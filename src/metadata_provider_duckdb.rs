@@ -137,16 +137,43 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES)?;
 
         let files = stmt
-            .query_map([table_id], |row| {
-                let path: String = row.get(0)?;
-                let path_is_relative: bool = row.get(1)?;
-                let file_size_bytes: i64 = row.get(2)?;
-                Ok(DuckLakeTableFile::new(DuckLakeFileData::new(
-                    path,
-                    path_is_relative,
-                    file_size_bytes,
-                )))
-            })?
+            .query_map(
+                [table_id, table_id, self.snapshot_id, self.snapshot_id, table_id],
+                |row| {
+                    // Parse data file (columns 0-4)
+                    let _data_file_id: i64 = row.get(0)?;
+                    let data_file = DuckLakeFileData {
+                        path: row.get(1)?,
+                        path_is_relative: row.get(2)?,
+                        file_size_bytes: row.get(3)?,
+                        footer_size: row.get(4)?,
+                        encryption_key: String::new(), // TODO: handle encryption
+                    };
+
+                    // Parse delete file (columns 5-10) if exists
+                    let delete_file = if let Ok(Some(_)) = row.get::<_, Option<i64>>(5) {
+                        Some(DuckLakeFileData {
+                            path: row.get(6)?,
+                            path_is_relative: row.get(7)?,
+                            file_size_bytes: row.get(8)?,
+                            footer_size: row.get(9)?,
+                            encryption_key: String::new(),
+                        })
+                    } else {
+                        None
+                    };
+
+                    let delete_count: Option<i64> = row.get(10)?;
+
+                    Ok(DuckLakeTableFile {
+                        file: data_file,
+                        delete_file,
+                        row_id_start: None,
+                        snapshot_id: Some(self.snapshot_id),
+                        max_row_count: delete_count,
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
