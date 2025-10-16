@@ -86,12 +86,44 @@ impl DuckLakeCatalog {
                 });
 
             (object_store_url?, url.path().to_owned())
-        // todo: add support for filepath
+        } else if data_path.starts_with("file://") {
+            // Handle file:// URLs
+            let url = url::Url::parse(data_path).map_err(|e| {
+                DuckLakeError::InvalidConfig(format!(
+                    "Failed to parse file URL '{}': {}",
+                    data_path, e
+                ))
+            })?;
+
+            let object_store_url = ObjectStoreUrl::parse("file:///").map_err(|e| {
+                DuckLakeError::InvalidConfig(format!("Failed to create ObjectStoreUrl: {}", e))
+            })?;
+
+            (object_store_url, url.path().to_owned())
         } else {
-            return Err(DuckLakeError::InvalidConfig(format!(
-                "Unsupported storage scheme in path: {}",
-                data_path
-            )));
+            // Treat as relative local path - convert to absolute file:// URL
+            let has_trailing_slash = data_path.ends_with('/') || data_path.ends_with('\\');
+
+            let absolute_path = std::path::PathBuf::from(data_path)
+                .canonicalize()
+                .map_err(|e| {
+                    DuckLakeError::InvalidConfig(format!(
+                        "Failed to resolve path '{}': {}",
+                        data_path, e
+                    ))
+                })?;
+
+            let object_store_url = ObjectStoreUrl::parse("file:///").map_err(|e| {
+                DuckLakeError::InvalidConfig(format!("Failed to create ObjectStoreUrl: {}", e))
+            })?;
+
+            let mut path_str = absolute_path.to_string_lossy().to_string();
+            // Preserve trailing slash if original had one
+            if has_trailing_slash && !path_str.ends_with('/') && !path_str.ends_with('\\') {
+                path_str.push('/');
+            }
+
+            (object_store_url, path_str)
         };
 
         Ok(result)

@@ -64,21 +64,28 @@ impl DuckLakeTable {
 
         // Get data files and resolve paths
         let table_files = provider.get_table_files_for_select(table_id)?;
+
+        // Ensure data_path ends with a separator
+        let data_path_normalized = if data_path.ends_with('/') || data_path.ends_with('\\') {
+            data_path.clone()
+        } else {
+            format!("{}/", data_path)
+        };
+
         let table_files: Vec<_> = table_files
             .into_iter()
             .map(|mut tf| {
                 // Resolve data file relative paths to absolute paths
                 if tf.file.path_is_relative {
                     // Join data_path with relative path
-                    // data_path should end with '/' according to DuckLake spec
-                    tf.file.path = format!("{}{}", data_path, tf.file.path);
+                    tf.file.path = format!("{}{}", data_path_normalized, tf.file.path);
                     tf.file.path_is_relative = false;
                 }
 
                 // Resolve delete file relative paths to absolute paths
                 if let Some(ref mut delete_file) = tf.delete_file {
                     if delete_file.path_is_relative {
-                        delete_file.path = format!("{}{}", data_path, delete_file.path);
+                        delete_file.path = format!("{}{}", data_path_normalized, delete_file.path);
                         delete_file.path_is_relative = false;
                     }
                 }
@@ -280,10 +287,18 @@ fn extract_deleted_positions(
         }
 
         let file_path = file_paths.value(i).to_string();
+
+        // Normalize the file path to absolute path if possible
+        // This ensures it matches the resolved paths in table_files
+        let normalized_path = std::path::PathBuf::from(&file_path)
+            .canonicalize()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(file_path);
+
         let pos = positions.value(i);
 
         deleted_positions
-            .entry(file_path)
+            .entry(normalized_path)
             .or_insert_with(HashSet::new)
             .insert(pos);
     }

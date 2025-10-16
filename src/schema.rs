@@ -77,7 +77,13 @@ impl SchemaProvider for DuckLakeSchema {
                 // Resolve table path hierarchically
                 let table_path = if meta.path_is_relative {
                     // Table path is relative to schema path
-                    format!("{}{}", self.data_path, meta.path)
+                    // Ensure path ends with separator
+                    let data_path_normalized = if self.data_path.ends_with('/') || self.data_path.ends_with('\\') {
+                        self.data_path.clone()
+                    } else {
+                        format!("{}/", self.data_path)
+                    };
+                    format!("{}{}", data_path_normalized, meta.path)
                 } else {
                     // Table path is absolute
                     meta.path.clone()
