@@ -19,7 +19,7 @@ use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::object_store::ObjectStoreUrl;
-use datafusion::logical_expr::{Expr, TableType};
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 use futures::StreamExt;
 
@@ -195,10 +195,30 @@ impl TableProvider for DuckLakeTable {
         TableType::Base
     }
 
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        // Mark all filters as Inexact because we apply delete filters after the scan.
+        // DataFusion will reapply these filters after DeleteFilterExec to ensure
+        // correctness, but Parquet can still use them for:
+        // - Row group pruning via statistics
+        // - Page-level filtering with late materialization
+        // - Bloom filter lookups (if available)
+        Ok(filters
+            .iter()
+            .map(|_| TableProviderFilterPushDown::Inexact)
+            .collect())
+    }
+
     async fn scan(
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
+        // Filters are received here for informational purposes. DataFusion's optimizer
+        // automatically pushes them down to the Parquet scanner for row group pruning and
+        // page-level filtering since we declared support via supports_filters_pushdown().
+        // We mark them as Inexact, so DataFusion will reapply them after our scan.
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
