@@ -198,7 +198,7 @@ impl TableProvider for DuckLakeTable {
     async fn scan(
         &self,
         state: &dyn Session,
-        _projection: Option<&Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
@@ -211,7 +211,7 @@ impl TableProvider for DuckLakeTable {
         let mut execs: Vec<Arc<dyn ExecutionPlan>> = Vec::new();
 
         for table_file in &self.table_files {
-            let file_scan_config = FileScanConfigBuilder::new(
+            let mut builder = FileScanConfigBuilder::new(
                 self.base_data_url.as_ref().clone(),
                 self.schema.clone(),
                 Arc::new(ParquetSource::default()),
@@ -220,8 +220,14 @@ impl TableProvider for DuckLakeTable {
             .with_file_group(FileGroup::new(vec![PartitionedFile::new(
                 &table_file.file.path,
                 table_file.file.file_size_bytes as u64,
-            )]))
-            .build();
+            )]));
+
+            // Apply projection if provided
+            if let Some(proj) = projection {
+                builder = builder.with_projection(Some(proj.clone()));
+            }
+
+            let file_scan_config = builder.build();
 
             let parquet_exec = format.create_physical_plan(state, file_scan_config).await?;
 

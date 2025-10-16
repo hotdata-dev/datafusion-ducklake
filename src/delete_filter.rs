@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use arrow::datatypes::SchemaRef;
-use arrow::record_batch::RecordBatch;
+use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_plan::{
@@ -172,6 +172,18 @@ impl DeleteFilterStream {
         // If all rows are kept, return original batch
         if keep_indices.len() == num_rows {
             return Ok(batch.clone());
+        }
+
+        // Special case: if there are no columns (COUNT(*) case), create an empty batch with the filtered row count
+        if batch.num_columns() == 0 {
+            let mut options = RecordBatchOptions::new();
+            options = options.with_row_count(Some(keep_indices.len()));
+            return RecordBatch::try_new_with_options(
+                batch.schema(),
+                vec![],
+                &options,
+            )
+            .map_err(|e| DataFusionError::ArrowError(Box::new(e), None));
         }
 
         // Use Arrow's take kernel to select rows
