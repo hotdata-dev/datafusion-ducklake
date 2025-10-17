@@ -13,6 +13,22 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
+
+// Delete file schema constants (public for testing)
+pub const DELETE_FILE_PATH_COL: &str = "file_path";
+pub const DELETE_POS_COL: &str = "pos";
+
+/// Returns the expected schema for DuckLake delete files
+///
+/// Delete files have a standard schema: (file_path: VARCHAR, pos: INT64)
+/// The file_path column is metadata/documentation only (for Iceberg compatibility).
+/// The pos column contains the row positions to delete.
+pub fn delete_file_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new(DELETE_FILE_PATH_COL, DataType::Utf8, false),
+        Field::new(DELETE_POS_COL, DataType::Int64, false),
+    ]))
+}
 use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::PartitionedFile;
@@ -100,11 +116,8 @@ impl DuckLakeTable {
         state: &dyn Session,
         delete_file: &DuckLakeFileData,
     ) -> DataFusionResult<HashSet<i64>> {
-        // Expected schema for delete files
-        let delete_schema = Arc::new(Schema::new(vec![
-            Field::new("file_path", DataType::Utf8, false),
-            Field::new("pos", DataType::Int64, false),
-        ]));
+        // Get the standard delete file schema
+        let delete_schema = delete_file_schema();
 
         // Resolve the delete file path
         let resolved_delete_path = self.resolve_file_path(delete_file);
@@ -292,12 +305,16 @@ fn extract_deleted_positions_from_batch(
     batch: &RecordBatch,
     positions: &mut HashSet<i64>,
 ) -> DataFusionResult<()> {
-    // Get the pos column (index 1)
+    // Get the pos column index by name (not magic number)
+    let schema = batch.schema();
+    let pos_idx = schema.index_of(DELETE_POS_COL)?;
+
+    // Get the pos column
     let pos_array = batch
-        .column(1)
+        .column(pos_idx)
         .as_any()
         .downcast_ref::<Int64Array>()
-        .ok_or_else(|| DataFusionError::Internal("pos column not found or wrong type".into()))?;
+        .ok_or_else(|| DataFusionError::Internal(format!("{} column not found or wrong type", DELETE_POS_COL)))?;
 
     // Extract all non-null positions
     for i in 0..batch.num_rows() {

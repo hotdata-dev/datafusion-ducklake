@@ -12,6 +12,7 @@ use arrow::record_batch::RecordBatch;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+use datafusion_ducklake::table::{delete_file_schema, DELETE_FILE_PATH_COL, DELETE_POS_COL};
 
 /// Test helper to extract integer values from a RecordBatch column
 /// Supports both Int32 and Int64
@@ -42,11 +43,8 @@ mod unit_tests {
     /// Test the extract_deleted_positions function with a simple delete file batch
     #[test]
     fn test_extract_deleted_positions_simple() -> DataFusionResult<()> {
-        // Create a mock delete file RecordBatch
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("file_path", DataType::Utf8, false),
-            Field::new("pos", DataType::Int64, false),
-        ]));
+        // Create a mock delete file RecordBatch using standard schema
+        let schema = delete_file_schema();
 
         let file_paths = StringArray::from(vec![
             "test_file.parquet",
@@ -74,10 +72,7 @@ mod unit_tests {
     /// Test extract_deleted_positions with multiple files
     #[test]
     fn test_extract_deleted_positions_multiple_files() -> DataFusionResult<()> {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("file_path", DataType::Utf8, false),
-            Field::new("pos", DataType::Int64, false),
-        ]));
+        let schema = delete_file_schema();
 
         let file_paths = StringArray::from(vec![
             "file1.parquet",
@@ -90,16 +85,18 @@ mod unit_tests {
         let positions = Int64Array::from(vec![1, 3, 0, 2, 4]);
 
         let batch = RecordBatch::try_new(
-            schema,
+            schema.clone(),
             vec![Arc::new(file_paths), Arc::new(positions)],
         )?;
 
         // Verify we have the right structure for multiple files
         assert_eq!(batch.num_rows(), 5);
 
-        // Extract file paths and positions manually for verification
-        let file_col = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        let pos_col = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+        // Extract file paths and positions using named column indices
+        let file_idx = schema.index_of(DELETE_FILE_PATH_COL)?;
+        let pos_idx = schema.index_of(DELETE_POS_COL)?;
+        let file_col = batch.column(file_idx).as_any().downcast_ref::<StringArray>().unwrap();
+        let pos_col = batch.column(pos_idx).as_any().downcast_ref::<Int64Array>().unwrap();
 
         let mut file_to_positions: HashMap<String, Vec<i64>> = HashMap::new();
         for i in 0..batch.num_rows() {
@@ -118,9 +115,10 @@ mod unit_tests {
     /// Test extract_deleted_positions with null values (should be skipped)
     #[test]
     fn test_extract_deleted_positions_with_nulls() -> DataFusionResult<()> {
+        // Create schema with nullable columns (for this test case)
         let schema = Arc::new(Schema::new(vec![
-            Field::new("file_path", DataType::Utf8, true),
-            Field::new("pos", DataType::Int64, true),
+            Field::new(DELETE_FILE_PATH_COL, DataType::Utf8, true),
+            Field::new(DELETE_POS_COL, DataType::Int64, true),
         ]));
 
         let file_paths = StringArray::from(vec![
@@ -136,13 +134,15 @@ mod unit_tests {
         ]);
 
         let batch = RecordBatch::try_new(
-            schema,
+            schema.clone(),
             vec![Arc::new(file_paths), Arc::new(positions)],
         )?;
 
         // Only the first row should be valid (non-null in both columns)
-        let file_col = batch.column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        let pos_col = batch.column(1).as_any().downcast_ref::<Int64Array>().unwrap();
+        let file_idx = schema.index_of(DELETE_FILE_PATH_COL)?;
+        let pos_idx = schema.index_of(DELETE_POS_COL)?;
+        let file_col = batch.column(file_idx).as_any().downcast_ref::<StringArray>().unwrap();
+        let pos_col = batch.column(pos_idx).as_any().downcast_ref::<Int64Array>().unwrap();
 
         let valid_count = (0..batch.num_rows())
             .filter(|&i| !file_col.is_null(i) && !pos_col.is_null(i))
