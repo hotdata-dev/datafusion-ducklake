@@ -1,7 +1,5 @@
 //! Type mapping from DuckLake types to Arrow types
 
-use std::sync::Arc;
-
 use crate::metadata_provider::DuckLakeTableColumn;
 use crate::{DuckLakeError, Result};
 use arrow::datatypes::{DataType, Field, IntervalUnit, TimeUnit};
@@ -66,33 +64,16 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
         _ => {
             // Check for complex types (list, struct, map)
             if normalized.starts_with("list") || normalized.starts_with("array") {
-                // TODO: Parse nested list type
-                // For now, return generic list of utf8
-                Ok(DataType::List(Arc::new(Field::new(
-                    "item",
-                    DataType::Utf8,
-                    true,
-                ))))
+                Err(DuckLakeError::UnsupportedType(
+                    format!("Complex type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.", ducklake_type)
+                ))
             } else if normalized.starts_with("struct") {
-                // TODO: Parse struct fields
-                // For now, return empty struct
-                Ok(DataType::Struct(Vec::<Field>::new().into()))
+                Err(DuckLakeError::UnsupportedType(
+                    format!("Struct type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.", ducklake_type)
+                ))
             } else if normalized.starts_with("map") {
-                // TODO: Parse map key/value types
-                // For now, return string->string map
-                Ok(DataType::Map(
-                    Arc::new(Field::new(
-                        "entries",
-                        DataType::Struct(
-                            vec![
-                                Field::new("key", DataType::Utf8, false),
-                                Field::new("value", DataType::Utf8, true),
-                            ]
-                            .into(),
-                        ),
-                        false,
-                    )),
-                    false,
+                Err(DuckLakeError::UnsupportedType(
+                    format!("Map type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.", ducklake_type)
                 ))
             } else {
                 Err(DuckLakeError::UnsupportedType(ducklake_type.to_string()))
