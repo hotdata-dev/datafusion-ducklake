@@ -46,11 +46,14 @@ impl DuckdbMetadataProvider {
                     .to_string()
                     .starts_with("IO Error: Could not set lock on file") =>
             {
-                println!("Duckdb file likely already open in write mode. Cannot connect");
+                tracing::warn!(
+                    error = %msg,
+                    "DuckDB file likely already open in write mode. Cannot connect"
+                );
                 Err(DuckLakeError::DuckDb(msg))
             }
             Err(msg) => {
-                println!("Failed to open duckdb");
+                tracing::error!(error = %msg, "Failed to open DuckDB catalog");
                 Err(DuckLakeError::DuckDb(msg))
             }
         }

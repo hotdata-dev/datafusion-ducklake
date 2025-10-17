@@ -43,7 +43,7 @@ impl DuckLakeCatalog {
 
         // List and cache schemas
         let schema_list = provider.list_schemas()?;
-        println!("schemas: {:?}", &schema_list);
+        tracing::debug!(schemas = ?schema_list, "loaded schemas from catalog");
         let schemas = schema_list
             .into_iter()
             .map(|meta| (meta.schema_name.clone(), meta))

@@ -1012,6 +1012,7 @@ dependencies = [
  "object_store",
  "parquet",
  "tokio",
+ "tracing",
  "url",
 ]
 
