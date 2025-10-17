@@ -1,14 +1,14 @@
 //! DuckLake table provider implementation
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::Result;
 use crate::delete_filter::DeleteFilterExec;
 use crate::metadata_provider::{DuckLakeFileData, MetadataProvider};
 use crate::types::build_arrow_schema;
-use arrow::array::{Array, Int64Array, StringArray};
+use arrow::array::{Array, Int64Array};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
@@ -38,11 +38,10 @@ pub struct DuckLakeTable {
     snapshot_id: i64,
     /// the base path to the data, e.g. s3://ducklake-data
     base_data_url: Arc<ObjectStoreUrl>,
-    /// relative data path from catalog/schema to this table for resolving relative file paths
-    #[allow(dead_code)]
+    /// data path for this table, used to resolve relative file paths on-the-fly
     data_path: String,
     schema: SchemaRef,
-    /// Table files with resolved absolute paths and metadata
+    /// Table files with paths as stored in metadata (resolved on-the-fly when needed)
     table_files: Vec<crate::metadata_provider::DuckLakeTableFile>,
 }
 
@@ -62,39 +61,8 @@ impl DuckLakeTable {
         // Build Arrow schema from column definitions
         let schema = Arc::new(build_arrow_schema(&columns)?);
 
-        // Get data files and resolve paths
+        // Get data files - keep paths as-is from database
         let table_files = provider.get_table_files_for_select(table_id)?;
-
-        // Ensure data_path ends with a separator
-        let data_path_normalized = if data_path.ends_with('/') || data_path.ends_with('\\') {
-            data_path.clone()
-        } else {
-            format!("{}/", data_path)
-        };
-
-        let table_files: Vec<_> = table_files
-            .into_iter()
-            .map(|mut tf| {
-                // Resolve data file relative paths to absolute paths
-                if tf.file.path_is_relative {
-                    // Join data_path with relative path
-                    tf.file.path = format!("{}{}", data_path_normalized, tf.file.path);
-                    tf.file.path_is_relative = false;
-                }
-
-                // Resolve delete file relative paths to absolute paths
-                if let Some(ref mut delete_file) = tf.delete_file {
-                    if delete_file.path_is_relative {
-                        delete_file.path = format!("{}{}", data_path_normalized, delete_file.path);
-                        delete_file.path_is_relative = false;
-                    }
-                }
-
-                tf
-            })
-            .collect();
-
-        println!("data files: {:?}", table_files.iter().map(|tf| &tf.file.path).collect::<Vec<_>>());
 
         Ok(Self {
             table_id,
@@ -108,48 +76,38 @@ impl DuckLakeTable {
         })
     }
 
-    /// Read all delete files and build a map of deleted row positions
-    ///
-    /// Returns: HashMap<data_file_path, HashSet<deleted_positions>>
-    async fn read_delete_files(
-        &self,
-        state: &dyn Session,
-    ) -> DataFusionResult<HashMap<String, HashSet<i64>>> {
-        let mut deleted_positions: HashMap<String, HashSet<i64>> = HashMap::new();
-
-        for table_file in &self.table_files {
-            if let Some(ref delete_file) = table_file.delete_file {
-                // Read the delete file Parquet
-                let batches = self.read_delete_file_parquet(state, delete_file).await?;
-
-                // Extract positions and merge into global map
-                for batch in batches {
-                    let positions = extract_deleted_positions(&batch)?;
-
-                    for (file_path, pos_set) in positions {
-                        deleted_positions
-                            .entry(file_path)
-                            .or_insert_with(HashSet::new)
-                            .extend(pos_set);
-                    }
-                }
+    /// Resolve a file path (data or delete file) to its absolute path
+    fn resolve_file_path(&self, file: &DuckLakeFileData) -> String {
+        if file.path_is_relative {
+            // Ensure data_path ends with separator before concatenating
+            if self.data_path.ends_with('/') || self.data_path.ends_with('\\') {
+                format!("{}{}", self.data_path, file.path)
+            } else {
+                format!("{}/{}", self.data_path, file.path)
             }
+        } else {
+            file.path.clone()
         }
-
-        Ok(deleted_positions)
     }
 
-    /// Read a single delete file Parquet and return RecordBatches
-    async fn read_delete_file_parquet(
+    /// Read a delete file and extract all deleted row positions
+    ///
+    /// The delete file is already associated with a specific data file via metadata.
+    /// We only need to extract the "pos" column - the "file_path" column is
+    /// metadata/documentation only (for Iceberg compatibility).
+    async fn read_delete_file_positions(
         &self,
         state: &dyn Session,
         delete_file: &DuckLakeFileData,
-    ) -> DataFusionResult<Vec<RecordBatch>> {
+    ) -> DataFusionResult<HashSet<i64>> {
         // Expected schema for delete files
         let delete_schema = Arc::new(Schema::new(vec![
             Field::new("file_path", DataType::Utf8, false),
             Field::new("pos", DataType::Int64, false),
         ]));
+
+        // Resolve the delete file path
+        let resolved_delete_path = self.resolve_file_path(delete_file);
 
         // Create file scan config for the delete file
         let file_scan_config = FileScanConfigBuilder::new(
@@ -158,7 +116,7 @@ impl DuckLakeTable {
             Arc::new(ParquetSource::default()),
         )
         .with_file_group(FileGroup::new(vec![PartitionedFile::new(
-            &delete_file.path,
+            &resolved_delete_path,
             delete_file.file_size_bytes as u64,
         )]))
         .build();
@@ -177,7 +135,13 @@ impl DuckLakeTable {
             .into_iter()
             .collect::<DataFusionResult<Vec<_>>>()?;
 
-        Ok(batches)
+        // Extract all positions from all batches
+        let mut positions = HashSet::new();
+        for batch in batches {
+            extract_deleted_positions_from_batch(&batch, &mut positions)?;
+        }
+
+        Ok(positions)
     }
 }
 
@@ -224,13 +188,13 @@ impl TableProvider for DuckLakeTable {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let format = ParquetFormat::new();
 
-        // Read all delete files and build position map
-        let deleted_positions = self.read_delete_files(state).await?;
-
-        // Create separate execution plans for each file to track file paths accurately
+        // Create separate execution plans for each file
         let mut execs: Vec<Arc<dyn ExecutionPlan>> = Vec::new();
 
         for table_file in &self.table_files {
+            // Resolve the data file path for scanning
+            let resolved_path = self.resolve_file_path(&table_file.file);
+
             let mut builder = FileScanConfigBuilder::new(
                 self.base_data_url.as_ref().clone(),
                 self.schema.clone(),
@@ -238,7 +202,7 @@ impl TableProvider for DuckLakeTable {
             )
             .with_limit(limit)
             .with_file_group(FileGroup::new(vec![PartitionedFile::new(
-                &table_file.file.path,
+                &resolved_path,
                 table_file.file.file_size_bytes as u64,
             )]));
 
@@ -251,13 +215,16 @@ impl TableProvider for DuckLakeTable {
 
             let parquet_exec = format.create_physical_plan(state, file_scan_config).await?;
 
-            // Wrap with delete filter if this file has deletes
-            let exec = if let Some(file_deletes) = deleted_positions.get(&table_file.file.path) {
-                if !file_deletes.is_empty() {
+            // Wrap with delete filter if this file has a delete file
+            // The metadata already tells us which delete file goes with this data file
+            let exec = if let Some(ref delete_file) = table_file.delete_file {
+                let deleted_positions = self.read_delete_file_positions(state, delete_file).await?;
+
+                if !deleted_positions.is_empty() {
                     Arc::new(DeleteFilterExec::new(
                         parquet_exec,
                         table_file.file.path.clone(),
-                        file_deletes.clone(),
+                        deleted_positions,
                     )) as Arc<dyn ExecutionPlan>
                 } else {
                     parquet_exec
@@ -285,49 +252,26 @@ impl TableProvider for DuckLakeTable {
 /// Extract deleted row positions from a delete file RecordBatch
 ///
 /// Delete files have schema: (file_path: VARCHAR, pos: INT64)
-/// Returns: HashMap<file_path, HashSet<positions>>
-fn extract_deleted_positions(
+/// We only extract the "pos" column - the "file_path" column is metadata/documentation
+/// only (for Iceberg compatibility). The metadata catalog already tells us which delete
+/// file is associated with which data file.
+fn extract_deleted_positions_from_batch(
     batch: &RecordBatch,
-) -> DataFusionResult<HashMap<String, HashSet<i64>>> {
-    let mut deleted_positions: HashMap<String, HashSet<i64>> = HashMap::new();
-
-    // Get columns
-    let file_paths = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .ok_or_else(|| {
-            DataFusionError::Internal("file_path column not found or wrong type".into())
-        })?;
-
-    let positions = batch
+    positions: &mut HashSet<i64>,
+) -> DataFusionResult<()> {
+    // Get the pos column (index 1)
+    let pos_array = batch
         .column(1)
         .as_any()
         .downcast_ref::<Int64Array>()
         .ok_or_else(|| DataFusionError::Internal("pos column not found or wrong type".into()))?;
 
-    // Build HashMap of file_path -> Set<position>
+    // Extract all non-null positions
     for i in 0..batch.num_rows() {
-        if file_paths.is_null(i) || positions.is_null(i) {
-            continue; // Skip null entries
+        if !pos_array.is_null(i) {
+            positions.insert(pos_array.value(i));
         }
-
-        let file_path = file_paths.value(i).to_string();
-
-        // Normalize the file path to absolute path if possible
-        // This ensures it matches the resolved paths in table_files
-        let normalized_path = std::path::PathBuf::from(&file_path)
-            .canonicalize()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or(file_path);
-
-        let pos = positions.value(i);
-
-        deleted_positions
-            .entry(normalized_path)
-            .or_insert_with(HashSet::new)
-            .insert(pos);
     }
 
-    Ok(deleted_positions)
+    Ok(())
 }
