@@ -188,10 +188,45 @@ impl TableProvider for DuckLakeTable {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let format = ParquetFormat::new();
 
-        // Create separate execution plans for each file
+        // Separate files into two groups: with deletes and without deletes
+        // This allows us to create a single efficient exec for files without deletes
+        let (files_with_deletes, files_without_deletes): (Vec<_>, Vec<_>) = self
+            .table_files
+            .iter()
+            .partition(|tf| tf.delete_file.is_some());
+
         let mut execs: Vec<Arc<dyn ExecutionPlan>> = Vec::new();
 
-        for table_file in &self.table_files {
+        // Create single exec for all files without deletes (more efficient)
+        if !files_without_deletes.is_empty() {
+            let partitioned_files: Vec<PartitionedFile> = files_without_deletes
+                .iter()
+                .map(|table_file| {
+                    let resolved_path = self.resolve_file_path(&table_file.file);
+                    PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64)
+                })
+                .collect();
+
+            let mut builder = FileScanConfigBuilder::new(
+                self.base_data_url.as_ref().clone(),
+                self.schema.clone(),
+                Arc::new(ParquetSource::default()),
+            )
+            .with_limit(limit)
+            .with_file_group(FileGroup::new(partitioned_files));
+
+            // Apply projection if provided
+            if let Some(proj) = projection {
+                builder = builder.with_projection(Some(proj.clone()));
+            }
+
+            let file_scan_config = builder.build();
+            let exec = format.create_physical_plan(state, file_scan_config).await?;
+            execs.push(exec);
+        }
+
+        // Only create separate execs for files with deletes
+        for table_file in files_with_deletes {
             // Resolve the data file path for scanning
             let resolved_path = self.resolve_file_path(&table_file.file);
 
@@ -215,12 +250,12 @@ impl TableProvider for DuckLakeTable {
 
             let parquet_exec = format.create_physical_plan(state, file_scan_config).await?;
 
-            // Wrap with delete filter if this file has a delete file
+            // Wrap with delete filter - we know there's a delete file since we partitioned
             // The metadata already tells us which delete file goes with this data file
-            let exec = if let Some(ref delete_file) = table_file.delete_file {
+            if let Some(ref delete_file) = table_file.delete_file {
                 let deleted_positions = self.read_delete_file_positions(state, delete_file).await?;
 
-                if !deleted_positions.is_empty() {
+                let exec = if !deleted_positions.is_empty() {
                     Arc::new(DeleteFilterExec::new(
                         parquet_exec,
                         table_file.file.path.clone(),
@@ -228,15 +263,13 @@ impl TableProvider for DuckLakeTable {
                     )) as Arc<dyn ExecutionPlan>
                 } else {
                     parquet_exec
-                }
-            } else {
-                parquet_exec
-            };
+                };
 
-            execs.push(exec);
+                execs.push(exec);
+            }
         }
 
-        // If we have multiple files, we need to union them
+        // Return single exec or union
         if execs.is_empty() {
             Err(DataFusionError::Internal("No data files found".into()))
         } else if execs.len() == 1 {
