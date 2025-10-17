@@ -271,7 +271,7 @@ impl TableProvider for DuckLakeTable {
 
         // If we have multiple files, we need to union them
         if execs.is_empty() {
-            return Err(DataFusionError::Internal("No data files found".into()));
+            Err(DataFusionError::Internal("No data files found".into()))
         } else if execs.len() == 1 {
             Ok(execs.into_iter().next().unwrap())
         } else {

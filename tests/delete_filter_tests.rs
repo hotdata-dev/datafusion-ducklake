@@ -35,19 +35,6 @@ fn get_int_column(batch: &RecordBatch, col_idx: usize) -> Vec<i32> {
     panic!("Column should be Int32Array or Int64Array, got {:?}", column.data_type());
 }
 
-/// Test helper to extract string values from a RecordBatch column
-fn get_string_column(batch: &RecordBatch, col_idx: usize) -> Vec<String> {
-    let array = batch
-        .column(col_idx)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("Column should be StringArray");
-
-    (0..array.len())
-        .filter_map(|i| if array.is_null(i) { None } else { Some(array.value(i).to_string()) })
-        .collect()
-}
-
 #[cfg(test)]
 mod unit_tests {
     use super::*;
@@ -354,7 +341,7 @@ mod integration_tests {
         let counts = batch
             .column(0)
             .as_any()
-            .downcast_ref::<arrow::array::Int64Array>()
+            .downcast_ref::<Int64Array>()
             .unwrap();
 
         assert_eq!(counts.value(0), 3, "Count should be 3 after filtering deletes");
@@ -385,7 +372,7 @@ mod integration_tests {
         let totals = batch
             .column(0)
             .as_any()
-            .downcast_ref::<arrow::array::Int64Array>()
+            .downcast_ref::<Int64Array>()
             .unwrap();
 
         // Updated quantities: 120 (id=1), 200 (id=2 unchanged), 180 (id=3)
