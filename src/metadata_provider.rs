@@ -44,27 +44,40 @@ pub const SQL_GET_DATA_FILES: &str = "
 pub const SQL_GET_DATA_PATH: &str =
     "SELECT value FROM ducklake_metadata WHERE key = 'data_path' AND scope IS NULL";
 
-/// Simple schema metadata returned by MetadataProvider
+/// Metadata for a schema in the DuckLake catalog
 #[derive(Debug, Clone)]
 pub struct SchemaMetadata {
+    /// Unique identifier for this schema in the catalog
     pub schema_id: i64,
+    /// Name of the schema as it appears in SQL queries
     pub schema_name: String,
+    /// Path to the schema's data directory (may be relative or absolute)
     pub path: String,
+    /// Whether the path is relative to the catalog's data_path
     pub path_is_relative: bool,
 }
 
-/// Simple table metadata returned by MetadataProvider
+/// Metadata for a table in the DuckLake catalog
 #[derive(Debug, Clone)]
 pub struct TableMetadata {
+    /// Unique identifier for this table in the catalog
     pub table_id: i64,
+    /// Name of the table as it appears in SQL queries
     pub table_name: String,
+    /// Path to the table's data directory (may be relative or absolute)
     pub path: String,
+    /// Whether the path is relative to the schema's path
     pub path_is_relative: bool,
 }
 
+/// Column definition for a DuckLake table
+#[derive(Debug, Clone)]
 pub struct DuckLakeTableColumn {
+    /// Unique identifier for this column in the catalog
     pub column_id: i64,
+    /// Name of the column
     pub column_name: String,
+    /// DuckLake type string (e.g., "varchar", "int64", "decimal(10,2)")
     pub column_type: String,
 }
 
@@ -78,12 +91,18 @@ impl DuckLakeTableColumn {
     }
 }
 
-#[derive(Debug)]
+/// Metadata for a data file or delete file in DuckLake
+#[derive(Debug, Clone)]
 pub struct DuckLakeFileData {
+    /// Path to the file (may be relative or absolute)
     pub path: String,
+    /// Whether the path is relative to the table's path
     pub path_is_relative: bool,
+    /// Encryption key for the file (currently unused, reserved for future use)
     pub encryption_key: String,
+    /// Size of the file in bytes
     pub file_size_bytes: i64,
+    /// Size of the Parquet footer in bytes (optional optimization hint)
     pub footer_size: Option<i64>,
 }
 
@@ -99,12 +118,18 @@ impl DuckLakeFileData {
     }
 }
 
-#[derive(Debug)]
+/// Represents a data file and its associated delete file (if any) for a DuckLake table
+#[derive(Debug, Clone)]
 pub struct DuckLakeTableFile {
+    /// Metadata for the data file
     pub file: DuckLakeFileData,
+    /// Optional associated delete file containing deleted row positions
     pub delete_file: Option<DuckLakeFileData>,
+    /// Starting row ID for this file (reserved for future use)
     pub row_id_start: Option<i64>,
+    /// Snapshot ID when this file was created (reserved for future use)
     pub snapshot_id: Option<i64>,
+    /// Maximum number of rows in this file (reserved for future use)
     pub max_row_count: Option<i64>,
 }
 
