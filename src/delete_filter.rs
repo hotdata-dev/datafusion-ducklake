@@ -25,8 +25,8 @@ pub struct DeleteFilterExec {
     input: Arc<dyn ExecutionPlan>,
     /// Path of the file being scanned
     file_path: String,
-    /// Set of deleted row positions for this file
-    deleted_positions: HashSet<i64>,
+    /// Set of deleted row positions for this file (shared across streams)
+    deleted_positions: Arc<HashSet<i64>>,
     /// Cached plan properties
     properties: PlanProperties,
 }
@@ -43,7 +43,7 @@ impl DeleteFilterExec {
         Self {
             input,
             file_path,
-            deleted_positions,
+            deleted_positions: Arc::new(deleted_positions),
             properties,
         }
     }
@@ -99,10 +99,13 @@ impl ExecutionPlan for DeleteFilterExec {
             ));
         }
 
+        // Clone the Arc (cheap) to get the HashSet for the new instance
+        let deleted_positions = (*self.deleted_positions).clone();
+
         Ok(Arc::new(DeleteFilterExec::new(
             children[0].clone(),
             self.file_path.clone(),
-            self.deleted_positions.clone(),
+            deleted_positions,
         )))
     }
 
@@ -115,7 +118,7 @@ impl ExecutionPlan for DeleteFilterExec {
 
         Ok(Box::pin(DeleteFilterStream {
             input: input_stream,
-            deleted_positions: self.deleted_positions.clone(),
+            deleted_positions: Arc::clone(&self.deleted_positions),
             row_offset: 0,
         }))
     }
@@ -124,7 +127,7 @@ impl ExecutionPlan for DeleteFilterExec {
 /// Stream that filters deleted rows from input batches
 struct DeleteFilterStream {
     input: SendableRecordBatchStream,
-    deleted_positions: HashSet<i64>,
+    deleted_positions: Arc<HashSet<i64>>,
     row_offset: i64,
 }
 
