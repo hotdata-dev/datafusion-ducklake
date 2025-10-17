@@ -1,5 +1,8 @@
 //! Type mapping from DuckLake types to Arrow types
 
+use std::sync::Arc;
+
+use crate::metadata_provider::DuckLakeTableColumn;
 use crate::{DuckLakeError, Result};
 use arrow::datatypes::{DataType, Field, IntervalUnit, TimeUnit};
 
@@ -133,9 +136,6 @@ fn parse_decimal(type_str: &str) -> Option<DataType> {
         _ => None,
     }
 }
-
-use crate::metadata_provider::DuckLakeTableColumn;
-use std::sync::Arc;
 
 /// Build an Arrow schema from a list of DuckLake table columns
 pub fn build_arrow_schema(columns: &[DuckLakeTableColumn]) -> Result<arrow::datatypes::Schema> {
