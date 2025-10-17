@@ -42,12 +42,20 @@ impl DuckLakeSchema {
         data_path: String,
     ) -> Self {
         // Query and cache tables for this schema
-        let tables = provider
-            .list_tables(schema_id)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|meta| (meta.table_name.clone(), meta))
-            .collect();
+        let tables = match provider.list_tables(schema_id) {
+            Ok(tables) => tables
+                .into_iter()
+                .map(|meta| (meta.table_name.clone(), meta))
+                .collect(),
+            Err(e) => {
+                tracing::error!(
+                    schema_id = schema_id,
+                    error = %e,
+                    "failed to list tables for schema"
+                );
+                HashMap::new()
+            }
+        };
 
         Self {
             schema_id,
