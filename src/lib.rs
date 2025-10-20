@@ -40,6 +40,7 @@ pub mod delete_filter;
 pub mod error;
 pub mod metadata_provider;
 pub mod metadata_provider_duckdb;
+pub mod path_resolver;
 pub mod schema;
 pub mod table;
 pub mod types;

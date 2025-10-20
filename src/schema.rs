@@ -10,6 +10,7 @@ use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::error::Result as DataFusionResult;
 
 use crate::metadata_provider::{MetadataProvider, TableMetadata};
+use crate::path_resolver::resolve_path;
 use crate::table::DuckLakeTable;
 
 /// DuckLake schema provider
@@ -82,20 +83,8 @@ impl SchemaProvider for DuckLakeSchema {
     async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
         match self.tables.get(name) {
             Some(meta) => {
-                // Resolve table path hierarchically
-                let table_path = if meta.path_is_relative {
-                    // Table path is relative to schema path
-                    // Ensure path ends with separator
-                    let data_path_normalized = if self.data_path.ends_with('/') || self.data_path.ends_with('\\') {
-                        self.data_path.clone()
-                    } else {
-                        format!("{}/", self.data_path)
-                    };
-                    format!("{}{}", data_path_normalized, meta.path)
-                } else {
-                    // Table path is absolute
-                    meta.path.clone()
-                };
+                // Resolve table path hierarchically using path_resolver utility
+                let table_path = resolve_path(&self.data_path, &meta.path, meta.path_is_relative);
 
                 let table = DuckLakeTable::new(
                     meta.table_id,

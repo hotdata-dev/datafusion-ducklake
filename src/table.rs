@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::Result;
 use crate::delete_filter::DeleteFilterExec;
 use crate::metadata_provider::{DuckLakeFileData, MetadataProvider};
+use crate::path_resolver::resolve_path;
 use crate::types::build_arrow_schema;
 use arrow::array::{Array, Int64Array};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -94,16 +95,7 @@ impl DuckLakeTable {
 
     /// Resolve a file path (data or delete file) to its absolute path
     fn resolve_file_path(&self, file: &DuckLakeFileData) -> String {
-        if file.path_is_relative {
-            // Ensure data_path ends with separator before concatenating
-            if self.data_path.ends_with('/') || self.data_path.ends_with('\\') {
-                format!("{}{}", self.data_path, file.path)
-            } else {
-                format!("{}/{}", self.data_path, file.path)
-            }
-        } else {
-            file.path.clone()
-        }
+        resolve_path(&self.data_path, &file.path, file.path_is_relative)
     }
 
     /// Read a delete file and extract all deleted row positions
