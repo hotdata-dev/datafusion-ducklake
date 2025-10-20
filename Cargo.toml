@@ -14,3 +14,11 @@ tokio = { version = "1", features = ["full"] }
 duckdb = { version = "1.4.1", features = ["bundled"] }
 futures = "0.3"
 tracing = "0.1"
+
+[dev-dependencies]
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["minio"] }
+tempfile = "3.14"
+anyhow = "1.0"
+aws-sdk-s3 = "1.75"
+aws-credential-types = "1.2"
