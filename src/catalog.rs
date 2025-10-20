@@ -20,15 +20,10 @@ pub struct DuckLakeCatalog {
     provider: Arc<dyn MetadataProvider>,
     /// Latest snapshot ID
     snapshot_id: i64,
-    #[allow(dead_code)]
-    /// Base data path for resolving relative file paths
-    /// example: s3://ducklake-data/prefix/
-    base_data_path: String,
-    /// Base key path for data. this is used to compute the key for the table files
-    /// example: prefix/
-    base_key_path: String,
-    /// the parsed ObjectStoreUrl of base_data_path
-    base_data_url: Arc<ObjectStoreUrl>,
+    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
+    object_store_url: Arc<ObjectStoreUrl>,
+    /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
+    catalog_path: String,
     /// Cached schema metadata (schema_name -> SchemaMetadata)
     schemas: HashMap<String, SchemaMetadata>,
 }
@@ -38,8 +33,8 @@ impl DuckLakeCatalog {
     pub fn new(provider: impl MetadataProvider + 'static) -> Result<Self> {
         let provider = Arc::new(provider) as Arc<dyn MetadataProvider>;
         let snapshot_id = provider.get_current_snapshot()?;
-        let base_data_path = provider.get_data_path()?;
-        let (base_data_url, base_key_path) = parse_object_store_url(&base_data_path)?;
+        let data_path = provider.get_data_path()?;
+        let (object_store_url, catalog_path) = parse_object_store_url(&data_path)?;
 
         // List and cache schemas
         let schema_list = provider.list_schemas()?;
@@ -52,9 +47,8 @@ impl DuckLakeCatalog {
         Ok(Self {
             provider,
             snapshot_id,
-            base_data_path,
-            base_key_path,
-            base_data_url: Arc::new(base_data_url),
+            object_store_url: Arc::new(object_store_url),
+            catalog_path,
             schemas,
         })
     }
@@ -78,8 +72,8 @@ impl CatalogProvider for DuckLakeCatalog {
         self.schemas.get(name).map(|meta| {
             // Resolve schema path hierarchically
             let schema_path = if meta.path_is_relative {
-                // Schema path is relative to global data_path
-                format!("{}{}", self.base_key_path, meta.path)
+                // Schema path is relative to catalog path
+                format!("{}{}", self.catalog_path, meta.path)
             } else {
                 // Schema path is absolute
                 meta.path.clone()
@@ -90,7 +84,7 @@ impl CatalogProvider for DuckLakeCatalog {
                 meta.schema_name.clone(),
                 Arc::clone(&self.provider),
                 self.snapshot_id,
-                self.base_data_url.clone(),
+                self.object_store_url.clone(),
                 schema_path,
             )) as Arc<dyn SchemaProvider>
         })

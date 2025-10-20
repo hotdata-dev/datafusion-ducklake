@@ -53,10 +53,10 @@ pub struct DuckLakeTable {
     provider: Arc<dyn MetadataProvider>,
     #[allow(dead_code)]
     snapshot_id: i64,
-    /// the base path to the data, e.g. s3://ducklake-data
-    base_data_url: Arc<ObjectStoreUrl>,
-    /// data path for this table, used to resolve relative file paths on-the-fly
-    data_path: String,
+    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
+    object_store_url: Arc<ObjectStoreUrl>,
+    /// Table path for resolving relative file paths
+    table_path: String,
     schema: SchemaRef,
     /// Table files with paths as stored in metadata (resolved on-the-fly when needed)
     table_files: Vec<crate::metadata_provider::DuckLakeTableFile>,
@@ -69,8 +69,8 @@ impl DuckLakeTable {
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
         snapshot_id: i64,
-        base_data_url: Arc<ObjectStoreUrl>,
-        data_path: String,
+        object_store_url: Arc<ObjectStoreUrl>,
+        table_path: String,
     ) -> Result<Self> {
         // Get table structure (columns)
         let columns = provider.get_table_structure(table_id)?;
@@ -86,8 +86,8 @@ impl DuckLakeTable {
             table_name: table_name.into(),
             provider,
             snapshot_id,
-            base_data_url,
-            data_path,
+            object_store_url,
+            table_path,
             schema,
             table_files,
         })
@@ -95,7 +95,7 @@ impl DuckLakeTable {
 
     /// Resolve a file path (data or delete file) to its absolute path
     fn resolve_file_path(&self, file: &DuckLakeFileData) -> String {
-        resolve_path(&self.data_path, &file.path, file.path_is_relative)
+        resolve_path(&self.table_path, &file.path, file.path_is_relative)
     }
 
     /// Read a delete file and extract all deleted row positions
@@ -116,7 +116,7 @@ impl DuckLakeTable {
 
         // Create file scan config for the delete file
         let file_scan_config = FileScanConfigBuilder::new(
-            self.base_data_url.as_ref().clone(),
+            self.object_store_url.as_ref().clone(),
             delete_schema,
             Arc::new(ParquetSource::default()),
         )
@@ -213,7 +213,7 @@ impl TableProvider for DuckLakeTable {
                 .collect();
 
             let mut builder = FileScanConfigBuilder::new(
-                self.base_data_url.as_ref().clone(),
+                self.object_store_url.as_ref().clone(),
                 self.schema.clone(),
                 Arc::new(ParquetSource::default()),
             )
@@ -236,7 +236,7 @@ impl TableProvider for DuckLakeTable {
             let resolved_path = self.resolve_file_path(&table_file.file);
 
             let mut builder = FileScanConfigBuilder::new(
-                self.base_data_url.as_ref().clone(),
+                self.object_store_url.as_ref().clone(),
                 self.schema.clone(),
                 Arc::new(ParquetSource::default()),
             )

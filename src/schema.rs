@@ -22,12 +22,12 @@ pub struct DuckLakeSchema {
     schema_id: i64,
     #[allow(dead_code)]
     schema_name: String,
-    /// the base path to the data, e.g. s3://ducklake-data
-    base_data_url: Arc<ObjectStoreUrl>,
+    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
+    object_store_url: Arc<ObjectStoreUrl>,
     provider: Arc<dyn MetadataProvider>,
     snapshot_id: i64,
-    /// Base data path for resolving relative file paths
-    data_path: String,
+    /// Schema path for resolving relative table paths
+    schema_path: String,
     /// Cached table metadata (table_name -> TableMetadata)
     tables: HashMap<String, TableMetadata>,
 }
@@ -39,8 +39,8 @@ impl DuckLakeSchema {
         schema_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
         snapshot_id: i64,
-        base_data_url: Arc<ObjectStoreUrl>,
-        data_path: String,
+        object_store_url: Arc<ObjectStoreUrl>,
+        schema_path: String,
     ) -> Self {
         // Query and cache tables for this schema
         let tables = match provider.list_tables(schema_id) {
@@ -63,8 +63,8 @@ impl DuckLakeSchema {
             schema_name: schema_name.into(),
             provider,
             snapshot_id,
-            base_data_url,
-            data_path,
+            object_store_url,
+            schema_path,
             tables,
         }
     }
@@ -84,14 +84,14 @@ impl SchemaProvider for DuckLakeSchema {
         match self.tables.get(name) {
             Some(meta) => {
                 // Resolve table path hierarchically using path_resolver utility
-                let table_path = resolve_path(&self.data_path, &meta.path, meta.path_is_relative);
+                let table_path = resolve_path(&self.schema_path, &meta.path, meta.path_is_relative);
 
                 let table = DuckLakeTable::new(
                     meta.table_id,
                     meta.table_name.clone(),
                     Arc::clone(&self.provider),
                     self.snapshot_id,
-                    self.base_data_url.clone(),
+                    self.object_store_url.clone(),
                     table_path,
                 )
                 .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
