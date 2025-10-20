@@ -1,11 +1,12 @@
 use crate::DuckLakeError;
 use crate::metadata_provider::{
     DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, MetadataProvider, SQL_GET_DATA_FILES,
-    SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT, SQL_GET_TABLE_COLUMNS, SQL_LIST_SCHEMAS,
-    SQL_LIST_TABLES, SchemaMetadata, TableMetadata,
+    SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT, SQL_GET_SCHEMA_BY_NAME, SQL_GET_TABLE_BY_NAME,
+    SQL_GET_TABLE_COLUMNS, SQL_LIST_SCHEMAS, SQL_LIST_TABLES, SQL_TABLE_EXISTS, SchemaMetadata,
+    TableMetadata,
 };
 use duckdb::AccessMode::ReadOnly;
-use duckdb::{Config, Connection};
+use duckdb::{params, Config, Connection};
 
 /// DuckDB metadata provider
 ///
@@ -180,5 +181,59 @@ impl MetadataProvider for DuckdbMetadataProvider {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
+    }
+
+    fn get_schema_by_name(&self, name: &str) -> crate::Result<Option<SchemaMetadata>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_GET_SCHEMA_BY_NAME)?;
+
+        let mut rows = stmt.query(params![name, self.snapshot_id, self.snapshot_id])?;
+
+        if let Some(row) = rows.next()? {
+            let schema_id: i64 = row.get(0)?;
+            let schema_name: String = row.get(1)?;
+            let path: String = row.get(2)?;
+            let path_is_relative: bool = row.get(3)?;
+            Ok(Some(SchemaMetadata {
+                schema_id,
+                schema_name,
+                path,
+                path_is_relative,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn get_table_by_name(&self, schema_id: i64, name: &str) -> crate::Result<Option<TableMetadata>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_GET_TABLE_BY_NAME)?;
+
+        let mut rows = stmt.query(params![&schema_id, &name, &self.snapshot_id, &self.snapshot_id])?;
+
+        if let Some(row) = rows.next()? {
+            let table_id: i64 = row.get(0)?;
+            let table_name: String = row.get(1)?;
+            let path: String = row.get(2)?;
+            let path_is_relative: bool = row.get(3)?;
+            Ok(Some(TableMetadata {
+                table_id,
+                table_name,
+                path,
+                path_is_relative,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn table_exists(&self, schema_id: i64, name: &str) -> crate::Result<bool> {
+        let conn = self.open_connection()?;
+        let exists: bool = conn.query_row(
+            SQL_TABLE_EXISTS,
+            params![schema_id, &name, &self.snapshot_id, &self.snapshot_id],
+            |row| row.get(0),
+        )?;
+        Ok(exists)
     }
 }

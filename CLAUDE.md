@@ -36,14 +36,17 @@ The codebase follows a layered architecture with clear separation of concerns:
 1. **MetadataProvider Layer** (`src/metadata_provider.rs`, `src/metadata_provider_duckdb.rs`)
    - Abstraction for querying DuckLake catalog metadata
    - `MetadataProvider` trait defines interface for listing schemas, tables, columns, and data files
+   - Also provides individual lookup methods: `get_schema_by_name()`, `get_table_by_name()`, and `table_exists()`
    - `DuckdbMetadataProvider` implements the trait using DuckDB as the catalog backend
    - Executes SQL queries against standard DuckLake catalog tables (`ducklake_snapshot`, `ducklake_schema`, `ducklake_table`, `ducklake_column`, `ducklake_data_file`, `ducklake_metadata`)
+   - Thread-safe: Opens a new read-only connection for each query
 
 2. **DataFusion Integration Layer** (`src/catalog.rs`, `src/schema.rs`, `src/table.rs`)
    - Bridges DuckLake concepts to DataFusion's catalog system
-   - `DuckLakeCatalog`: Implements `CatalogProvider`, manages schemas and snapshot resolution
-   - `DuckLakeSchema`: Implements `SchemaProvider`, lists and provides access to tables
-   - `DuckLakeTable`: Implements `TableProvider`, executes queries against Parquet files and handles object store URL resolution
+   - `DuckLakeCatalog`: Implements `CatalogProvider`, uses dynamic metadata lookup (queries on every call to `schema()` and `schema_names()`)
+   - `DuckLakeSchema`: Implements `SchemaProvider`, uses dynamic metadata lookup (queries on every call to `table()` and `table_names()`)
+   - `DuckLakeTable`: Implements `TableProvider`, caches table structure and file lists at creation time
+   - **No HashMaps**: Catalog and schema providers query metadata on-demand rather than caching
 
 3. **Type Mapping** (`src/types.rs`)
    - Converts DuckLake type strings to Arrow DataTypes
@@ -52,14 +55,43 @@ The codebase follows a layered architecture with clear separation of concerns:
    - Partial support for complex types (lists, structs, maps)
    - `build_arrow_schema()` constructs Arrow schemas from DuckLake column metadata
 
+### Dynamic Metadata Lookup
+
+The catalog uses a **pure dynamic lookup** approach with no caching at the catalog/schema level:
+
+- **DuckLakeCatalog** (`catalog.rs`):
+  - `schema_names()`: Queries `list_schemas()` on every call
+  - `schema()`: Queries `get_schema_by_name()` on every call
+  - `new()`: O(1) - only fetches snapshot ID and data_path
+
+- **DuckLakeSchema** (`schema.rs`):
+  - `table_names()`: Queries `list_tables()` on every call
+  - `table()`: Queries `get_table_by_name()` on every call
+  - `table_exist()`: Queries `table_exists()` on every call
+  - `new()`: O(1) - just stores IDs and paths
+
+- **DuckLakeTable** (`table.rs`):
+  - Still caches table structure and file lists at creation time
+  - This is necessary for query planning and execution
+
+**Benefits**:
+- O(1) memory usage regardless of catalog size
+- Fast catalog startup (no upfront schema/table listing)
+- Always fresh metadata (no stale cache issues)
+- Simple implementation (no cache invalidation logic)
+
+**Trade-offs**:
+- Small query overhead per metadata lookup (acceptable for read-only DuckDB connections)
+- Future optimization: Add optional caching layer via wrapper implementation
+
 ### Data Flow
 
 When querying a DuckLake table:
 1. User creates a `SessionContext` with a `RuntimeEnv` and registers a `DuckLakeCatalog`
 2. User registers required object stores (S3, MinIO, etc.) with the `RuntimeEnv`
 3. SQL query references table as `catalog.schema.table`
-4. DataFusion resolves path: catalog -> schema -> table
-5. `DuckLakeTable` queries metadata provider for table structure and data files
+4. DataFusion resolves path: catalog -> schema -> table (queries metadata on-demand)
+5. `DuckLakeTable` queries metadata provider for table structure and data files (cached)
 6. Paths are resolved hierarchically:
    - Global `data_path` from `ducklake_metadata` table
    - Schema path (relative to `data_path` or absolute)

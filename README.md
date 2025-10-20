@@ -21,6 +21,16 @@ A DataFusion extension for querying [DuckLake](https://ducklake.select). DuckLak
 - No filter-based file pruning
 - File size metadata hardcoded in scan operations
 
+## TODO
+- [ ] Use parquet footer size from metadata
+- [ ] Support caching metadata
+- [ ] Support alternative metadata databases
+  - [ ] postgres
+  - [ ] sqlite
+  - [ ] mysql
+- [ ] Writes
+- [ ] Timetravel
+
 ## Usage
 ### Example
 ```bash

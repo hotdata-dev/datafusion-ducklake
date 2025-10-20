@@ -44,6 +44,28 @@ pub const SQL_GET_DATA_FILES: &str = "
 pub const SQL_GET_DATA_PATH: &str =
     "SELECT value FROM ducklake_metadata WHERE key = 'data_path' AND scope IS NULL";
 
+pub const SQL_GET_SCHEMA_BY_NAME: &str =
+    "SELECT schema_id, schema_name, path, path_is_relative FROM ducklake_schema
+     WHERE schema_name = ?
+       AND ? >= begin_snapshot
+       AND (? < end_snapshot OR end_snapshot IS NULL)";
+
+pub const SQL_GET_TABLE_BY_NAME: &str =
+    "SELECT table_id, table_name, path, path_is_relative FROM ducklake_table
+     WHERE schema_id = ?
+       AND table_name = ?
+       AND ? >= begin_snapshot
+       AND (? < end_snapshot OR end_snapshot IS NULL)";
+
+pub const SQL_TABLE_EXISTS: &str =
+    "SELECT EXISTS(
+       SELECT 1 FROM ducklake_table
+       WHERE schema_id = ?
+         AND table_name = ?
+         AND ? >= begin_snapshot
+         AND (? < end_snapshot OR end_snapshot IS NULL)
+     )";
+
 /// Metadata for a schema in the DuckLake catalog
 #[derive(Debug, Clone)]
 pub struct SchemaMetadata {
@@ -153,4 +175,9 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;
     fn get_table_files_for_select(&self, table_id: i64) -> Result<Vec<DuckLakeTableFile>>;
     //     todo: support select with file pruning
+
+    // Dynamic lookup methods for on-demand metadata retrieval
+    fn get_schema_by_name(&self, name: &str) -> Result<Option<SchemaMetadata>>;
+    fn get_table_by_name(&self, schema_id: i64, name: &str) -> Result<Option<TableMetadata>>;
+    fn table_exists(&self, schema_id: i64, name: &str) -> Result<bool>;
 }

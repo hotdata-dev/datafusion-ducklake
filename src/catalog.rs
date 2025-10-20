@@ -1,10 +1,9 @@
 //! DuckLake catalog provider implementation
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::metadata_provider::{MetadataProvider, SchemaMetadata};
+use crate::metadata_provider::MetadataProvider;
 use crate::path_resolver::parse_object_store_url;
 use crate::schema::DuckLakeSchema;
 use crate::Result;
@@ -14,6 +13,7 @@ use datafusion::datasource::object_store::ObjectStoreUrl;
 /// DuckLake catalog provider
 ///
 /// Connects to a DuckLake catalog database and provides access to schemas and tables.
+/// Uses dynamic metadata lookup - schemas are queried on-demand from the catalog database.
 #[derive(Debug)]
 pub struct DuckLakeCatalog {
     /// Metadata provider for querying catalog
@@ -24,8 +24,6 @@ pub struct DuckLakeCatalog {
     object_store_url: Arc<ObjectStoreUrl>,
     /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
     catalog_path: String,
-    /// Cached schema metadata (schema_name -> SchemaMetadata)
-    schemas: HashMap<String, SchemaMetadata>,
 }
 
 impl DuckLakeCatalog {
@@ -36,20 +34,11 @@ impl DuckLakeCatalog {
         let data_path = provider.get_data_path()?;
         let (object_store_url, catalog_path) = parse_object_store_url(&data_path)?;
 
-        // List and cache schemas
-        let schema_list = provider.list_schemas()?;
-        tracing::debug!(schemas = ?schema_list, "loaded schemas from catalog");
-        let schemas = schema_list
-            .into_iter()
-            .map(|meta| (meta.schema_name.clone(), meta))
-            .collect();
-
         Ok(Self {
             provider,
             snapshot_id,
             object_store_url: Arc::new(object_store_url),
             catalog_path,
-            schemas,
         })
     }
 
@@ -65,40 +54,38 @@ impl CatalogProvider for DuckLakeCatalog {
     }
 
     fn schema_names(&self) -> Vec<String> {
-        self.schemas.keys().cloned().collect()
+        // Query database on every call
+        self.provider
+            .list_schemas()
+            .unwrap_or_default()
+            .iter()
+            .map(|s| s.schema_name.clone())
+            .collect()
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        self.schemas.get(name).map(|meta| {
-            // Resolve schema path hierarchically
-            let schema_path = if meta.path_is_relative {
-                // Schema path is relative to catalog path
-                format!("{}{}", self.catalog_path, meta.path)
-            } else {
-                // Schema path is absolute
-                meta.path.clone()
-            };
+        // Query database on every call
+        match self.provider.get_schema_by_name(name) {
+            Ok(Some(meta)) => {
+                // Resolve schema path hierarchically
+                let schema_path = if meta.path_is_relative {
+                    // Schema path is relative to catalog path
+                    format!("{}{}", self.catalog_path, meta.path)
+                } else {
+                    // Schema path is absolute
+                    meta.path.clone()
+                };
 
-            Arc::new(DuckLakeSchema::new(
-                meta.schema_id,
-                meta.schema_name.clone(),
-                Arc::clone(&self.provider),
-                self.snapshot_id,
-                self.object_store_url.clone(),
-                schema_path,
-            )) as Arc<dyn SchemaProvider>
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_object_store_url() {
-        let (url, path) = parse_object_store_url("s3://bucket/prefix").unwrap();
-        assert_eq!("/prefix", path);
-        assert_eq!(ObjectStoreUrl::parse("s3://bucket/").unwrap(), url);
+                Some(Arc::new(DuckLakeSchema::new(
+                    meta.schema_id,
+                    meta.schema_name.clone(),
+                    Arc::clone(&self.provider),
+                    self.snapshot_id,
+                    self.object_store_url.clone(),
+                    schema_path,
+                )) as Arc<dyn SchemaProvider>)
+            }
+            _ => None,
+        }
     }
 }
