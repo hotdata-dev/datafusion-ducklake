@@ -110,16 +110,19 @@ impl DuckLakeTable {
         // Resolve the delete file path
         let resolved_delete_path = self.resolve_file_path(delete_file);
 
+        // Create PartitionedFile with footer size hint if available
+        let mut pf = PartitionedFile::new(&resolved_delete_path, delete_file.file_size_bytes as u64);
+        if let Some(footer_size) = delete_file.footer_size {
+            pf = pf.with_metadata_size_hint(footer_size as usize);
+        }
+
         // Create file scan config for the delete file
         let file_scan_config = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             delete_schema,
             Arc::new(ParquetSource::default()),
         )
-        .with_file_group(FileGroup::new(vec![PartitionedFile::new(
-            &resolved_delete_path,
-            delete_file.file_size_bytes as u64,
-        )]))
+        .with_file_group(FileGroup::new(vec![pf]))
         .build();
 
         // Create Parquet execution plan
@@ -160,7 +163,15 @@ impl DuckLakeTable {
             .iter()
             .map(|table_file| {
                 let resolved_path = self.resolve_file_path(&table_file.file);
-                PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64)
+                let mut pf = PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);
+
+                // Apply footer size hint if available from DuckLake metadata
+                // This reduces I/O from 2 reads to 1 read per file (especially beneficial for S3/MinIO)
+                if let Some(footer_size) = table_file.file.footer_size {
+                    pf = pf.with_metadata_size_hint(footer_size as usize);
+                }
+
+                pf
             })
             .collect();
 
@@ -195,16 +206,19 @@ impl DuckLakeTable {
         // Resolve the data file path for scanning
         let resolved_path = self.resolve_file_path(&table_file.file);
 
+        // Create PartitionedFile with footer size hint if available
+        let mut pf = PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);
+        if let Some(footer_size) = table_file.file.footer_size {
+            pf = pf.with_metadata_size_hint(footer_size as usize);
+        }
+
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             self.schema.clone(),
             Arc::new(ParquetSource::default()),
         )
         .with_limit(limit)
-        .with_file_group(FileGroup::new(vec![PartitionedFile::new(
-            &resolved_path,
-            table_file.file.file_size_bytes as u64,
-        )]));
+        .with_file_group(FileGroup::new(vec![pf]));
 
         // Apply projection if provided
         if let Some(proj) = projection {

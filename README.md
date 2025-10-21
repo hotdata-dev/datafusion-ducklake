@@ -22,7 +22,6 @@ A DataFusion extension for querying [DuckLake](https://ducklake.select). DuckLak
 - File size metadata hardcoded in scan operations
 
 ## TODO
-- [ ] Use parquet footer size from metadata
 - [ ] Support caching metadata
 - [ ] Support alternative metadata databases
   - [ ] postgres
