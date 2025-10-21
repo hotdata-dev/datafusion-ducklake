@@ -1,102 +1,57 @@
 //! Error types for the DuckLake DataFusion extension
 
-use std::fmt;
+use thiserror::Error;
 
 /// Error type for DuckLake operations
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum DuckLakeError {
     /// Error from DataFusion
-    DataFusion(datafusion::error::DataFusionError),
+    #[error("DataFusion error: {0}")]
+    DataFusion(#[from] datafusion::error::DataFusionError),
 
     /// Error from Arrow
-    Arrow(arrow::error::ArrowError),
+    #[error("Arrow error: {0}")]
+    Arrow(#[from] arrow::error::ArrowError),
 
     /// DuckDB error
-    DuckDb(duckdb::Error),
+    #[error("DuckDB error: {0}")]
+    DuckDb(#[from] duckdb::Error),
 
     /// Catalog not found
+    #[error("Catalog not found: {0}")]
     CatalogNotFound(String),
 
     /// Schema not found
+    #[error("Schema not found: {0}")]
     SchemaNotFound(String),
 
     /// Table not found
+    #[error("Table not found: {0}")]
     TableNotFound(String),
 
     /// Invalid snapshot
+    #[error("Invalid snapshot: {0}")]
     InvalidSnapshot(String),
 
     /// Invalid catalog configuration
+    #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
     /// Unsupported DuckLake type
+    #[error("Unsupported DuckLake type: {0}")]
     UnsupportedType(String),
 
     /// Unsupported feature
+    #[error("Unsupported feature: {0}")]
     Unsupported(String),
 
     /// IO error
-    Io(std::io::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 
     /// Generic error
+    #[error("Internal error: {0}")]
     Internal(String),
-}
-
-impl fmt::Display for DuckLakeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DuckLakeError::DataFusion(e) => write!(f, "DataFusion error: {}", e),
-            DuckLakeError::Arrow(e) => write!(f, "Arrow error: {}", e),
-            DuckLakeError::DuckDb(e) => write!(f, "DuckDB error: {}", e),
-            DuckLakeError::CatalogNotFound(name) => write!(f, "Catalog not found: {}", name),
-            DuckLakeError::SchemaNotFound(name) => write!(f, "Schema not found: {}", name),
-            DuckLakeError::TableNotFound(name) => write!(f, "Table not found: {}", name),
-            DuckLakeError::InvalidSnapshot(msg) => write!(f, "Invalid snapshot: {}", msg),
-            DuckLakeError::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
-            DuckLakeError::UnsupportedType(type_name) => {
-                write!(f, "Unsupported DuckLake type: {}", type_name)
-            }
-            DuckLakeError::Unsupported(msg) => write!(f, "Unsupported feature: {}", msg),
-            DuckLakeError::Io(e) => write!(f, "IO error: {}", e),
-            DuckLakeError::Internal(msg) => write!(f, "Internal error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for DuckLakeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            DuckLakeError::DataFusion(e) => Some(e),
-            DuckLakeError::Arrow(e) => Some(e),
-            DuckLakeError::DuckDb(e) => Some(e),
-            DuckLakeError::Io(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<datafusion::error::DataFusionError> for DuckLakeError {
-    fn from(err: datafusion::error::DataFusionError) -> Self {
-        DuckLakeError::DataFusion(err)
-    }
-}
-
-impl From<arrow::error::ArrowError> for DuckLakeError {
-    fn from(err: arrow::error::ArrowError) -> Self {
-        DuckLakeError::Arrow(err)
-    }
-}
-
-impl From<std::io::Error> for DuckLakeError {
-    fn from(err: std::io::Error) -> Self {
-        DuckLakeError::Io(err)
-    }
-}
-
-impl From<duckdb::Error> for DuckLakeError {
-    fn from(err: duckdb::Error) -> Self {
-        DuckLakeError::DuckDb(err)
-    }
 }
 
 impl From<DuckLakeError> for datafusion::error::DataFusionError {
