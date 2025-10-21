@@ -387,18 +387,22 @@ async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
 
         let task = tokio::spawn(async move {
             let ctx = SessionContext::new();
-            ctx.register_catalog("no_deletes", catalog_clone);
+            let catalog_name = "no_deletes";
+            ctx.register_catalog(catalog_name, catalog_clone);
 
-            // Access schema names (triggers metadata query)
-            // Some DataFusion versions may not support SHOW SCHEMAS,
-            // so we'll just try to access the table directly which also
-            // exercises metadata access
-            let df = ctx
-                .sql("SELECT * FROM no_deletes.main.users LIMIT 1")
-                .await?;
-            let results = df.collect().await?;
+            let schema_names = ctx
+                .catalog(catalog_name)
+                .unwrap()
+                .schema_names();
 
-            assert!(!results.is_empty(), "Task {} got empty results", task_id);
+            assert_eq!(1, schema_names.len());
+            assert_eq!(schema_names, vec!["main"]);
+
+            schema_names.iter().for_each(|s| {
+                let table_names = ctx.catalog(catalog_name).unwrap().schema(s).unwrap().table_names();
+                assert_eq!(1, table_names.len());
+                assert_eq!(table_names, vec!["users"]);
+            });
 
             Ok::<_, DataFusionError>(task_id)
         });
