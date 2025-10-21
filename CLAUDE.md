@@ -38,8 +38,9 @@ The codebase follows a layered architecture with clear separation of concerns:
    - `MetadataProvider` trait defines interface for listing schemas, tables, columns, and data files
    - Also provides individual lookup methods: `get_schema_by_name()`, `get_table_by_name()`, and `table_exists()`
    - `DuckdbMetadataProvider` implements the trait using DuckDB as the catalog backend
-   - Executes SQL queries against standard DuckLake catalog tables (`ducklake_snapshot`, `ducklake_schema`, `ducklake_table`, `ducklake_column`, `ducklake_data_file`, `ducklake_metadata`)
+   - Executes SQL queries against standard DuckLake catalog tables (`ducklake_snapshot`, `ducklake_schema`, `ducklake_table`, `ducklake_column`, `ducklake_data_file`, `ducklake_delete_file`, `ducklake_metadata`)
    - Thread-safe: Opens a new read-only connection for each query
+   - Supports delete files: `get_table_files_for_select()` returns data files with associated delete files
 
 2. **DataFusion Integration Layer** (`src/catalog.rs`, `src/schema.rs`, `src/table.rs`)
    - Bridges DuckLake concepts to DataFusion's catalog system
@@ -48,11 +49,25 @@ The codebase follows a layered architecture with clear separation of concerns:
    - `DuckLakeTable`: Implements `TableProvider`, caches table structure and file lists at creation time
    - **No HashMaps**: Catalog and schema providers query metadata on-demand rather than caching
 
-3. **Type Mapping** (`src/types.rs`)
+3. **Path Resolution** (`src/path_resolver.rs`)
+   - Centralized utilities for parsing object store URLs and resolving hierarchical paths
+   - `parse_object_store_url()`: Parses S3, file://, or local paths into ObjectStoreUrl and path components
+   - `resolve_path()`: Resolves relative or absolute paths in the catalog hierarchy
+   - `PathResolver`: Maintains base URL and path for hierarchical resolution (catalog -> schema -> table -> file)
+   - Handles S3, MinIO, and local filesystem paths uniformly
+
+4. **Delete File Filtering** (`src/delete_filter.rs`)
+   - `DeleteFilterExec`: Custom execution plan that wraps Parquet scans and filters deleted rows
+   - Implements MOR (Merge-On-Read) pattern for row-level deletes
+   - Delete files contain `(file_path: VARCHAR, pos: INT64)` schema
+   - Efficiently filters rows by position during query execution
+   - Supports COUNT(*) optimization (zero-column batches)
+
+5. **Type Mapping** (`src/types.rs`)
    - Converts DuckLake type strings to Arrow DataTypes
    - Handles basic types (integers, floats, strings, dates, timestamps)
    - Supports decimals with precision/scale parsing
-   - Partial support for complex types (lists, structs, maps)
+   - Complex types (lists, structs, maps) return proper errors instead of silently failing
    - `build_arrow_schema()` constructs Arrow schemas from DuckLake column metadata
 
 ### Dynamic Metadata Lookup
@@ -91,14 +106,19 @@ When querying a DuckLake table:
 2. User registers required object stores (S3, MinIO, etc.) with the `RuntimeEnv`
 3. SQL query references table as `catalog.schema.table`
 4. DataFusion resolves path: catalog -> schema -> table (queries metadata on-demand)
-5. `DuckLakeTable` queries metadata provider for table structure and data files (cached)
-6. Paths are resolved hierarchically:
+5. `DuckLakeTable` queries metadata provider for table structure and data files (cached at table creation)
+6. Paths are resolved hierarchically using `path_resolver` utilities:
    - Global `data_path` from `ducklake_metadata` table
    - Schema path (relative to `data_path` or absolute)
    - Table path (relative to schema path or absolute)
    - File paths (relative to table path or absolute)
 7. `DuckLakeTable` resolves file paths to ObjectStoreUrl and relative paths
-8. DataFusion scans Parquet files using registered object stores
+8. For each file, check if delete file exists (from metadata join)
+9. Files without deletes are grouped into a single efficient `ParquetExec`
+10. Files with deletes get individual `ParquetExec` wrapped in `DeleteFilterExec`
+11. All execution plans are combined with `UnionExec` if multiple plans exist
+12. DataFusion scans Parquet files using registered object stores
+13. Delete filters apply row position filtering during streaming execution
 
 ### Path Resolution Hierarchy
 
@@ -108,7 +128,10 @@ DuckLake supports hierarchical path resolution with relative and absolute paths:
 - **table.path**: May be relative to resolved schema path or absolute
 - **file.path**: May be relative to resolved table path or absolute
 
-See `catalog.rs:91-106` and `table.rs:66-74` for path resolution logic.
+See `path_resolver.rs` for centralized path resolution logic, particularly:
+- `parse_object_store_url()`: Converts paths to ObjectStoreUrl + key path
+- `resolve_path()`: Handles relative/absolute path resolution
+- `PathResolver`: Hierarchical resolver with `child_resolver()` for multi-level paths
 
 ### Object Store Registration
 
@@ -119,9 +142,9 @@ Object stores must be registered with DataFusion's `RuntimeEnv` before querying:
 - See `examples/basic_query.rs` for S3/MinIO configuration examples
 
 The `DuckLakeTable` provider handles URL resolution by:
-- Parsing file paths to determine storage scheme (s3://, file://, etc.)
-- Extracting bucket names and relative paths for DataFusion's file scan operations
-- See `table.rs:91-197` for path resolution and normalization logic
+- Using `path_resolver::resolve_path()` to resolve file paths hierarchically
+- Passing resolved absolute paths to DataFusion's `PartitionedFile`
+- Leveraging the `ObjectStoreUrl` from catalog initialization for all file operations
 
 ## Key Implementation Details
 
@@ -133,12 +156,34 @@ The `DuckLakeTable` provider handles URL resolution by:
 ### Parquet File Scanning
 - Uses DataFusion's `FileScanConfigBuilder` and `ParquetFormat`
 - Files are organized into `FileGroup` for parallel scanning
-- Note: File sizes are currently hardcoded in `table.rs:239` (TODO to fix)
+- **Footer Size Optimization**: Parquet footer sizes stored in metadata and passed via `with_metadata_size_hint()`
+  - Reduces I/O from 2 reads to 1 read per file (especially beneficial for S3/MinIO)
+  - Applied to both data files and delete files
+- Files without delete files are grouped into a single `ParquetExec` for efficiency
+- Files with delete files get individual `ParquetExec` wrapped in `DeleteFilterExec`
+
+### Delete File Implementation
+- **Delete files** contain row positions to exclude: `(file_path: VARCHAR, pos: INT64)`
+- Metadata join in `SQL_GET_DATA_FILES` associates delete files with data files
+- `DeleteFilterExec` wraps Parquet scans and filters rows by global position
+- Supports MOR (Merge-On-Read) pattern for efficient row-level deletes
+- Handles edge cases: COUNT(*) optimization, empty batches, all rows deleted
+- See `delete_filter.rs` and `tests/delete_filter_tests.rs` for implementation and tests
+
+### Filter Pushdown
+- Implements `supports_filters_pushdown()` returning `Inexact` for all filters
+- Allows DataFusion to push filters to Parquet for:
+  - Row group pruning via statistics
+  - Page-level filtering with late materialization
+  - Bloom filter lookups (if available)
+- Marks filters as `Inexact` because delete filtering happens after Parquet scan
+- DataFusion automatically reapplies filters after `DeleteFilterExec` for correctness
 
 ### Type System
 - DuckLake types are stored as strings in catalog
 - Type mapping handles SQL type aliases (e.g., "bigint" -> Int64, "text" -> Utf8)
 - Geometry types are mapped to Binary (WKB format)
+- Complex types (nested lists, structs, maps) return descriptive errors instead of silently failing
 
 ## Development Notes
 
@@ -161,7 +206,21 @@ runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 
 ### Current Limitations
 - Read-only access (no writes to DuckLake catalogs)
-- Complex types (nested lists, structs, maps) have minimal parsing
-- File sizes hardcoded in scan operations
-- No file pruning based on filters (see `metadata_provider.rs:113`)
+- Complex types (nested lists, structs, maps) return errors (not yet supported)
+- No partition-based file pruning (TODO: add to `MetadataProvider` trait)
 - Single metadata provider implementation (DuckDB only)
+- No optional metadata caching layer (all lookups are dynamic)
+
+### Testing
+The project includes comprehensive tests:
+- **Unit tests**: `src/delete_filter.rs` - Delete file schema and position extraction
+- **Integration tests**: `tests/delete_filter_tests.rs` - End-to-end delete filtering scenarios
+- **Object store tests**: `tests/object_store_integration_test.rs` - S3/MinIO integration
+- Test data setup scripts in `tests/test_data/` (if applicable)
+
+Run tests with:
+```bash
+cargo test                    # All tests
+cargo test delete_filter      # Delete file tests only
+cargo test --ignored          # Performance benchmarks
+```

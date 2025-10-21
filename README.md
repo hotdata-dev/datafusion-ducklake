@@ -12,14 +12,17 @@ A DataFusion extension for querying [DuckLake](https://ducklake.select). DuckLak
 - Snapshot-based consistency
 - Basic and decimal types
 - Hierarchical path resolution (data_path, schema, table, file)
+- Delete files for row-level deletion (MOR - Merge-On-Read)
+- Parquet footer size hints for optimized I/O
+- Filter pushdown to Parquet for row group pruning and page-level filtering
+- Dynamic metadata lookup (no upfront catalog caching)
 
 ## Known Limitations
 
-- Delete files not yet implemented
 - Complex types (nested lists, structs, maps) have minimal support
 - No write operations
-- No filter-based file pruning
-- File size metadata hardcoded in scan operations
+- No filter-based file pruning (partition pruning not yet implemented)
+- Single metadata provider implementation (DuckDB only)
 
 ## TODO
 - [ ] Support caching metadata
