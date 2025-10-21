@@ -166,14 +166,14 @@ impl MetadataProvider for DuckdbMetadataProvider {
                         None
                     };
 
-                    let delete_count: Option<i64> = row.get(10)?;
+                    let _delete_count: Option<i64> = row.get(10)?;
 
                     Ok(DuckLakeTableFile {
                         file: data_file,
                         delete_file,
                         row_id_start: None,
                         snapshot_id: Some(snapshot_id),
-                        max_row_count: delete_count,
+                        max_row_count: None,  // Set to None until we have actual row count from data file metadata
                     })
                 },
             )?
