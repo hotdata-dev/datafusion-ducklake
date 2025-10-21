@@ -214,3 +214,147 @@ impl RecordBatchStream for DeleteFilterStream {
         self.input.schema()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{Array, Int32Array};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::physical_plan::EmptyRecordBatchStream;
+
+    #[test]
+    fn test_filter_batch_ignores_out_of_bounds_positions() {
+        // Create a simple RecordBatch with 4 rows
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+        ]));
+
+        let id_array = Int32Array::from(vec![1, 2, 3, 4]);
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(id_array) as Arc<dyn Array>],
+        )
+        .unwrap();
+
+        // Create delete positions: 1 (valid), 1000, 2000, 5000 (all out of bounds)
+        // Only position 1 should actually delete a row (the row with id=2)
+        let deleted_positions: HashSet<i64> = [1, 1000, 2000, 5000].into_iter().collect();
+
+        // Create a DeleteFilterStream with row_offset=0
+        let stream = DeleteFilterStream {
+            input: Box::pin(EmptyRecordBatchStream::new(schema.clone())),
+            deleted_positions: Arc::new(deleted_positions),
+            row_offset: 0,
+        };
+
+        // Apply the filter
+        let filtered_batch = stream.filter_batch(&batch).unwrap();
+
+        // Should have 3 rows (only position 1 was deleted, positions 1000+ are out of bounds)
+        assert_eq!(
+            filtered_batch.num_rows(),
+            3,
+            "Expected 3 rows after filtering (only position 1 is valid)"
+        );
+
+        // Verify the correct rows remain (ids 1, 3, 4)
+        let filtered_ids = filtered_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+
+        let ids: Vec<i32> = filtered_ids.values().to_vec();
+        assert_eq!(
+            ids,
+            vec![1, 3, 4],
+            "Expected ids [1, 3, 4] after deleting position 1 (id=2)"
+        );
+    }
+
+    #[test]
+    fn test_filter_batch_all_out_of_bounds_positions() {
+        // Test the edge case where ALL delete positions are beyond the file
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+        ]));
+
+        let id_array = Int32Array::from(vec![10, 20, 30]);
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(id_array) as Arc<dyn Array>],
+        )
+        .unwrap();
+
+        // All positions are way beyond the 3-row file
+        let deleted_positions: HashSet<i64> = [1000, 2000, 3000, 9999].into_iter().collect();
+
+        let stream = DeleteFilterStream {
+            input: Box::pin(EmptyRecordBatchStream::new(schema.clone())),
+            deleted_positions: Arc::new(deleted_positions),
+            row_offset: 0,
+        };
+
+        let filtered_batch = stream.filter_batch(&batch).unwrap();
+
+        // Should have all 3 rows (no valid delete positions)
+        assert_eq!(
+            filtered_batch.num_rows(),
+            3,
+            "All rows should remain when delete positions are out of bounds"
+        );
+
+        let filtered_ids = filtered_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+
+        let ids: Vec<i32> = filtered_ids.values().to_vec();
+        assert_eq!(ids, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn test_filter_batch_with_row_offset() {
+        // Test that row_offset is correctly considered when checking positions
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("value", DataType::Int32, false),
+        ]));
+
+        let array = Int32Array::from(vec![100, 200, 300, 400]);
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(array) as Arc<dyn Array>],
+        )
+        .unwrap();
+
+        // Delete position 11 and 1000 (way out of bounds)
+        // With row_offset=10, this batch contains global positions [10, 11, 12, 13]
+        // So position 11 should delete the second row (value=200)
+        let deleted_positions: HashSet<i64> = [11, 1000].into_iter().collect();
+
+        let stream = DeleteFilterStream {
+            input: Box::pin(EmptyRecordBatchStream::new(schema.clone())),
+            deleted_positions: Arc::new(deleted_positions),
+            row_offset: 10, // This batch starts at global position 10
+        };
+
+        let filtered_batch = stream.filter_batch(&batch).unwrap();
+
+        // Should have 3 rows (position 11 deleted, position 1000 ignored)
+        assert_eq!(filtered_batch.num_rows(), 3);
+
+        let filtered_values = filtered_batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+
+        let values: Vec<i32> = filtered_values.values().to_vec();
+        assert_eq!(
+            values,
+            vec![100, 300, 400],
+            "Position 11 (value=200) should be deleted, 1000 ignored"
+        );
+    }
+}
