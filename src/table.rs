@@ -51,8 +51,6 @@ pub struct DuckLakeTable {
     table_name: String,
     #[allow(dead_code)]
     provider: Arc<dyn MetadataProvider>,
-    #[allow(dead_code)]
-    snapshot_id: i64,
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     /// Table path for resolving relative file paths
@@ -68,7 +66,6 @@ impl DuckLakeTable {
         table_id: i64,
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
-        snapshot_id: i64,
         object_store_url: Arc<ObjectStoreUrl>,
         table_path: String,
     ) -> Result<Self> {
@@ -85,7 +82,6 @@ impl DuckLakeTable {
             table_id,
             table_name: table_name.into(),
             provider,
-            snapshot_id,
             object_store_url,
             table_path,
             schema,

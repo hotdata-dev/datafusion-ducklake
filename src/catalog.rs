@@ -18,8 +18,6 @@ use datafusion::datasource::object_store::ObjectStoreUrl;
 pub struct DuckLakeCatalog {
     /// Metadata provider for querying catalog
     provider: Arc<dyn MetadataProvider>,
-    /// Latest snapshot ID
-    snapshot_id: i64,
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
@@ -30,21 +28,14 @@ impl DuckLakeCatalog {
     /// Create a new DuckLake catalog with a metadata provider
     pub fn new(provider: impl MetadataProvider + 'static) -> Result<Self> {
         let provider = Arc::new(provider) as Arc<dyn MetadataProvider>;
-        let snapshot_id = provider.get_current_snapshot()?;
         let data_path = provider.get_data_path()?;
         let (object_store_url, catalog_path) = parse_object_store_url(&data_path)?;
 
         Ok(Self {
             provider,
-            snapshot_id,
             object_store_url: Arc::new(object_store_url),
             catalog_path,
         })
-    }
-
-    /// Get the latest snapshot ID
-    pub fn snapshot_id(&self) -> i64 {
-        self.snapshot_id
     }
 }
 
@@ -80,7 +71,6 @@ impl CatalogProvider for DuckLakeCatalog {
                     meta.schema_id,
                     meta.schema_name.clone(),
                     Arc::clone(&self.provider),
-                    self.snapshot_id,
                     self.object_store_url.clone(),
                     schema_path,
                 )) as Arc<dyn SchemaProvider>)

@@ -24,7 +24,6 @@ pub struct DuckLakeSchema {
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     provider: Arc<dyn MetadataProvider>,
-    snapshot_id: i64,
     /// Schema path for resolving relative table paths
     schema_path: String,
 }
@@ -35,7 +34,6 @@ impl DuckLakeSchema {
         schema_id: i64,
         schema_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
-        snapshot_id: i64,
         object_store_url: Arc<ObjectStoreUrl>,
         schema_path: String,
     ) -> Self {
@@ -43,7 +41,6 @@ impl DuckLakeSchema {
             schema_id,
             schema_name: schema_name.into(),
             provider,
-            snapshot_id,
             object_store_url,
             schema_path,
         }
@@ -77,7 +74,6 @@ impl SchemaProvider for DuckLakeSchema {
                     meta.table_id,
                     meta.table_name.clone(),
                     Arc::clone(&self.provider),
-                    self.snapshot_id,
                     self.object_store_url.clone(),
                     table_path,
                 )

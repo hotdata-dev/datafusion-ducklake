@@ -15,21 +15,18 @@ use duckdb::{params, Config, Connection};
 #[derive(Debug, Clone)]
 pub struct DuckdbMetadataProvider {
     catalog_path: String,
-    snapshot_id: i64,
 }
 
 impl DuckdbMetadataProvider {
     /// Create a new DuckDB metadata provider
     pub fn new(catalog_path: impl Into<String>) -> crate::Result<Self> {
         let catalog_path = catalog_path.into();
-        let conn = DuckdbMetadataProvider::open_connection_with_path(&catalog_path)?;
 
-        // Query latest snapshot
-        let snapshot_id: i64 = conn.query_row(SQL_GET_LATEST_SNAPSHOT, [], |row| row.get(0))?;
+        // Validate connection works
+        let _conn = DuckdbMetadataProvider::open_connection_with_path(&catalog_path)?;
 
         Ok(Self {
             catalog_path,
-            snapshot_id,
         })
     }
 
@@ -63,7 +60,9 @@ impl DuckdbMetadataProvider {
 
 impl MetadataProvider for DuckdbMetadataProvider {
     fn get_current_snapshot(&self) -> crate::Result<i64> {
-        Ok(self.snapshot_id)
+        let conn = self.open_connection()?;
+        let snapshot_id: i64 = conn.query_row(SQL_GET_LATEST_SNAPSHOT, [], |row| row.get(0))?;
+        Ok(snapshot_id)
     }
 
     fn get_data_path(&self) -> crate::Result<String> {
@@ -74,10 +73,11 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
     fn list_schemas(&self) -> crate::Result<Vec<SchemaMetadata>> {
         let conn = self.open_connection()?;
+        let snapshot_id = self.get_current_snapshot()?;
         let mut stmt = conn.prepare(SQL_LIST_SCHEMAS)?;
 
         let schemas = stmt
-            .query_map([self.snapshot_id, self.snapshot_id], |row| {
+            .query_map([snapshot_id, snapshot_id], |row| {
                 let schema_id: i64 = row.get(0)?;
                 let schema_name: String = row.get(1)?;
                 let path: String = row.get(2)?;
@@ -96,10 +96,11 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
     fn list_tables(&self, schema_id: i64) -> crate::Result<Vec<TableMetadata>> {
         let conn = self.open_connection()?;
+        let snapshot_id = self.get_current_snapshot()?;
         let mut stmt = conn.prepare(SQL_LIST_TABLES)?;
 
         let tables = stmt
-            .query_map([schema_id, self.snapshot_id, self.snapshot_id], |row| {
+            .query_map([schema_id, snapshot_id, snapshot_id], |row| {
                 let table_id: i64 = row.get(0)?;
                 let table_name: String = row.get(1)?;
                 let path: String = row.get(2)?;
@@ -138,11 +139,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
     fn get_table_files_for_select(&self, table_id: i64) -> crate::Result<Vec<DuckLakeTableFile>> {
         let conn = self.open_connection()?;
+        let snapshot_id = self.get_current_snapshot()?;
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES)?;
 
         let files = stmt
             .query_map(
-                [table_id, self.snapshot_id, self.snapshot_id, table_id],
+                [table_id, snapshot_id, snapshot_id, table_id],
                 |row| {
                     // Parse data file (columns 0-4)
                     let _data_file_id: i64 = row.get(0)?;
@@ -173,7 +175,7 @@ impl MetadataProvider for DuckdbMetadataProvider {
                         file: data_file,
                         delete_file,
                         row_id_start: None,
-                        snapshot_id: Some(self.snapshot_id),
+                        snapshot_id: Some(snapshot_id),
                         max_row_count: delete_count,
                     })
                 },
@@ -185,9 +187,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
     fn get_schema_by_name(&self, name: &str) -> crate::Result<Option<SchemaMetadata>> {
         let conn = self.open_connection()?;
+        let snapshot_id = self.get_current_snapshot()?;
         let mut stmt = conn.prepare(SQL_GET_SCHEMA_BY_NAME)?;
 
-        let mut rows = stmt.query(params![name, self.snapshot_id, self.snapshot_id])?;
+        let mut rows = stmt.query(params![name, snapshot_id, snapshot_id])?;
 
         if let Some(row) = rows.next()? {
             let schema_id: i64 = row.get(0)?;
@@ -207,9 +210,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
     fn get_table_by_name(&self, schema_id: i64, name: &str) -> crate::Result<Option<TableMetadata>> {
         let conn = self.open_connection()?;
+        let snapshot_id = self.get_current_snapshot()?;
         let mut stmt = conn.prepare(SQL_GET_TABLE_BY_NAME)?;
 
-        let mut rows = stmt.query(params![&schema_id, &name, &self.snapshot_id, &self.snapshot_id])?;
+        let mut rows = stmt.query(params![&schema_id, &name, &snapshot_id, &snapshot_id])?;
 
         if let Some(row) = rows.next()? {
             let table_id: i64 = row.get(0)?;
@@ -229,9 +233,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
     fn table_exists(&self, schema_id: i64, name: &str) -> crate::Result<bool> {
         let conn = self.open_connection()?;
+        let snapshot_id = self.get_current_snapshot()?;
         let exists: bool = conn.query_row(
             SQL_TABLE_EXISTS,
-            params![schema_id, &name, &self.snapshot_id, &self.snapshot_id],
+            params![schema_id, &name, &snapshot_id, &snapshot_id],
             |row| row.get(0),
         )?;
         Ok(exists)
