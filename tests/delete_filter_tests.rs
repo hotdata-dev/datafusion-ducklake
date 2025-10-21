@@ -284,4 +284,90 @@ mod integration_tests {
 
         Ok(())
     }
+
+    /// Test filter pushdown correctness with delete files
+    ///
+    /// This test verifies that WHERE filters are applied AFTER delete filtering,
+    /// not before. This is critical for correct query semantics.
+    ///
+    /// Scenario:
+    /// - Table has rows with id=[1,2,3,4,5]
+    /// - Row with id=3 (position 2) is deleted
+    /// - Query: WHERE id > 2
+    ///
+    /// Expected: [4, 5]
+    /// Incorrect if filter applied before deletes: [2, 4, 5] (wrong - includes deleted row)
+    /// Incorrect if deletes ignored: [3, 4, 5] (wrong - includes deleted row)
+    ///
+    /// This verifies the correct operation order:
+    /// 1. Scan Parquet file (yields rows with id=[1,2,3,4,5])
+    /// 2. Apply delete filtering (removes id=3, yields [1,2,4,5])
+    /// 3. Apply WHERE filter (filters id > 2, yields [4,5])
+    #[tokio::test]
+    async fn test_filter_pushdown_correctness_with_deletes() -> DataFusionResult<()> {
+        if !test_data_exists() {
+            eprintln!("Test data not found. Run setup_test_data.sql first.");
+            return Ok(());
+        }
+
+        let catalog_path = "tests/test_data/filter_pushdown.ducklake";
+        let catalog = create_catalog(catalog_path)?;
+
+        let ctx = SessionContext::new();
+        ctx.register_catalog("filter_pushdown", catalog);
+
+        // Query with WHERE filter that should be applied AFTER delete filtering
+        let df = ctx
+            .sql("SELECT id FROM filter_pushdown.main.items WHERE id > 2 ORDER BY id")
+            .await?;
+        let results = df.collect().await?;
+
+        assert!(!results.is_empty(), "Should have results");
+
+        // Collect all IDs
+        let mut all_ids = Vec::new();
+        for batch in &results {
+            all_ids.extend(get_int_column(batch, 0));
+        }
+
+        // Should return [4, 5] - the rows that remain after:
+        // 1. Delete filtering removes id=3
+        // 2. WHERE id > 2 filter is applied to [1,2,4,5], yielding [4,5]
+        //
+        // Common bugs this catches:
+        // - Filter before delete: would incorrectly include deleted rows that match filter
+        // - Filter on original positions: would return wrong rows
+        assert_eq!(
+            all_ids,
+            vec![4, 5],
+            "Filter should be applied AFTER delete filtering. \
+             Expected [4,5] (rows with id>2 after id=3 deleted), got {:?}",
+            all_ids
+        );
+
+        // Verify the deleted row (id=3) is NOT in results
+        assert!(
+            !all_ids.contains(&3),
+            "Deleted row with id=3 should not appear, even though it matches id>2"
+        );
+
+        // Additional verification: query for id <= 2 should return [1, 2]
+        let df = ctx
+            .sql("SELECT id FROM filter_pushdown.main.items WHERE id <= 2 ORDER BY id")
+            .await?;
+        let results = df.collect().await?;
+
+        let mut all_ids = Vec::new();
+        for batch in &results {
+            all_ids.extend(get_int_column(batch, 0));
+        }
+
+        assert_eq!(
+            all_ids,
+            vec![1, 2],
+            "Filter id<=2 should return [1,2] after delete filtering"
+        );
+
+        Ok(())
+    }
 }

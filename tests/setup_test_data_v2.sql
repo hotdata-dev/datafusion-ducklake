@@ -66,3 +66,26 @@ UPDATE with_updates.inventory SET quantity = 180, last_updated = '2024-01-02 16:
 
 SELECT 'After updates:' AS info;
 SELECT * FROM with_updates.inventory ORDER BY id;
+
+-- Test 4: Filter pushdown correctness with deletes
+-- Verifies that WHERE filters are applied AFTER delete filtering
+ATTACH 'ducklake:tests/test_data/filter_pushdown.ducklake' AS filter_pushdown;
+
+CREATE TABLE filter_pushdown.items (
+    id INT,
+    value VARCHAR
+);
+
+-- Insert 5 rows with IDs [1,2,3,4,5]
+INSERT INTO filter_pushdown.items VALUES
+    (1, 'one'),
+    (2, 'two'),
+    (3, 'three'),
+    (4, 'four'),
+    (5, 'five');
+
+-- Delete row with id=3 (position 2 in the file, 0-indexed)
+DELETE FROM filter_pushdown.items WHERE id = 3;
+
+SELECT 'After delete (id=3):' AS info;
+SELECT * FROM filter_pushdown.items ORDER BY id;
