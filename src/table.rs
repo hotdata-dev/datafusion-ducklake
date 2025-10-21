@@ -14,6 +14,15 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
+use datafusion::datasource::file_format::FileFormat;
+use datafusion::datasource::file_format::parquet::ParquetFormat;
+use datafusion::datasource::listing::PartitionedFile;
+use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
+use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::execution::object_store::ObjectStoreUrl;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
+use datafusion::physical_plan::ExecutionPlan;
+use futures::StreamExt;
 
 // Delete file schema constants (public for testing)
 pub const DELETE_FILE_PATH_COL: &str = "file_path";
@@ -30,19 +39,11 @@ pub fn delete_file_schema() -> SchemaRef {
         Field::new(DELETE_POS_COL, DataType::Int64, false),
     ]))
 }
-use datafusion::datasource::file_format::FileFormat;
-use datafusion::datasource::file_format::parquet::ParquetFormat;
-use datafusion::datasource::listing::PartitionedFile;
-use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
-use datafusion::error::{DataFusionError, Result as DataFusionResult};
-use datafusion::execution::object_store::ObjectStoreUrl;
-use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
-use datafusion::physical_plan::ExecutionPlan;
-use futures::StreamExt;
 
 /// DuckLake table provider
 ///
 /// Represents a table within a DuckLake schema and provides access to data via Parquet files.
+/// Caches snapshot_id and uses it to load all metadata atomically.
 #[derive(Debug)]
 pub struct DuckLakeTable {
     #[allow(dead_code)]
@@ -66,17 +67,14 @@ impl DuckLakeTable {
         table_id: i64,
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
+        snapshot_id: i64,  // Received from schema
         object_store_url: Arc<ObjectStoreUrl>,
         table_path: String,
     ) -> Result<Self> {
-        // Get table structure (columns)
+        // Load ALL metadata with this snapshot_id
         let columns = provider.get_table_structure(table_id)?;
-
-        // Build Arrow schema from column definitions
         let schema = Arc::new(build_arrow_schema(&columns)?);
-
-        // Get data files - keep paths as-is from database
-        let table_files = provider.get_table_files_for_select(table_id)?;
+        let table_files = provider.get_table_files_for_select(table_id, snapshot_id)?;
 
         Ok(Self {
             table_id,

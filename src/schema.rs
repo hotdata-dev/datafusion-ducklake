@@ -16,6 +16,7 @@ use crate::table::DuckLakeTable;
 ///
 /// Represents a schema within a DuckLake catalog and provides access to tables.
 /// Uses dynamic metadata lookup - tables are queried on-demand from the catalog database.
+/// Caches snapshot_id received from catalog.schema() call for query consistency.
 #[derive(Debug)]
 pub struct DuckLakeSchema {
     schema_id: i64,
@@ -24,6 +25,8 @@ pub struct DuckLakeSchema {
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     provider: Arc<dyn MetadataProvider>,
+    /// Cached snapshot_id from catalog.schema() call
+    snapshot_id: i64,
     /// Schema path for resolving relative table paths
     schema_path: String,
 }
@@ -34,6 +37,7 @@ impl DuckLakeSchema {
         schema_id: i64,
         schema_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
+        snapshot_id: i64,  // Received from catalog
         object_store_url: Arc<ObjectStoreUrl>,
         schema_path: String,
     ) -> Self {
@@ -41,6 +45,7 @@ impl DuckLakeSchema {
             schema_id,
             schema_name: schema_name.into(),
             provider,
+            snapshot_id,
             object_store_url,
             schema_path,
         }
@@ -54,26 +59,28 @@ impl SchemaProvider for DuckLakeSchema {
     }
 
     fn table_names(&self) -> Vec<String> {
-        // Query database on every call
+        // Use cached snapshot_id
         self.provider
-            .list_tables(self.schema_id)
+            .list_tables(self.schema_id, self.snapshot_id)
             .unwrap_or_default()
-            .iter()
-            .map(|t| t.table_name.clone())
+            .into_iter()
+            .map(|t| t.table_name)
             .collect()
     }
 
     async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
-        // Query database on every call
-        match self.provider.get_table_by_name(self.schema_id, name) {
+        // Use cached snapshot_id
+        match self.provider.get_table_by_name(self.schema_id, name, self.snapshot_id) {
             Ok(Some(meta)) => {
                 // Resolve table path hierarchically using path_resolver utility
                 let table_path = resolve_path(&self.schema_path, &meta.path, meta.path_is_relative);
 
+                // Pass snapshot_id to table
                 let table = DuckLakeTable::new(
                     meta.table_id,
-                    meta.table_name.clone(),
-                    Arc::clone(&self.provider),
+                    meta.table_name,
+                    self.provider.clone(),
+                    self.snapshot_id,  // Propagate snapshot_id
                     self.object_store_url.clone(),
                     table_path,
                 )
@@ -87,9 +94,9 @@ impl SchemaProvider for DuckLakeSchema {
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        // Query database on every call
+        // Use cached snapshot_id
         self.provider
-            .table_exists(self.schema_id, name)
+            .table_exists(self.schema_id, name, self.snapshot_id)
             .unwrap_or(false)
     }
 }

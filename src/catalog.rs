@@ -37,6 +37,12 @@ impl DuckLakeCatalog {
             catalog_path,
         })
     }
+
+    fn get_current_snapshot_id(&self) -> Result<i64> {
+        self.provider
+            .get_current_snapshot()
+            .inspect_err(|e| tracing::error!(error = %e, "Failed to get current snapshot"))
+    }
 }
 
 impl CatalogProvider for DuckLakeCatalog {
@@ -45,18 +51,28 @@ impl CatalogProvider for DuckLakeCatalog {
     }
 
     fn schema_names(&self) -> Vec<String> {
-        // Query database on every call
+        let snapshot_id = match self.get_current_snapshot_id() {
+            Ok(id) => id,
+            Err(_) => return Vec::new(),
+        };
+
+        // Query database with snapshot_id
         self.provider
-            .list_schemas()
+            .list_schemas(snapshot_id)
             .unwrap_or_default()
-            .iter()
-            .map(|s| s.schema_name.clone())
+            .into_iter()
+            .map(|s| s.schema_name)
             .collect()
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        // Query database on every call
-        match self.provider.get_schema_by_name(name) {
+        let snapshot_id = match self.get_current_snapshot_id() {
+            Ok(id) => id,
+            Err(_) => return None,
+        };
+
+        // Query database with snapshot_id
+        match self.provider.get_schema_by_name(name, snapshot_id) {
             Ok(Some(meta)) => {
                 // Resolve schema path hierarchically
                 let schema_path = if meta.path_is_relative {
@@ -64,13 +80,15 @@ impl CatalogProvider for DuckLakeCatalog {
                     format!("{}{}", self.catalog_path, meta.path)
                 } else {
                     // Schema path is absolute
-                    meta.path.clone()
+                    meta.path
                 };
 
+                // Pass snapshot_id to schema
                 Some(Arc::new(DuckLakeSchema::new(
                     meta.schema_id,
-                    meta.schema_name.clone(),
+                    meta.schema_name,
                     Arc::clone(&self.provider),
+                    snapshot_id,  // Propagate snapshot_id
                     self.object_store_url.clone(),
                     schema_path,
                 )) as Arc<dyn SchemaProvider>)

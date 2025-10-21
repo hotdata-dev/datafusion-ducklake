@@ -168,16 +168,33 @@ impl DuckLakeTableFile {
 }
 
 pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
+    /// Get the current snapshot ID (dynamic, not cached)
     fn get_current_snapshot(&self) -> Result<i64>;
+
+    /// Get the data path from catalog metadata (not snapshot-dependent)
     fn get_data_path(&self) -> Result<String>;
-    fn list_schemas(&self) -> Result<Vec<SchemaMetadata>>;
-    fn list_tables(&self, schema_id: i64) -> Result<Vec<TableMetadata>>;
+
+    /// List schemas for a specific snapshot
+    fn list_schemas(&self, snapshot_id: i64) -> Result<Vec<SchemaMetadata>>;
+
+    /// List tables for a specific snapshot
+    fn list_tables(&self, schema_id: i64, snapshot_id: i64) -> Result<Vec<TableMetadata>>;
+
+    /// Get table structure (columns) - not snapshot-dependent as column definitions don't change
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;
-    fn get_table_files_for_select(&self, table_id: i64) -> Result<Vec<DuckLakeTableFile>>;
+
+    /// Get table files for a specific snapshot
+    fn get_table_files_for_select(&self, table_id: i64, snapshot_id: i64) -> Result<Vec<DuckLakeTableFile>>;
     //     todo: support select with file pruning
 
     // Dynamic lookup methods for on-demand metadata retrieval
-    fn get_schema_by_name(&self, name: &str) -> Result<Option<SchemaMetadata>>;
-    fn get_table_by_name(&self, schema_id: i64, name: &str) -> Result<Option<TableMetadata>>;
-    fn table_exists(&self, schema_id: i64, name: &str) -> Result<bool>;
+
+    /// Get schema by name for a specific snapshot
+    fn get_schema_by_name(&self, name: &str, snapshot_id: i64) -> Result<Option<SchemaMetadata>>;
+
+    /// Get table by name for a specific snapshot
+    fn get_table_by_name(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<Option<TableMetadata>>;
+
+    /// Check if table exists for a specific snapshot
+    fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<bool>;
 }
