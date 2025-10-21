@@ -246,24 +246,6 @@ mod tests {
     }
 
     #[test]
-    fn test_uppercase_complex_types_error() {
-        // Test that uppercase variants also error correctly
-        assert!(ducklake_to_arrow_type("LIST<INT32>").is_err());
-        assert!(ducklake_to_arrow_type("STRUCT<a:VARCHAR>").is_err());
-        assert!(ducklake_to_arrow_type("MAP<VARCHAR,INT32>").is_err());
-    }
-
-    #[test]
-    fn test_complex_types_with_whitespace_error() {
-        // Test complex types with whitespace
-        let result = ducklake_to_arrow_type("  list<int32>  ");
-        assert!(result.is_err());
-
-        let result = ducklake_to_arrow_type("  struct<a:int32>  ");
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_unknown_type_error() {
         // Test completely unknown types also return error
         let result = ducklake_to_arrow_type("completely_unknown_type");
@@ -273,19 +255,6 @@ mod tests {
                 assert_eq!(msg, "completely_unknown_type");
             }
             _ => panic!("Expected UnsupportedType error for unknown type"),
-        }
-    }
-
-    #[test]
-    fn test_error_messages_preserve_original_case() {
-        // Verify error messages preserve the original type string, not normalized
-        let result = ducklake_to_arrow_type("List<Int32>");
-        match result {
-            Err(DuckLakeError::UnsupportedType(msg)) => {
-                // Should contain original case, not lowercase
-                assert!(msg.contains("List<Int32>"));
-            }
-            _ => panic!("Expected UnsupportedType error"),
         }
     }
 

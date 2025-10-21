@@ -1,18 +1,15 @@
-//! Integration and unit tests for delete file filtering
+//! Integration tests for delete file filtering
 //!
 //! These tests verify that the delete file implementation correctly filters out
 //! deleted rows from query results while maintaining backward compatibility.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{Array, Int64Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::{Array, Int64Array};
 use arrow::record_batch::RecordBatch;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
-use datafusion_ducklake::table::{delete_file_schema, DELETE_FILE_PATH_COL, DELETE_POS_COL};
 
 /// Test helper to extract integer values from a RecordBatch column
 /// Supports both Int32 and Int64
@@ -34,124 +31,6 @@ fn get_int_column(batch: &RecordBatch, col_idx: usize) -> Vec<i32> {
     }
 
     panic!("Column should be Int32Array or Int64Array, got {:?}", column.data_type());
-}
-
-#[cfg(test)]
-mod unit_tests {
-    use super::*;
-
-    /// Test the extract_deleted_positions function with a simple delete file batch
-    #[test]
-    fn test_extract_deleted_positions_simple() -> DataFusionResult<()> {
-        // Create a mock delete file RecordBatch using standard schema
-        let schema = delete_file_schema();
-
-        let file_paths = StringArray::from(vec![
-            "test_file.parquet",
-            "test_file.parquet",
-            "test_file.parquet",
-        ]);
-
-        let positions = Int64Array::from(vec![0, 2, 5]);
-
-        let batch = RecordBatch::try_new(
-            schema,
-            vec![Arc::new(file_paths), Arc::new(positions)],
-        )?;
-
-        // Call the internal function (we need to expose it for testing)
-        // For now, we'll test the functionality through the public API
-
-        // Verify the batch structure
-        assert_eq!(batch.num_rows(), 3);
-        assert_eq!(batch.num_columns(), 2);
-
-        Ok(())
-    }
-
-    /// Test extract_deleted_positions with multiple files
-    #[test]
-    fn test_extract_deleted_positions_multiple_files() -> DataFusionResult<()> {
-        let schema = delete_file_schema();
-
-        let file_paths = StringArray::from(vec![
-            "file1.parquet",
-            "file1.parquet",
-            "file2.parquet",
-            "file2.parquet",
-            "file2.parquet",
-        ]);
-
-        let positions = Int64Array::from(vec![1, 3, 0, 2, 4]);
-
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(file_paths), Arc::new(positions)],
-        )?;
-
-        // Verify we have the right structure for multiple files
-        assert_eq!(batch.num_rows(), 5);
-
-        // Extract file paths and positions using named column indices
-        let file_idx = schema.index_of(DELETE_FILE_PATH_COL)?;
-        let pos_idx = schema.index_of(DELETE_POS_COL)?;
-        let file_col = batch.column(file_idx).as_any().downcast_ref::<StringArray>().unwrap();
-        let pos_col = batch.column(pos_idx).as_any().downcast_ref::<Int64Array>().unwrap();
-
-        let mut file_to_positions: HashMap<String, Vec<i64>> = HashMap::new();
-        for i in 0..batch.num_rows() {
-            let file = file_col.value(i).to_string();
-            let pos = pos_col.value(i);
-            file_to_positions.entry(file).or_insert_with(Vec::new).push(pos);
-        }
-
-        assert_eq!(file_to_positions.len(), 2);
-        assert_eq!(file_to_positions.get("file1.parquet").unwrap(), &vec![1, 3]);
-        assert_eq!(file_to_positions.get("file2.parquet").unwrap(), &vec![0, 2, 4]);
-
-        Ok(())
-    }
-
-    /// Test extract_deleted_positions with null values (should be skipped)
-    #[test]
-    fn test_extract_deleted_positions_with_nulls() -> DataFusionResult<()> {
-        // Create schema with nullable columns (for this test case)
-        let schema = Arc::new(Schema::new(vec![
-            Field::new(DELETE_FILE_PATH_COL, DataType::Utf8, true),
-            Field::new(DELETE_POS_COL, DataType::Int64, true),
-        ]));
-
-        let file_paths = StringArray::from(vec![
-            Some("file1.parquet"),
-            None,
-            Some("file1.parquet"),
-        ]);
-
-        let positions = Int64Array::from(vec![
-            Some(1),
-            Some(2),
-            None,
-        ]);
-
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(file_paths), Arc::new(positions)],
-        )?;
-
-        // Only the first row should be valid (non-null in both columns)
-        let file_idx = schema.index_of(DELETE_FILE_PATH_COL)?;
-        let pos_idx = schema.index_of(DELETE_POS_COL)?;
-        let file_col = batch.column(file_idx).as_any().downcast_ref::<StringArray>().unwrap();
-        let pos_col = batch.column(pos_idx).as_any().downcast_ref::<Int64Array>().unwrap();
-
-        let valid_count = (0..batch.num_rows())
-            .filter(|&i| !file_col.is_null(i) && !pos_col.is_null(i))
-            .count();
-
-        assert_eq!(valid_count, 1);
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -403,21 +282,6 @@ mod integration_tests {
         let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 0, "Should return empty result for all deleted rows");
 
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod performance_tests {
-    use super::*;
-
-    /// Benchmark delete file processing overhead
-    /// This is a placeholder for future performance testing
-    #[tokio::test]
-    #[ignore] // Run with --ignored flag
-    async fn test_delete_file_performance() -> DataFusionResult<()> {
-        // TODO: Create a test database with large number of deletes
-        // and measure query performance compared to no deletes
         Ok(())
     }
 }

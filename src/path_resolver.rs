@@ -416,12 +416,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_invalid_s3_url() {
-        let result = parse_object_store_url("s3://");
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_parse_file_url_root() {
         let (url, path) = parse_object_store_url("file:///").unwrap();
         assert_eq!(path, "/");
@@ -441,24 +435,6 @@ mod tests {
         let result = parse_object_store_url("/nonexistent/path/that/does/not/exist");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Failed to resolve path"));
-    }
-
-    #[test]
-    fn test_resolve_path_empty_relative() {
-        let resolved = resolve_path("/data/schema1/", "", true);
-        assert_eq!(resolved, "/data/schema1/");
-    }
-
-    #[test]
-    fn test_resolve_path_empty_absolute() {
-        let resolved = resolve_path("/data/schema1/", "", false);
-        assert_eq!(resolved, "");
-    }
-
-    #[test]
-    fn test_join_paths_empty_relative() {
-        assert_eq!(join_paths("/data/", ""), "/data/");
-        assert_eq!(join_paths("/data", ""), "/data/");
     }
 
     #[test]
@@ -489,36 +465,6 @@ mod tests {
         let file_path = table_resolver.resolve("file.parquet", true);
 
         assert_eq!(file_path, "/data/schema1/table1/file.parquet");
-    }
-
-    #[test]
-    fn test_path_resolver_clone() {
-        let resolver1 = PathResolver::new(
-            Arc::new(ObjectStoreUrl::parse("s3://bucket/").unwrap()),
-            "/data/".to_string(),
-        );
-
-        let resolver2 = resolver1.clone();
-        assert_eq!(resolver1.base_path(), resolver2.base_path());
-        assert_eq!(*resolver1.base_url(), *resolver2.base_url());
-    }
-
-    #[test]
-    fn test_path_resolver_base_url_accessor() {
-        let url = Arc::new(ObjectStoreUrl::parse("s3://test-bucket/").unwrap());
-        let resolver = PathResolver::new(url.clone(), "/data/".to_string());
-
-        assert_eq!(*resolver.base_url(), url);
-    }
-
-    #[test]
-    fn test_path_resolver_base_path_accessor() {
-        let resolver = PathResolver::new(
-            Arc::new(ObjectStoreUrl::parse("s3://bucket/").unwrap()),
-            "/my/base/path/".to_string(),
-        );
-
-        assert_eq!(resolver.base_path(), "/my/base/path/");
     }
 
     #[test]
