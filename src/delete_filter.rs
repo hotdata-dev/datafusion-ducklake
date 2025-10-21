@@ -35,7 +35,7 @@ impl DeleteFilterExec {
     pub fn new(
         input: Arc<dyn ExecutionPlan>,
         file_path: String,
-        deleted_positions: HashSet<i64>,
+        deleted_positions: Arc<HashSet<i64>>,
     ) -> Self {
         // Clone properties from input plan
         let properties = input.properties().clone();
@@ -43,7 +43,7 @@ impl DeleteFilterExec {
         Self {
             input,
             file_path,
-            deleted_positions: Arc::new(deleted_positions),
+            deleted_positions,
             properties,
         }
     }
@@ -99,8 +99,7 @@ impl ExecutionPlan for DeleteFilterExec {
             ));
         }
 
-        // Clone the Arc (cheap) to get the HashSet for the new instance
-        let deleted_positions = (*self.deleted_positions).clone();
+        let deleted_positions = self.deleted_positions.clone();
 
         Ok(Arc::new(DeleteFilterExec::new(
             children[0].clone(),
@@ -118,7 +117,7 @@ impl ExecutionPlan for DeleteFilterExec {
 
         Ok(Box::pin(DeleteFilterStream {
             input: input_stream,
-            deleted_positions: Arc::clone(&self.deleted_positions),
+            deleted_positions: self.deleted_positions.clone(),
             row_offset: 0,
         }))
     }

@@ -236,7 +236,7 @@ impl DuckLakeTable {
                 Ok(Arc::new(DeleteFilterExec::new(
                     parquet_exec,
                     table_file.file.path.clone(),
-                    deleted_positions,
+                    Arc::new(deleted_positions),
                 )) as Arc<dyn ExecutionPlan>)
             } else {
                 Ok(parquet_exec)
