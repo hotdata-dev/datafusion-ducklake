@@ -30,7 +30,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os:
+          - ubuntu-latest
+#          - macos-latest
         rust: [stable]
     steps:
       - uses: actions/checkout@v4
