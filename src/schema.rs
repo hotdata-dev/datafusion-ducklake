@@ -37,7 +37,7 @@ impl DuckLakeSchema {
         schema_id: i64,
         schema_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
-        snapshot_id: i64,  // Received from catalog
+        snapshot_id: i64, // Received from catalog
         object_store_url: Arc<ObjectStoreUrl>,
         schema_path: String,
     ) -> Self {
@@ -70,7 +70,10 @@ impl SchemaProvider for DuckLakeSchema {
 
     async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
         // Use cached snapshot_id
-        match self.provider.get_table_by_name(self.schema_id, name, self.snapshot_id) {
+        match self
+            .provider
+            .get_table_by_name(self.schema_id, name, self.snapshot_id)
+        {
             Ok(Some(meta)) => {
                 // Resolve table path hierarchically using path_resolver utility
                 let table_path = resolve_path(&self.schema_path, &meta.path, meta.path_is_relative);
@@ -80,14 +83,14 @@ impl SchemaProvider for DuckLakeSchema {
                     meta.table_id,
                     meta.table_name,
                     self.provider.clone(),
-                    self.snapshot_id,  // Propagate snapshot_id
+                    self.snapshot_id, // Propagate snapshot_id
                     self.object_store_url.clone(),
                     table_path,
                 )
                 .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
                 Ok(Some(Arc::new(table) as Arc<dyn TableProvider>))
-            }
+            },
             Ok(None) => Ok(None),
             Err(e) => Err(datafusion::error::DataFusionError::External(Box::new(e))),
         }

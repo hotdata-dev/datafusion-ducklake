@@ -1,0 +1,18 @@
+# Rustfmt configuration for datafusion-ducklake
+# Some features require nightly: cargo +nightly fmt
+
+# Set max width for the whole line
+max_width = 100
+
+# Function call style - prefer vertical layout for readability
+fn_call_width = 60
+
+# Use small item threshold to prefer vertical layout
+# "Off" = more aggressive vertical formatting
+use_small_heuristics = "Off"
+
+# Chain width - when to break method chains
+chain_width = 60
+
+# Preserve vertical spacing in match arms
+match_block_trailing_comma = true

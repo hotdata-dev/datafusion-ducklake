@@ -67,7 +67,7 @@ impl DuckLakeTable {
         table_id: i64,
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
-        snapshot_id: i64,  // Received from schema
+        snapshot_id: i64, // Received from schema
         object_store_url: Arc<ObjectStoreUrl>,
         table_path: String,
     ) -> Result<Self> {
@@ -109,7 +109,8 @@ impl DuckLakeTable {
         let resolved_delete_path = self.resolve_file_path(delete_file);
 
         // Create PartitionedFile with footer size hint if available
-        let mut pf = PartitionedFile::new(&resolved_delete_path, delete_file.file_size_bytes as u64);
+        let mut pf =
+            PartitionedFile::new(&resolved_delete_path, delete_file.file_size_bytes as u64);
         if let Some(footer_size) = delete_file.footer_size {
             pf = pf.with_metadata_size_hint(footer_size as usize);
         }
@@ -161,7 +162,8 @@ impl DuckLakeTable {
             .iter()
             .map(|table_file| {
                 let resolved_path = self.resolve_file_path(&table_file.file);
-                let mut pf = PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);
+                let mut pf =
+                    PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);
 
                 // Apply footer size hint if available from DuckLake metadata
                 // This reduces I/O from 2 reads to 1 read per file (especially beneficial for S3/MinIO)
@@ -299,23 +301,22 @@ impl TableProvider for DuckLakeTable {
 
         // Create single exec for all files without deletes (more efficient)
         if !files_without_deletes.is_empty() {
-            let exec = self.build_exec_for_files_without_deletes(
-                state,
-                &files_without_deletes,
-                projection,
-                limit,
-            ).await?;
+            let exec = self
+                .build_exec_for_files_without_deletes(
+                    state,
+                    &files_without_deletes,
+                    projection,
+                    limit,
+                )
+                .await?;
             execs.push(exec);
         }
 
         // Only create separate execs for files with deletes
         for table_file in files_with_deletes {
-            let exec = self.build_exec_for_file_with_deletes(
-                state,
-                table_file,
-                projection,
-                limit,
-            ).await?;
+            let exec = self
+                .build_exec_for_file_with_deletes(state, table_file, projection, limit)
+                .await?;
             execs.push(exec);
         }
 
@@ -361,7 +362,9 @@ fn extract_deleted_positions_from_batch(
         .column(pos_idx)
         .as_any()
         .downcast_ref::<Int64Array>()
-        .ok_or_else(|| DataFusionError::Internal(format!("{} column not found or wrong type", DELETE_POS_COL)))?;
+        .ok_or_else(|| {
+            DataFusionError::Internal(format!("{} column not found or wrong type", DELETE_POS_COL))
+        })?;
 
     // Extract all non-null positions
     for i in 0..batch.num_rows() {

@@ -22,18 +22,33 @@ fn get_int_column(batch: &RecordBatch, col_idx: usize) -> Vec<i32> {
     // Try Int32 first
     if let Some(array) = column.as_any().downcast_ref::<arrow::array::Int32Array>() {
         return (0..array.len())
-            .filter_map(|i| if array.is_null(i) { None } else { Some(array.value(i)) })
+            .filter_map(|i| {
+                if array.is_null(i) {
+                    None
+                } else {
+                    Some(array.value(i))
+                }
+            })
             .collect();
     }
 
     // Try Int64
     if let Some(array) = column.as_any().downcast_ref::<arrow::array::Int64Array>() {
         return (0..array.len())
-            .filter_map(|i| if array.is_null(i) { None } else { Some(array.value(i) as i32) })
+            .filter_map(|i| {
+                if array.is_null(i) {
+                    None
+                } else {
+                    Some(array.value(i) as i32)
+                }
+            })
             .collect();
     }
 
-    panic!("Column should be Int32Array or Int64Array, got {:?}", column.data_type());
+    panic!(
+        "Column should be Int32Array or Int64Array, got {:?}",
+        column.data_type()
+    );
 }
 
 #[cfg(test)]
@@ -57,8 +72,7 @@ mod integration_tests {
         let catalog_path = temp_dir.path().join("no_deletes.ducklake");
 
         // Generate test data
-        common::create_catalog_no_deletes(&catalog_path)
-            .map_err(common::to_datafusion_error)?;
+        common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
         let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
@@ -66,7 +80,9 @@ mod integration_tests {
         ctx.register_catalog("no_deletes", catalog);
 
         // Query the table
-        let df = ctx.sql("SELECT * FROM no_deletes.main.users ORDER BY id").await?;
+        let df = ctx
+            .sql("SELECT * FROM no_deletes.main.users ORDER BY id")
+            .await?;
         let results = df.collect().await?;
 
         // Verify we got all rows (no deletes)
@@ -92,8 +108,7 @@ mod integration_tests {
         let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
         // Generate test data
-        common::create_catalog_with_deletes(&catalog_path)
-            .map_err(common::to_datafusion_error)?;
+        common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
         let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
@@ -101,7 +116,9 @@ mod integration_tests {
         ctx.register_catalog("with_deletes", catalog);
 
         // Query the table
-        let df = ctx.sql("SELECT * FROM with_deletes.main.products ORDER BY id").await?;
+        let df = ctx
+            .sql("SELECT * FROM with_deletes.main.products ORDER BY id")
+            .await?;
         let results = df.collect().await?;
 
         // Verify we got the correct rows (excluding deleted IDs 2 and 4)
@@ -130,8 +147,7 @@ mod integration_tests {
         let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
         // Generate test data
-        common::create_catalog_with_deletes(&catalog_path)
-            .map_err(common::to_datafusion_error)?;
+        common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
         let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
@@ -139,14 +155,18 @@ mod integration_tests {
         ctx.register_catalog("with_deletes", catalog);
 
         // Query for a specific deleted row (should return no results)
-        let df = ctx.sql("SELECT * FROM with_deletes.main.products WHERE id = 2").await?;
+        let df = ctx
+            .sql("SELECT * FROM with_deletes.main.products WHERE id = 2")
+            .await?;
         let results = df.collect().await?;
 
         let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 0, "Deleted row with id=2 should not appear");
 
         // Query for a non-deleted row (should return 1 result)
-        let df = ctx.sql("SELECT * FROM with_deletes.main.products WHERE id = 1").await?;
+        let df = ctx
+            .sql("SELECT * FROM with_deletes.main.products WHERE id = 1")
+            .await?;
         let results = df.collect().await?;
 
         let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
@@ -163,8 +183,7 @@ mod integration_tests {
         let catalog_path = temp_dir.path().join("with_updates.ducklake");
 
         // Generate test data
-        common::create_catalog_with_updates(&catalog_path)
-            .map_err(common::to_datafusion_error)?;
+        common::create_catalog_with_updates(&catalog_path).map_err(common::to_datafusion_error)?;
 
         let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
@@ -172,7 +191,9 @@ mod integration_tests {
         ctx.register_catalog("with_updates", catalog);
 
         // Query the updated row
-        let df = ctx.sql("SELECT id, quantity FROM with_updates.main.inventory WHERE id = 1").await?;
+        let df = ctx
+            .sql("SELECT id, quantity FROM with_updates.main.inventory WHERE id = 1")
+            .await?;
         let results = df.collect().await?;
 
         assert!(!results.is_empty());
@@ -184,7 +205,9 @@ mod integration_tests {
         assert_eq!(quantities[0], 120, "Updated quantity should be 120");
 
         // Query another updated row
-        let df = ctx.sql("SELECT id, quantity FROM with_updates.main.inventory WHERE id = 3").await?;
+        let df = ctx
+            .sql("SELECT id, quantity FROM with_updates.main.inventory WHERE id = 3")
+            .await?;
         let results = df.collect().await?;
 
         assert!(!results.is_empty());
@@ -205,8 +228,7 @@ mod integration_tests {
         let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
         // Generate test data
-        common::create_catalog_with_deletes(&catalog_path)
-            .map_err(common::to_datafusion_error)?;
+        common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
         let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
@@ -214,7 +236,9 @@ mod integration_tests {
         ctx.register_catalog("with_deletes", catalog);
 
         // Count should exclude deleted rows
-        let df = ctx.sql("SELECT COUNT(*) as count FROM with_deletes.main.products").await?;
+        let df = ctx
+            .sql("SELECT COUNT(*) as count FROM with_deletes.main.products")
+            .await?;
         let results = df.collect().await?;
 
         assert!(!results.is_empty());
@@ -225,7 +249,11 @@ mod integration_tests {
             .downcast_ref::<Int64Array>()
             .unwrap();
 
-        assert_eq!(counts.value(0), 3, "Count should be 3 after filtering deletes");
+        assert_eq!(
+            counts.value(0),
+            3,
+            "Count should be 3 after filtering deletes"
+        );
 
         Ok(())
     }
@@ -238,8 +266,7 @@ mod integration_tests {
         let catalog_path = temp_dir.path().join("with_updates.ducklake");
 
         // Generate test data
-        common::create_catalog_with_updates(&catalog_path)
-            .map_err(common::to_datafusion_error)?;
+        common::create_catalog_with_updates(&catalog_path).map_err(common::to_datafusion_error)?;
 
         let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
@@ -247,7 +274,9 @@ mod integration_tests {
         ctx.register_catalog("with_updates", catalog);
 
         // Sum of quantities should use updated values
-        let df = ctx.sql("SELECT SUM(quantity) as total FROM with_updates.main.inventory").await?;
+        let df = ctx
+            .sql("SELECT SUM(quantity) as total FROM with_updates.main.inventory")
+            .await?;
         let results = df.collect().await?;
 
         assert!(!results.is_empty());
@@ -273,8 +302,7 @@ mod integration_tests {
         let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
         // Generate test data
-        common::create_catalog_with_deletes(&catalog_path)
-            .map_err(common::to_datafusion_error)?;
+        common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
         let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
@@ -282,11 +310,16 @@ mod integration_tests {
         ctx.register_catalog("with_deletes", catalog);
 
         // Query only for deleted rows
-        let df = ctx.sql("SELECT * FROM with_deletes.main.products WHERE id IN (2, 4)").await?;
+        let df = ctx
+            .sql("SELECT * FROM with_deletes.main.products WHERE id IN (2, 4)")
+            .await?;
         let results = df.collect().await?;
 
         let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
-        assert_eq!(total_rows, 0, "Should return empty result for all deleted rows");
+        assert_eq!(
+            total_rows, 0,
+            "Should return empty result for all deleted rows"
+        );
 
         Ok(())
     }

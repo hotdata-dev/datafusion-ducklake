@@ -4,15 +4,15 @@
 //! by spinning up a MinIO container, configuring DuckDB to write directly to S3,
 //! and running queries against the remote data.
 
-use std::sync::Arc;
-use datafusion::prelude::*;
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
+use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
-use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
+use object_store::aws::AmazonS3Builder;
+use std::sync::Arc;
+use tempfile::TempDir;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::minio::MinIO;
-use tempfile::TempDir;
 
 /// Helper to create test data using DuckDB with local filesystem
 async fn create_local_test_catalog(catalog_path: &str) -> anyhow::Result<()> {
@@ -102,7 +102,10 @@ async fn create_s3_test_catalog(
 
     // Try setting S3 options directly via SET commands
     eprintln!("Setting S3 configuration via SET commands...");
-    conn.execute(&format!("SET s3_endpoint='{}';", endpoint_without_protocol), [])?;
+    conn.execute(
+        &format!("SET s3_endpoint='{}';", endpoint_without_protocol),
+        [],
+    )?;
     conn.execute("SET s3_access_key_id='minioadmin';", [])?;
     conn.execute("SET s3_secret_access_key='minioadmin';", [])?;
     conn.execute("SET s3_use_ssl=false;", [])?;
@@ -230,17 +233,16 @@ async fn test_minio_object_store_integration() -> anyhow::Result<()> {
     let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
     let bucket_name = "test-bucket";
-    s3_client
-        .create_bucket()
-        .bucket(bucket_name)
-        .send()
-        .await?;
+    s3_client.create_bucket().bucket(bucket_name).send().await?;
 
     eprintln!("Bucket '{}' created successfully", bucket_name);
 
     // Verify bucket exists by listing
     let buckets = s3_client.list_buckets().send().await?.buckets;
-    eprintln!("Found {} bucket(s) in MinIO", buckets.as_ref().map_or(0, |b| b.len()));
+    eprintln!(
+        "Found {} bucket(s) in MinIO",
+        buckets.as_ref().map_or(0, |b| b.len())
+    );
 
     // Create temporary directory for test catalog metadata
     let temp_dir = TempDir::new()?;

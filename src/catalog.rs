@@ -3,10 +3,10 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use crate::Result;
 use crate::metadata_provider::MetadataProvider;
 use crate::path_resolver::parse_object_store_url;
 use crate::schema::DuckLakeSchema;
-use crate::Result;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 
@@ -88,11 +88,11 @@ impl CatalogProvider for DuckLakeCatalog {
                     meta.schema_id,
                     meta.schema_name,
                     Arc::clone(&self.provider),
-                    snapshot_id,  // Propagate snapshot_id
+                    snapshot_id, // Propagate snapshot_id
                     self.object_store_url.clone(),
                     schema_path,
                 )) as Arc<dyn SchemaProvider>)
-            }
+            },
             _ => None,
         }
     }

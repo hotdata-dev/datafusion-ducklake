@@ -26,8 +26,8 @@ mod common;
 use std::sync::Arc;
 
 use arrow::array::{Array, Int32Array, Int64Array};
-use datafusion::error::Result as DataFusionResult;
 use datafusion::common::DataFusionError;
+use datafusion::error::Result as DataFusionResult;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
 use tempfile::TempDir;
@@ -40,20 +40,34 @@ fn get_int_column(batch: &arrow::record_batch::RecordBatch, col_idx: usize) -> V
     // Try Int32 first
     if let Some(array) = column.as_any().downcast_ref::<Int32Array>() {
         return (0..array.len())
-            .filter_map(|i| if array.is_null(i) { None } else { Some(array.value(i)) })
+            .filter_map(|i| {
+                if array.is_null(i) {
+                    None
+                } else {
+                    Some(array.value(i))
+                }
+            })
             .collect();
     }
 
     // Try Int64
     if let Some(array) = column.as_any().downcast_ref::<Int64Array>() {
         return (0..array.len())
-            .filter_map(|i| if array.is_null(i) { None } else { Some(array.value(i) as i32) })
+            .filter_map(|i| {
+                if array.is_null(i) {
+                    None
+                } else {
+                    Some(array.value(i) as i32)
+                }
+            })
             .collect();
     }
 
-    panic!("Column should be Int32Array or Int64Array, got {:?}", column.data_type());
+    panic!(
+        "Column should be Int32Array or Int64Array, got {:?}",
+        column.data_type()
+    );
 }
-
 
 /// Test concurrent queries on the same table
 ///
@@ -66,19 +80,20 @@ fn get_int_column(batch: &arrow::record_batch::RecordBatch, col_idx: usize) -> V
 /// - No race conditions in metadata provider or catalog implementation
 #[tokio::test]
 async fn test_concurrent_select_queries() -> DataFusionResult<()> {
-    let temp_dir = TempDir::new()
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let temp_dir =
+        TempDir::new().map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog_path = temp_dir.path().join("no_deletes.ducklake");
 
     // Generate test data
-    common::create_catalog_no_deletes(&catalog_path)
-        .map_err(common::to_datafusion_error)?;
+    common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     // Create shared catalog (Arc allows sharing across tasks)
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+    let catalog = Arc::new(
+        DuckLakeCatalog::new(provider)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
+    );
 
     // Create 10 concurrent query tasks
     let mut tasks = Vec::new();
@@ -139,18 +154,19 @@ async fn test_concurrent_select_queries() -> DataFusionResult<()> {
 /// path with optimizations for zero-column batches.
 #[tokio::test]
 async fn test_concurrent_count_queries() -> DataFusionResult<()> {
-    let temp_dir = TempDir::new()
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let temp_dir =
+        TempDir::new().map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
     // Generate test data
-    common::create_catalog_with_deletes(&catalog_path)
-        .map_err(common::to_datafusion_error)?;
+    common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+    let catalog = Arc::new(
+        DuckLakeCatalog::new(provider)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
+    );
 
     // Create 10 concurrent COUNT query tasks
     let mut tasks = Vec::new();
@@ -208,26 +224,42 @@ async fn test_concurrent_count_queries() -> DataFusionResult<()> {
 /// that the system remains stable under heterogeneous query workloads.
 #[tokio::test]
 async fn test_concurrent_mixed_queries() -> DataFusionResult<()> {
-    let temp_dir = TempDir::new()
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let temp_dir =
+        TempDir::new().map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog_path = temp_dir.path().join("with_updates.ducklake");
 
     // Generate test data
-    common::create_catalog_with_updates(&catalog_path)
-        .map_err(common::to_datafusion_error)?;
+    common::create_catalog_with_updates(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+    let catalog = Arc::new(
+        DuckLakeCatalog::new(provider)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
+    );
 
     // Define different query types
     let queries = [
-        ("SELECT COUNT(*) as count FROM with_updates.main.inventory", "count"),
-        ("SELECT SUM(quantity) as total FROM with_updates.main.inventory", "sum"),
-        ("SELECT * FROM with_updates.main.inventory WHERE id = 1", "filter_1"),
-        ("SELECT * FROM with_updates.main.inventory WHERE id = 3", "filter_3"),
-        ("SELECT id, quantity FROM with_updates.main.inventory ORDER BY id", "ordered"),
+        (
+            "SELECT COUNT(*) as count FROM with_updates.main.inventory",
+            "count",
+        ),
+        (
+            "SELECT SUM(quantity) as total FROM with_updates.main.inventory",
+            "sum",
+        ),
+        (
+            "SELECT * FROM with_updates.main.inventory WHERE id = 1",
+            "filter_1",
+        ),
+        (
+            "SELECT * FROM with_updates.main.inventory WHERE id = 3",
+            "filter_3",
+        ),
+        (
+            "SELECT id, quantity FROM with_updates.main.inventory ORDER BY id",
+            "ordered",
+        ),
     ];
 
     // Execute each query type 2 times concurrently (10 total tasks)
@@ -249,22 +281,30 @@ async fn test_concurrent_mixed_queries() -> DataFusionResult<()> {
             let validation = match query_type_string.as_str() {
                 "count" => {
                     let batch = &results[0];
-                    let counts = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+                    let counts = batch
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .unwrap();
                     counts.value(0) == 3
-                }
+                },
                 "sum" => {
                     let batch = &results[0];
-                    let totals = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+                    let totals = batch
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .unwrap();
                     totals.value(0) == 500 // 120 + 200 + 180
-                }
+                },
                 "filter_1" | "filter_3" => {
                     let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
                     total_rows == 1
-                }
+                },
                 "ordered" => {
                     let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
                     total_rows == 3
-                }
+                },
                 _ => false,
             };
 
@@ -299,18 +339,19 @@ async fn test_concurrent_mixed_queries() -> DataFusionResult<()> {
 /// without race conditions.
 #[tokio::test]
 async fn test_concurrent_delete_filtering() -> DataFusionResult<()> {
-    let temp_dir = TempDir::new()
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let temp_dir =
+        TempDir::new().map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
     // Generate test data
-    common::create_catalog_with_deletes(&catalog_path)
-        .map_err(common::to_datafusion_error)?;
+    common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+    let catalog = Arc::new(
+        DuckLakeCatalog::new(provider)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
+    );
 
     // Create 10 concurrent tasks querying table with deletes
     let mut tasks = Vec::new();
@@ -376,18 +417,19 @@ async fn test_concurrent_delete_filtering() -> DataFusionResult<()> {
 /// (schema listing, table listing) is thread-safe.
 #[tokio::test]
 async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
-    let temp_dir = TempDir::new()
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let temp_dir =
+        TempDir::new().map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog_path = temp_dir.path().join("no_deletes.ducklake");
 
     // Generate test data
-    common::create_catalog_no_deletes(&catalog_path)
-        .map_err(common::to_datafusion_error)?;
+    common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+    let catalog = Arc::new(
+        DuckLakeCatalog::new(provider)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
+    );
 
     // Create 10 tasks that access catalog metadata concurrently
     let mut tasks = Vec::new();
@@ -399,16 +441,18 @@ async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
             let catalog_name = "no_deletes";
             ctx.register_catalog(catalog_name, catalog_clone);
 
-            let schema_names = ctx
-                .catalog(catalog_name)
-                .unwrap()
-                .schema_names();
+            let schema_names = ctx.catalog(catalog_name).unwrap().schema_names();
 
             assert_eq!(1, schema_names.len());
             assert_eq!(schema_names, vec!["main"]);
 
             schema_names.iter().for_each(|s| {
-                let table_names = ctx.catalog(catalog_name).unwrap().schema(s).unwrap().table_names();
+                let table_names = ctx
+                    .catalog(catalog_name)
+                    .unwrap()
+                    .schema(s)
+                    .unwrap()
+                    .table_names();
                 assert_eq!(1, table_names.len());
                 assert_eq!(table_names, vec!["users"]);
             });
@@ -438,18 +482,19 @@ async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
 /// to stress-test the system under high concurrent load.
 #[tokio::test]
 async fn test_stress_concurrent_queries() -> DataFusionResult<()> {
-    let temp_dir = TempDir::new()
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let temp_dir =
+        TempDir::new().map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
     // Generate test data
-    common::create_catalog_with_deletes(&catalog_path)
-        .map_err(common::to_datafusion_error)?;
+    common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)
-        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+    let catalog = Arc::new(
+        DuckLakeCatalog::new(provider)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
+    );
 
     // Create 20 concurrent tasks
     let mut tasks = Vec::new();
@@ -470,7 +515,7 @@ async fn test_stress_concurrent_queries() -> DataFusionResult<()> {
                     let results = df.collect().await?;
                     let row_count: usize = results.iter().map(|b| b.num_rows()).sum();
                     row_count == 3
-                }
+                },
                 1 => {
                     // Count query
                     let df = ctx
@@ -478,9 +523,13 @@ async fn test_stress_concurrent_queries() -> DataFusionResult<()> {
                         .await?;
                     let results = df.collect().await?;
                     let batch = &results[0];
-                    let counts = batch.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+                    let counts = batch
+                        .column(0)
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .unwrap();
                     counts.value(0) == 3
-                }
+                },
                 2 => {
                     // Filtered query
                     let df = ctx
@@ -489,7 +538,7 @@ async fn test_stress_concurrent_queries() -> DataFusionResult<()> {
                     let results = df.collect().await?;
                     let row_count: usize = results.iter().map(|b| b.num_rows()).sum();
                     row_count == 2 // ids 3 and 5
-                }
+                },
                 3 => {
                     // Query for deleted row (should return 0)
                     let df = ctx
@@ -498,7 +547,7 @@ async fn test_stress_concurrent_queries() -> DataFusionResult<()> {
                     let results = df.collect().await?;
                     let row_count: usize = results.iter().map(|b| b.num_rows()).sum();
                     row_count == 0
-                }
+                },
                 _ => unreachable!(),
             };
 

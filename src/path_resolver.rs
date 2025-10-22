@@ -66,10 +66,7 @@ fn parse_s3_url(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
 /// Parse a file:// URL into ObjectStoreUrl and key path
 fn parse_file_url(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
     let url = url::Url::parse(data_path).map_err(|e| {
-        DuckLakeError::InvalidConfig(format!(
-            "Failed to parse file URL '{}': {}",
-            data_path, e
-        ))
+        DuckLakeError::InvalidConfig(format!("Failed to parse file URL '{}': {}", data_path, e))
     })?;
 
     let object_store_url = ObjectStoreUrl::parse("file:///").map_err(|e| {
@@ -86,10 +83,7 @@ fn parse_local_path(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
     let absolute_path = std::path::PathBuf::from(data_path)
         .canonicalize()
         .map_err(|e| {
-            DuckLakeError::InvalidConfig(format!(
-                "Failed to resolve path '{}': {}",
-                data_path, e
-            ))
+            DuckLakeError::InvalidConfig(format!("Failed to resolve path '{}': {}", data_path, e))
         })?;
 
     let object_store_url = ObjectStoreUrl::parse("file:///").map_err(|e| {
@@ -257,30 +251,21 @@ mod tests {
     fn test_parse_s3_url() {
         let (url, path) = parse_object_store_url("s3://bucket/prefix/data").unwrap();
         assert_eq!(path, "/prefix/data");
-        assert_eq!(
-            url,
-            ObjectStoreUrl::parse("s3://bucket/").unwrap()
-        );
+        assert_eq!(url, ObjectStoreUrl::parse("s3://bucket/").unwrap());
     }
 
     #[test]
     fn test_parse_s3_url_with_trailing_slash() {
         let (url, path) = parse_object_store_url("s3://bucket/prefix/").unwrap();
         assert_eq!(path, "/prefix/");
-        assert_eq!(
-            url,
-            ObjectStoreUrl::parse("s3://bucket/").unwrap()
-        );
+        assert_eq!(url, ObjectStoreUrl::parse("s3://bucket/").unwrap());
     }
 
     #[test]
     fn test_parse_s3_url_no_prefix() {
         let (url, path) = parse_object_store_url("s3://bucket/").unwrap();
         assert_eq!(path, "/");
-        assert_eq!(
-            url,
-            ObjectStoreUrl::parse("s3://bucket/").unwrap()
-        );
+        assert_eq!(url, ObjectStoreUrl::parse("s3://bucket/").unwrap());
     }
 
     #[test]
@@ -301,10 +286,12 @@ mod tests {
     fn test_parse_s3_url_missing_bucket() {
         let result = parse_object_store_url("s3:///path");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("S3 URL missing bucket"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("S3 URL missing bucket")
+        );
     }
 
     #[test]
@@ -396,7 +383,8 @@ mod tests {
 
     #[test]
     fn test_parse_s3_url_with_deep_prefix() {
-        let (url, path) = parse_object_store_url("s3://my-bucket/level1/level2/level3/data").unwrap();
+        let (url, path) =
+            parse_object_store_url("s3://my-bucket/level1/level2/level3/data").unwrap();
         assert_eq!(path, "/level1/level2/level3/data");
         assert_eq!(url, ObjectStoreUrl::parse("s3://my-bucket/").unwrap());
     }
@@ -412,7 +400,10 @@ mod tests {
     fn test_parse_s3_url_with_hyphens_and_dots() {
         let (url, path) = parse_object_store_url("s3://my-bucket.name-123/data").unwrap();
         assert_eq!(path, "/data");
-        assert_eq!(url, ObjectStoreUrl::parse("s3://my-bucket.name-123/").unwrap());
+        assert_eq!(
+            url,
+            ObjectStoreUrl::parse("s3://my-bucket.name-123/").unwrap()
+        );
     }
 
     #[test]
@@ -434,7 +425,12 @@ mod tests {
     fn test_parse_local_path_nonexistent() {
         let result = parse_object_store_url("/nonexistent/path/that/does/not/exist");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to resolve path"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to resolve path")
+        );
     }
 
     #[test]
@@ -628,7 +624,10 @@ mod tests {
         let (catalog_url, catalog_path) =
             parse_object_store_url("s3://data-lake/warehouse/").unwrap();
 
-        assert_eq!(catalog_url, ObjectStoreUrl::parse("s3://data-lake/").unwrap());
+        assert_eq!(
+            catalog_url,
+            ObjectStoreUrl::parse("s3://data-lake/").unwrap()
+        );
         assert_eq!(catalog_path, "/warehouse/");
 
         let catalog_resolver = PathResolver::new(Arc::new(catalog_url), catalog_path);
@@ -637,10 +636,16 @@ mod tests {
         assert_eq!(schema_resolver.base_path(), "/warehouse/prod/");
 
         let table_resolver = schema_resolver.child_resolver("sales/transactions/", true);
-        assert_eq!(table_resolver.base_path(), "/warehouse/prod/sales/transactions/");
+        assert_eq!(
+            table_resolver.base_path(),
+            "/warehouse/prod/sales/transactions/"
+        );
 
         let file_path = table_resolver.resolve("2024-01-01.parquet", true);
-        assert_eq!(file_path, "/warehouse/prod/sales/transactions/2024-01-01.parquet");
+        assert_eq!(
+            file_path,
+            "/warehouse/prod/sales/transactions/2024-01-01.parquet"
+        );
     }
 
     #[test]
@@ -755,7 +760,10 @@ mod tests {
 
         // Level 4: Month partition
         let partition2 = partition1.child_resolver("month=01/", true);
-        assert_eq!(partition2.base_path(), "/warehouse/sales/year=2024/month=01/");
+        assert_eq!(
+            partition2.base_path(),
+            "/warehouse/sales/year=2024/month=01/"
+        );
 
         // Final file path
         let file = partition2.resolve("data.parquet", true);

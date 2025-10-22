@@ -6,7 +6,7 @@ use crate::metadata_provider::{
     TableMetadata,
 };
 use duckdb::AccessMode::ReadOnly;
-use duckdb::{params, Config, Connection};
+use duckdb::{Config, Connection, params};
 
 /// DuckDB metadata provider
 ///
@@ -49,11 +49,11 @@ impl DuckdbMetadataProvider {
                     "DuckDB file likely already open in write mode. Cannot connect"
                 );
                 Err(DuckLakeError::DuckDb(msg))
-            }
+            },
             Err(msg) => {
                 tracing::error!(error = %msg, "Failed to open DuckDB catalog");
                 Err(DuckLakeError::DuckDb(msg))
-            }
+            },
         }
     }
 }
@@ -135,54 +135,59 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(columns)
     }
 
-    fn get_table_files_for_select(&self, table_id: i64, snapshot_id: i64) -> crate::Result<Vec<DuckLakeTableFile>> {
+    fn get_table_files_for_select(
+        &self,
+        table_id: i64,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<DuckLakeTableFile>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES)?;
 
         let files = stmt
-            .query_map(
-                [table_id, snapshot_id, snapshot_id, table_id],
-                |row| {
-                    // Parse data file (columns 0-4)
-                    let _data_file_id: i64 = row.get(0)?;
-                    let data_file = DuckLakeFileData {
-                        path: row.get(1)?,
-                        path_is_relative: row.get(2)?,
-                        file_size_bytes: row.get(3)?,
-                        footer_size: row.get(4)?,
-                        encryption_key: String::new(), // TODO: handle encryption
-                    };
+            .query_map([table_id, snapshot_id, snapshot_id, table_id], |row| {
+                // Parse data file (columns 0-4)
+                let _data_file_id: i64 = row.get(0)?;
+                let data_file = DuckLakeFileData {
+                    path: row.get(1)?,
+                    path_is_relative: row.get(2)?,
+                    file_size_bytes: row.get(3)?,
+                    footer_size: row.get(4)?,
+                    encryption_key: String::new(), // TODO: handle encryption
+                };
 
-                    // Parse delete file (columns 5-10) if exists
-                    let delete_file = if let Ok(Some(_)) = row.get::<_, Option<i64>>(5) {
-                        Some(DuckLakeFileData {
-                            path: row.get(6)?,
-                            path_is_relative: row.get(7)?,
-                            file_size_bytes: row.get(8)?,
-                            footer_size: row.get(9)?,
-                            encryption_key: String::new(),
-                        })
-                    } else {
-                        None
-                    };
-
-                    let _delete_count: Option<i64> = row.get(10)?;
-
-                    Ok(DuckLakeTableFile {
-                        file: data_file,
-                        delete_file,
-                        row_id_start: None,
-                        snapshot_id: Some(snapshot_id),
-                        max_row_count: None,  // Set to None until we have actual row count from data file metadata
+                // Parse delete file (columns 5-10) if exists
+                let delete_file = if let Ok(Some(_)) = row.get::<_, Option<i64>>(5) {
+                    Some(DuckLakeFileData {
+                        path: row.get(6)?,
+                        path_is_relative: row.get(7)?,
+                        file_size_bytes: row.get(8)?,
+                        footer_size: row.get(9)?,
+                        encryption_key: String::new(),
                     })
-                },
-            )?
+                } else {
+                    None
+                };
+
+                let _delete_count: Option<i64> = row.get(10)?;
+
+                Ok(DuckLakeTableFile {
+                    file: data_file,
+                    delete_file,
+                    row_id_start: None,
+                    snapshot_id: Some(snapshot_id),
+                    max_row_count: None, // Set to None until we have actual row count from data file metadata
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
     }
 
-    fn get_schema_by_name(&self, name: &str, snapshot_id: i64) -> crate::Result<Option<SchemaMetadata>> {
+    fn get_schema_by_name(
+        &self,
+        name: &str,
+        snapshot_id: i64,
+    ) -> crate::Result<Option<SchemaMetadata>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_GET_SCHEMA_BY_NAME)?;
 
@@ -204,7 +209,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
         }
     }
 
-    fn get_table_by_name(&self, schema_id: i64, name: &str, snapshot_id: i64) -> crate::Result<Option<TableMetadata>> {
+    fn get_table_by_name(
+        &self,
+        schema_id: i64,
+        name: &str,
+        snapshot_id: i64,
+    ) -> crate::Result<Option<TableMetadata>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(SQL_GET_TABLE_BY_NAME)?;
 

@@ -64,21 +64,24 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
         _ => {
             // Check for complex types (list, struct, map)
             if normalized.starts_with("list") || normalized.starts_with("array") {
-                Err(DuckLakeError::UnsupportedType(
-                    format!("Complex type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.", ducklake_type)
-                ))
+                Err(DuckLakeError::UnsupportedType(format!(
+                    "Complex type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.",
+                    ducklake_type
+                )))
             } else if normalized.starts_with("struct") {
-                Err(DuckLakeError::UnsupportedType(
-                    format!("Struct type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.", ducklake_type)
-                ))
+                Err(DuckLakeError::UnsupportedType(format!(
+                    "Struct type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.",
+                    ducklake_type
+                )))
             } else if normalized.starts_with("map") {
-                Err(DuckLakeError::UnsupportedType(
-                    format!("Map type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.", ducklake_type)
-                ))
+                Err(DuckLakeError::UnsupportedType(format!(
+                    "Map type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.",
+                    ducklake_type
+                )))
             } else {
                 Err(DuckLakeError::UnsupportedType(ducklake_type.to_string()))
             }
-        }
+        },
     }
 }
 
@@ -101,7 +104,7 @@ fn parse_decimal(type_str: &str) -> Option<DataType> {
             // decimal(precision) with scale=0
             let precision: u8 = parts[0].parse().ok()?;
             Some(DataType::Decimal128(precision, 0))
-        }
+        },
         2 => {
             // decimal(precision, scale)
             let precision: u8 = parts[0].parse().ok()?;
@@ -113,7 +116,7 @@ fn parse_decimal(type_str: &str) -> Option<DataType> {
             } else {
                 Some(DataType::Decimal128(precision, scale))
             }
-        }
+        },
         _ => None,
     }
 }
@@ -182,7 +185,7 @@ mod tests {
                 assert!(msg.contains("list<int32>"));
                 assert!(msg.contains("not yet supported"));
                 assert!(msg.contains("open an issue"));
-            }
+            },
             _ => panic!("Expected UnsupportedType error for list type"),
         }
     }
@@ -196,7 +199,7 @@ mod tests {
             Err(DuckLakeError::UnsupportedType(msg)) => {
                 assert!(msg.contains("array<varchar>"));
                 assert!(msg.contains("not yet supported"));
-            }
+            },
             _ => panic!("Expected UnsupportedType error for array type"),
         }
     }
@@ -211,7 +214,7 @@ mod tests {
                 assert!(msg.contains("struct<a:int32,b:varchar>"));
                 assert!(msg.contains("not yet supported"));
                 assert!(msg.contains("open an issue"));
-            }
+            },
             _ => panic!("Expected UnsupportedType error for struct type"),
         }
     }
@@ -226,7 +229,7 @@ mod tests {
                 assert!(msg.contains("map<varchar,int32>"));
                 assert!(msg.contains("not yet supported"));
                 assert!(msg.contains("open an issue"));
-            }
+            },
             _ => panic!("Expected UnsupportedType error for map type"),
         }
     }
@@ -240,7 +243,7 @@ mod tests {
             Err(DuckLakeError::UnsupportedType(msg)) => {
                 assert!(msg.contains("list<struct<a:int32,b:varchar>>"));
                 assert!(msg.contains("not yet supported"));
-            }
+            },
             _ => panic!("Expected UnsupportedType error for nested complex type"),
         }
     }
@@ -253,7 +256,7 @@ mod tests {
         match result {
             Err(DuckLakeError::UnsupportedType(msg)) => {
                 assert_eq!(msg, "completely_unknown_type");
-            }
+            },
             _ => panic!("Expected UnsupportedType error for unknown type"),
         }
     }
@@ -279,7 +282,7 @@ mod tests {
         match result {
             Err(DuckLakeError::UnsupportedType(msg)) => {
                 assert!(msg.contains("list<int32>"));
-            }
+            },
             _ => panic!("Expected UnsupportedType error when building schema with complex type"),
         }
     }

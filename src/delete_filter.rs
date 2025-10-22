@@ -13,9 +13,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::record_batch::{RecordBatch, RecordBatchOptions};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
-};
+use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::Stream;
 
 /// Custom execution plan that filters out deleted rows
@@ -59,7 +57,7 @@ impl DisplayAs for DeleteFilterExec {
                     self.file_path,
                     self.deleted_positions.len()
                 )
-            }
+            },
             DisplayFormatType::TreeRender => {
                 write!(
                     f,
@@ -67,7 +65,7 @@ impl DisplayAs for DeleteFilterExec {
                     self.file_path,
                     self.deleted_positions.len()
                 )
-            }
+            },
         }
     }
 }
@@ -142,10 +140,10 @@ impl Stream for DeleteFilterStream {
                         // Update row offset for next batch
                         self.row_offset += batch.num_rows() as i64;
                         Poll::Ready(Some(Ok(filtered_batch)))
-                    }
+                    },
                     Err(e) => Poll::Ready(Some(Err(e))),
                 }
-            }
+            },
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -180,20 +178,15 @@ impl DeleteFilterStream {
         if batch.num_columns() == 0 {
             let mut options = RecordBatchOptions::new();
             options = options.with_row_count(Some(keep_indices.len()));
-            return RecordBatch::try_new_with_options(
-                batch.schema(),
-                vec![],
-                &options,
-            )
-            .map_err(|e| DataFusionError::ArrowError(Box::new(e), None));
+            return RecordBatch::try_new_with_options(batch.schema(), vec![], &options)
+                .map_err(|e| DataFusionError::ArrowError(Box::new(e), None));
         }
 
         // Use Arrow's take kernel to select rows
         use arrow::array::UInt32Array;
         use arrow::compute::take;
 
-        let indices =
-            UInt32Array::from(keep_indices.iter().map(|&i| i as u32).collect::<Vec<_>>());
+        let indices = UInt32Array::from(keep_indices.iter().map(|&i| i as u32).collect::<Vec<_>>());
 
         let filtered_columns: DataFusionResult<Vec<_>> = batch
             .columns()
@@ -225,16 +218,12 @@ mod tests {
     #[test]
     fn test_filter_batch_ignores_out_of_bounds_positions() {
         // Create a simple RecordBatch with 4 rows
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
         let id_array = Int32Array::from(vec![1, 2, 3, 4]);
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(id_array) as Arc<dyn Array>],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(id_array) as Arc<dyn Array>])
+                .unwrap();
 
         // Create delete positions: 1 (valid), 1000, 2000, 5000 (all out of bounds)
         // Only position 1 should actually delete a row (the row with id=2)
@@ -275,16 +264,12 @@ mod tests {
     #[test]
     fn test_filter_batch_all_out_of_bounds_positions() {
         // Test the edge case where ALL delete positions are beyond the file
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
         let id_array = Int32Array::from(vec![10, 20, 30]);
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(id_array) as Arc<dyn Array>],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(id_array) as Arc<dyn Array>])
+                .unwrap();
 
         // All positions are way beyond the 3-row file
         let deleted_positions: HashSet<i64> = [1000, 2000, 3000, 9999].into_iter().collect();
@@ -317,16 +302,15 @@ mod tests {
     #[test]
     fn test_filter_batch_with_row_offset() {
         // Test that row_offset is correctly considered when checking positions
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("value", DataType::Int32, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "value",
+            DataType::Int32,
+            false,
+        )]));
 
         let array = Int32Array::from(vec![100, 200, 300, 400]);
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![Arc::new(array) as Arc<dyn Array>],
-        )
-        .unwrap();
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(array) as Arc<dyn Array>]).unwrap();
 
         // Delete position 11 and 1000 (way out of bounds)
         // With row_offset=10, this batch contains global positions [10, 11, 12, 13]

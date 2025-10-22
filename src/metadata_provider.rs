@@ -57,8 +57,7 @@ pub const SQL_GET_TABLE_BY_NAME: &str =
        AND ? >= begin_snapshot
        AND (? < end_snapshot OR end_snapshot IS NULL)";
 
-pub const SQL_TABLE_EXISTS: &str =
-    "SELECT EXISTS(
+pub const SQL_TABLE_EXISTS: &str = "SELECT EXISTS(
        SELECT 1 FROM ducklake_table
        WHERE schema_id = ?
          AND table_name = ?
@@ -184,7 +183,11 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;
 
     /// Get table files for a specific snapshot
-    fn get_table_files_for_select(&self, table_id: i64, snapshot_id: i64) -> Result<Vec<DuckLakeTableFile>>;
+    fn get_table_files_for_select(
+        &self,
+        table_id: i64,
+        snapshot_id: i64,
+    ) -> Result<Vec<DuckLakeTableFile>>;
     //     todo: support select with file pruning
 
     // Dynamic lookup methods for on-demand metadata retrieval
@@ -193,7 +196,12 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     fn get_schema_by_name(&self, name: &str, snapshot_id: i64) -> Result<Option<SchemaMetadata>>;
 
     /// Get table by name for a specific snapshot
-    fn get_table_by_name(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<Option<TableMetadata>>;
+    fn get_table_by_name(
+        &self,
+        schema_id: i64,
+        name: &str,
+        snapshot_id: i64,
+    ) -> Result<Option<TableMetadata>>;
 
     /// Check if table exists for a specific snapshot
     fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<bool>;
