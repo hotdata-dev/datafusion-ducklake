@@ -3,6 +3,8 @@
 //! These tests verify that the delete file implementation correctly filters out
 //! deleted rows from query results while maintaining backward compatibility.
 
+mod common;
+
 use std::sync::Arc;
 
 use arrow::array::{Array, Int64Array};
@@ -10,6 +12,7 @@ use arrow::record_batch::RecordBatch;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+use tempfile::TempDir;
 
 /// Test helper to extract integer values from a RecordBatch column
 /// Supports both Int32 and Int64
@@ -37,11 +40,6 @@ fn get_int_column(batch: &RecordBatch, col_idx: usize) -> Vec<i32> {
 mod integration_tests {
     use super::*;
 
-    /// Helper to check if test data exists
-    fn test_data_exists() -> bool {
-        std::path::Path::new("tests/test_data/no_deletes.ducklake").exists()
-    }
-
     /// Helper to create a catalog from a DuckLake database file
     fn create_catalog(path: &str) -> DataFusionResult<Arc<DuckLakeCatalog>> {
         let provider = DuckdbMetadataProvider::new(path)
@@ -54,16 +52,15 @@ mod integration_tests {
     /// Test querying a table without delete files (backward compatibility)
     #[tokio::test]
     async fn test_table_without_delete_files() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
-
-        let catalog_path = "tests/test_data/no_deletes.ducklake";
-        let provider = DuckdbMetadataProvider::new(catalog_path)
+        let temp_dir = TempDir::new()
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-        let catalog = Arc::new(DuckLakeCatalog::new(provider)
-            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+        let catalog_path = temp_dir.path().join("no_deletes.ducklake");
+
+        // Generate test data
+        common::create_catalog_no_deletes(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("no_deletes", catalog);
@@ -90,16 +87,15 @@ mod integration_tests {
     /// Test querying a table with delete files
     #[tokio::test]
     async fn test_table_with_delete_files() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
-
-        let catalog_path = "tests/test_data/with_deletes.ducklake";
-        let provider = DuckdbMetadataProvider::new(catalog_path)
+        let temp_dir = TempDir::new()
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-        let catalog = Arc::new(DuckLakeCatalog::new(provider)
-            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
+        let catalog_path = temp_dir.path().join("with_deletes.ducklake");
+
+        // Generate test data
+        common::create_catalog_with_deletes(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -129,13 +125,15 @@ mod integration_tests {
     /// Test that deleted rows are actually excluded from results
     #[tokio::test]
     async fn test_deleted_rows_excluded() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
-        let catalog_path = "tests/test_data/with_deletes.ducklake";
-        let catalog = create_catalog(catalog_path)?;
+        // Generate test data
+        common::create_catalog_with_deletes(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -160,13 +158,15 @@ mod integration_tests {
     /// Test updated rows show new values (UPDATE = DELETE old + INSERT new)
     #[tokio::test]
     async fn test_updated_rows_show_new_values() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("with_updates.ducklake");
 
-        let catalog_path = "tests/test_data/with_updates.ducklake";
-        let catalog = create_catalog(catalog_path)?;
+        // Generate test data
+        common::create_catalog_with_updates(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_updates", catalog);
@@ -200,13 +200,15 @@ mod integration_tests {
     /// Test count query with delete files
     #[tokio::test]
     async fn test_count_with_deletes() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
-        let catalog_path = "tests/test_data/with_deletes.ducklake";
-        let catalog = create_catalog(catalog_path)?;
+        // Generate test data
+        common::create_catalog_with_deletes(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -231,13 +233,15 @@ mod integration_tests {
     /// Test aggregation with delete files
     #[tokio::test]
     async fn test_aggregation_with_deletes() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("with_updates.ducklake");
 
-        let catalog_path = "tests/test_data/with_updates.ducklake";
-        let catalog = create_catalog(catalog_path)?;
+        // Generate test data
+        common::create_catalog_with_updates(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_updates", catalog);
@@ -264,13 +268,15 @@ mod integration_tests {
     /// Test that empty result sets work correctly
     #[tokio::test]
     async fn test_empty_result_with_all_deleted() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
-        let catalog_path = "tests/test_data/with_deletes.ducklake";
-        let catalog = create_catalog(catalog_path)?;
+        // Generate test data
+        common::create_catalog_with_deletes(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -305,13 +311,15 @@ mod integration_tests {
     /// 3. Apply WHERE filter (filters id > 2, yields [4,5])
     #[tokio::test]
     async fn test_filter_pushdown_correctness_with_deletes() -> DataFusionResult<()> {
-        if !test_data_exists() {
-            eprintln!("Test data not found. Run setup_test_data.sql first.");
-            return Ok(());
-        }
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("filter_pushdown.ducklake");
 
-        let catalog_path = "tests/test_data/filter_pushdown.ducklake";
-        let catalog = create_catalog(catalog_path)?;
+        // Generate test data
+        common::create_catalog_filter_pushdown(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("filter_pushdown", catalog);

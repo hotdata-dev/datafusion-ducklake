@@ -214,13 +214,19 @@ runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 ### Testing
 The project includes comprehensive tests:
 - **Unit tests**: `src/delete_filter.rs` - Delete file schema and position extraction
-- **Integration tests**: `tests/delete_filter_tests.rs` - End-to-end delete filtering scenarios
-- **Object store tests**: `tests/object_store_integration_test.rs` - S3/MinIO integration
-- Test data setup scripts in `tests/test_data/` (if applicable)
+- **Integration tests**:
+  - `tests/delete_filter_tests.rs` - End-to-end delete filtering scenarios
+  - `tests/concurrent_tests.rs` - Thread-safety and concurrent query handling
+  - `tests/object_store_integration_test.rs` - S3/MinIO integration
+- **Test data generation**: All test data is generated in Rust using `tests/common/mod.rs` helpers
+  - No external shell scripts required
+  - Tests use temporary directories for isolation
+  - Each test generates its own DuckLake catalog on-the-fly
 
 Run tests with:
 ```bash
-cargo test                    # All tests
+cargo test                    # All tests (no setup required)
 cargo test delete_filter      # Delete file tests only
+cargo test concurrent         # Concurrency tests only
 cargo test --ignored          # Performance benchmarks
 ```

@@ -21,6 +21,8 @@
 //!
 //! These tests verify these guarantees hold under concurrent load.
 
+mod common;
+
 use std::sync::Arc;
 
 use arrow::array::{Array, Int32Array, Int64Array};
@@ -28,6 +30,7 @@ use datafusion::error::Result as DataFusionResult;
 use datafusion::common::DataFusionError;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+use tempfile::TempDir;
 
 /// Test helper to extract integer values from a RecordBatch column
 /// Supports both Int32 and Int64
@@ -51,10 +54,6 @@ fn get_int_column(batch: &arrow::record_batch::RecordBatch, col_idx: usize) -> V
     panic!("Column should be Int32Array or Int64Array, got {:?}", column.data_type());
 }
 
-/// Helper to check if test data exists
-fn test_data_exists() -> bool {
-    std::path::Path::new("tests/test_data/no_deletes.ducklake").exists()
-}
 
 /// Test concurrent queries on the same table
 ///
@@ -67,14 +66,16 @@ fn test_data_exists() -> bool {
 /// - No race conditions in metadata provider or catalog implementation
 #[tokio::test]
 async fn test_concurrent_select_queries() -> DataFusionResult<()> {
-    if !test_data_exists() {
-        eprintln!("Test data not found. Skipping concurrent test.");
-        return Ok(());
-    }
+    let temp_dir = TempDir::new()
+        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let catalog_path = temp_dir.path().join("no_deletes.ducklake");
+
+    // Generate test data
+    common::create_catalog_no_deletes(&catalog_path)
+        .map_err(common::to_datafusion_error)?;
 
     // Create shared catalog (Arc allows sharing across tasks)
-    let catalog_path = "tests/test_data/no_deletes.ducklake";
-    let provider = DuckdbMetadataProvider::new(catalog_path)
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(DuckLakeCatalog::new(provider)
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
@@ -138,13 +139,15 @@ async fn test_concurrent_select_queries() -> DataFusionResult<()> {
 /// path with optimizations for zero-column batches.
 #[tokio::test]
 async fn test_concurrent_count_queries() -> DataFusionResult<()> {
-    if !test_data_exists() {
-        eprintln!("Test data not found. Skipping concurrent test.");
-        return Ok(());
-    }
+    let temp_dir = TempDir::new()
+        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
-    let catalog_path = "tests/test_data/with_deletes.ducklake";
-    let provider = DuckdbMetadataProvider::new(catalog_path)
+    // Generate test data
+    common::create_catalog_with_deletes(&catalog_path)
+        .map_err(common::to_datafusion_error)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(DuckLakeCatalog::new(provider)
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
@@ -205,13 +208,15 @@ async fn test_concurrent_count_queries() -> DataFusionResult<()> {
 /// that the system remains stable under heterogeneous query workloads.
 #[tokio::test]
 async fn test_concurrent_mixed_queries() -> DataFusionResult<()> {
-    if !test_data_exists() {
-        eprintln!("Test data not found. Skipping concurrent test.");
-        return Ok(());
-    }
+    let temp_dir = TempDir::new()
+        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let catalog_path = temp_dir.path().join("with_updates.ducklake");
 
-    let catalog_path = "tests/test_data/with_updates.ducklake";
-    let provider = DuckdbMetadataProvider::new(catalog_path)
+    // Generate test data
+    common::create_catalog_with_updates(&catalog_path)
+        .map_err(common::to_datafusion_error)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(DuckLakeCatalog::new(provider)
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
@@ -294,13 +299,15 @@ async fn test_concurrent_mixed_queries() -> DataFusionResult<()> {
 /// without race conditions.
 #[tokio::test]
 async fn test_concurrent_delete_filtering() -> DataFusionResult<()> {
-    if !test_data_exists() {
-        eprintln!("Test data not found. Skipping concurrent test.");
-        return Ok(());
-    }
+    let temp_dir = TempDir::new()
+        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
-    let catalog_path = "tests/test_data/with_deletes.ducklake";
-    let provider = DuckdbMetadataProvider::new(catalog_path)
+    // Generate test data
+    common::create_catalog_with_deletes(&catalog_path)
+        .map_err(common::to_datafusion_error)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(DuckLakeCatalog::new(provider)
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
@@ -369,13 +376,15 @@ async fn test_concurrent_delete_filtering() -> DataFusionResult<()> {
 /// (schema listing, table listing) is thread-safe.
 #[tokio::test]
 async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
-    if !test_data_exists() {
-        eprintln!("Test data not found. Skipping concurrent test.");
-        return Ok(());
-    }
+    let temp_dir = TempDir::new()
+        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let catalog_path = temp_dir.path().join("no_deletes.ducklake");
 
-    let catalog_path = "tests/test_data/no_deletes.ducklake";
-    let provider = DuckdbMetadataProvider::new(catalog_path)
+    // Generate test data
+    common::create_catalog_no_deletes(&catalog_path)
+        .map_err(common::to_datafusion_error)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(DuckLakeCatalog::new(provider)
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
@@ -429,13 +438,15 @@ async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
 /// to stress-test the system under high concurrent load.
 #[tokio::test]
 async fn test_stress_concurrent_queries() -> DataFusionResult<()> {
-    if !test_data_exists() {
-        eprintln!("Test data not found. Skipping stress test.");
-        return Ok(());
-    }
+    let temp_dir = TempDir::new()
+        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+    let catalog_path = temp_dir.path().join("with_deletes.ducklake");
 
-    let catalog_path = "tests/test_data/with_deletes.ducklake";
-    let provider = DuckdbMetadataProvider::new(catalog_path)
+    // Generate test data
+    common::create_catalog_with_deletes(&catalog_path)
+        .map_err(common::to_datafusion_error)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(DuckLakeCatalog::new(provider)
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
