@@ -5,6 +5,8 @@
 //! file with DuckLake extension, populates it with test data, and returns
 //! the path for use with DuckdbMetadataProvider.
 
+#![allow(dead_code)]
+
 use anyhow::Result;
 use std::path::Path;
 

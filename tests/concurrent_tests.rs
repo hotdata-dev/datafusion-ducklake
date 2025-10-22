@@ -222,7 +222,7 @@ async fn test_concurrent_mixed_queries() -> DataFusionResult<()> {
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?);
 
     // Define different query types
-    let queries = vec![
+    let queries = [
         ("SELECT COUNT(*) as count FROM with_updates.main.inventory", "count"),
         ("SELECT SUM(quantity) as total FROM with_updates.main.inventory", "sum"),
         ("SELECT * FROM with_updates.main.inventory WHERE id = 1", "filter_1"),
