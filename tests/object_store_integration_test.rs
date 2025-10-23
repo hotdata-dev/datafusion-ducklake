@@ -200,6 +200,7 @@ async fn create_s3_test_catalog(
 }
 
 #[tokio::test]
+#[cfg_attr(feature = "skip-docker-tests", ignore)]
 async fn test_minio_object_store_integration() -> anyhow::Result<()> {
     // Tests DataFusion-DuckLake reading from S3/MinIO with DuckDB-created data
 
