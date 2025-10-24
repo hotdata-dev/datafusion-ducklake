@@ -1,7 +1,17 @@
 [package]
 name = "datafusion-ducklake"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+authors = ["zac@hotdata.dev"]
+description = "DuckLake query engine for rust, built with datafusion."
+license = "Apache-2.0"
+repository = "https://github.com/hotdata-dev/datafusion-ducklake"
+homepage = "https://github.com/hotdata-dev/datafusion-ducklake"
+documentation = "https://docs.rs/datafusion-ducklake"
+readme = "README.md"
+keywords = ["datafusion", "duckdb", "ducklake", "iceberg", "datalake"]
+categories = ["database", "filesystem"]
+exclude = ["datafusion-ducklake.iml", "target", "tests/test_data"]
 
 [dependencies]
 datafusion = "50.1.0"
