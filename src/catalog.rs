@@ -131,17 +131,16 @@ impl DuckLakeCatalog {
                 }
 
                 // Query fresh snapshot
-                let snapshot_id = self
-                    .provider
-                    .get_current_snapshot()
-                    .inspect_err(|e| tracing::error!(error = %e, "Failed to get current snapshot"))?;
+                let snapshot_id = self.provider.get_current_snapshot().inspect_err(
+                    |e| tracing::error!(error = %e, "Failed to get current snapshot"),
+                )?;
                 *cache = Some(SnapshotCache {
                     snapshot_id,
                     cached_at: now,
                 });
 
                 Ok(snapshot_id)
-            }
+            },
 
             // TTL = None: Cache forever (query once, never refresh)
             None => {
@@ -167,17 +166,16 @@ impl DuckLakeCatalog {
                     return Ok(cached.snapshot_id);
                 }
 
-                let snapshot_id = self
-                    .provider
-                    .get_current_snapshot()
-                    .inspect_err(|e| tracing::error!(error = %e, "Failed to get current snapshot"))?;
+                let snapshot_id = self.provider.get_current_snapshot().inspect_err(
+                    |e| tracing::error!(error = %e, "Failed to get current snapshot"),
+                )?;
                 *cache = Some(SnapshotCache {
                     snapshot_id,
                     cached_at: Instant::now(),
                 });
 
                 Ok(snapshot_id)
-            }
+            },
         }
     }
 }
@@ -276,7 +274,11 @@ mod tests {
             Ok(vec![])
         }
 
-        fn list_tables(&self, _schema_id: i64, _snapshot_id: i64) -> crate::Result<Vec<TableMetadata>> {
+        fn list_tables(
+            &self,
+            _schema_id: i64,
+            _snapshot_id: i64,
+        ) -> crate::Result<Vec<TableMetadata>> {
             Ok(vec![])
         }
 
@@ -309,7 +311,12 @@ mod tests {
             Ok(None)
         }
 
-        fn table_exists(&self, _schema_id: i64, _name: &str, _snapshot_id: i64) -> crate::Result<bool> {
+        fn table_exists(
+            &self,
+            _schema_id: i64,
+            _name: &str,
+            _snapshot_id: i64,
+        ) -> crate::Result<bool> {
             Ok(false)
         }
     }
@@ -324,7 +331,9 @@ mod tests {
     fn test_ttl_zero_always_queries_fresh() {
         let provider = Arc::new(MockMetadataProvider::new(100));
         let provider_trait: Arc<dyn MetadataProvider> = provider.clone();
-        let config = SnapshotConfig { ttl_seconds: Some(0) };
+        let config = SnapshotConfig {
+            ttl_seconds: Some(0),
+        };
         let catalog = DuckLakeCatalog::from_arc_provider(provider_trait, config).unwrap();
 
         // First query should return snapshot 100
@@ -343,7 +352,9 @@ mod tests {
     fn test_ttl_none_caches_forever() {
         let provider = Arc::new(MockMetadataProvider::new(100));
         let provider_trait: Arc<dyn MetadataProvider> = provider.clone();
-        let config = SnapshotConfig { ttl_seconds: None };
+        let config = SnapshotConfig {
+            ttl_seconds: None,
+        };
         let catalog = DuckLakeCatalog::from_arc_provider(provider_trait, config).unwrap();
 
         // First query caches snapshot 100
@@ -362,7 +373,9 @@ mod tests {
     fn test_ttl_with_duration() {
         let provider = Arc::new(MockMetadataProvider::new(100));
         let provider_trait: Arc<dyn MetadataProvider> = provider.clone();
-        let config = SnapshotConfig { ttl_seconds: Some(1) };
+        let config = SnapshotConfig {
+            ttl_seconds: Some(1),
+        };
         let catalog = DuckLakeCatalog::from_arc_provider(provider_trait, config).unwrap();
 
         // First query caches snapshot 100
@@ -387,7 +400,9 @@ mod tests {
     #[test]
     fn test_concurrent_snapshot_access() {
         let provider = MockMetadataProvider::new(100);
-        let config = SnapshotConfig { ttl_seconds: Some(1) };
+        let config = SnapshotConfig {
+            ttl_seconds: Some(1),
+        };
         let catalog = Arc::new(DuckLakeCatalog::new_with_config(provider, config).unwrap());
 
         let mut handles = vec![];
