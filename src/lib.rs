@@ -24,8 +24,10 @@
 //! // Create a DuckDB metadata provider
 //! let provider = DuckdbMetadataProvider::new("path/to/catalog.ducklake")?;
 //!
-//! // Register a DuckLake catalog with the provider
+//! // Create catalog (default: always queries latest snapshot)
 //! let catalog = DuckLakeCatalog::new(provider)?;
+//!
+//! // Register the catalog with DataFusion
 //! ctx.register_catalog("ducklake", std::sync::Arc::new(catalog));
 //!
 //! // Query tables from the catalog
@@ -49,7 +51,7 @@ pub mod types;
 pub type Result<T> = std::result::Result<T, DuckLakeError>;
 
 // Re-export main types for convenience
-pub use catalog::DuckLakeCatalog;
+pub use catalog::{DuckLakeCatalog, SnapshotConfig};
 pub use error::DuckLakeError;
 pub use metadata_provider::MetadataProvider;
 pub use metadata_provider_duckdb::DuckdbMetadataProvider;

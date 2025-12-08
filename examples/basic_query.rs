@@ -2,8 +2,9 @@
 //!
 //! This example demonstrates how to:
 //! 1. Create a DuckLake catalog from a DuckDB catalog file
-//! 2. Register it with DataFusion
-//! 3. Execute a simple SELECT query
+//! 2. Configure snapshot resolution with TTL (time-to-live)
+//! 3. Register it with DataFusion
+//! 4. Execute a simple SELECT query
 //!
 //! To run this example, you need:
 //! - A DuckDB database file with DuckLake tables
@@ -14,6 +15,8 @@
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+// Uncomment when using custom snapshot config:
+// use datafusion_ducklake::SnapshotConfig;
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use std::env;
@@ -56,8 +59,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 
-    // Create the DuckLake catalog
+    // Configure snapshot resolution behavior
+    //
+    // Option 1: Default configuration (TTL=0) - Always fresh, queries snapshot on every access
     let ducklake_catalog = DuckLakeCatalog::new(provider)?;
+
+    // Option 2: Custom TTL - Balance freshness and performance
+    // Caches snapshot for 5 seconds, then refreshes
+    // let config = SnapshotConfig { ttl_seconds: Some(5) };
+    // let ducklake_catalog = DuckLakeCatalog::new_with_config(provider, config)?;
+
+    // Option 3: Cache forever - Maximum performance, snapshot frozen at catalog creation
+    // let config = SnapshotConfig { ttl_seconds: None };
+    // let ducklake_catalog = DuckLakeCatalog::new_with_config(provider, config)?;
 
     println!("✓ Connected to DuckLake catalog");
 

@@ -44,10 +44,11 @@ The codebase follows a layered architecture with clear separation of concerns:
 
 2. **DataFusion Integration Layer** (`src/catalog.rs`, `src/schema.rs`, `src/table.rs`)
    - Bridges DuckLake concepts to DataFusion's catalog system
-   - `DuckLakeCatalog`: Implements `CatalogProvider`, uses dynamic metadata lookup (queries on every call to `schema()` and `schema_names()`)
+   - `DuckLakeCatalog`: Implements `CatalogProvider`, uses dynamic metadata lookup with configurable snapshot resolution
    - `DuckLakeSchema`: Implements `SchemaProvider`, uses dynamic metadata lookup (queries on every call to `table()` and `table_names()`)
    - `DuckLakeTable`: Implements `TableProvider`, caches table structure and file lists at creation time
    - **No HashMaps**: Catalog and schema providers query metadata on-demand rather than caching
+   - **Snapshot Resolution**: Configurable TTL (time-to-live) for balancing freshness and performance
 
 3. **Path Resolution** (`src/path_resolver.rs`)
    - Centralized utilities for parsing object store URLs and resolving hierarchical paths
@@ -77,7 +78,8 @@ The catalog uses a **pure dynamic lookup** approach with no caching at the catal
 - **DuckLakeCatalog** (`catalog.rs`):
   - `schema_names()`: Queries `list_schemas()` on every call
   - `schema()`: Queries `get_schema_by_name()` on every call
-  - `new()`: O(1) - only fetches snapshot ID and data_path
+  - `new()`: O(1) - only fetches data_path
+  - **Snapshot Resolution**: Configurable via `SnapshotConfig`
 
 - **DuckLakeSchema** (`schema.rs`):
   - `table_names()`: Queries `list_tables()` on every call
@@ -92,12 +94,12 @@ The catalog uses a **pure dynamic lookup** approach with no caching at the catal
 **Benefits**:
 - O(1) memory usage regardless of catalog size
 - Fast catalog startup (no upfront schema/table listing)
-- Always fresh metadata (no stale cache issues)
-- Simple implementation (no cache invalidation logic)
+- Configurable freshness vs performance trade-off
+- Simple implementation (no complex cache invalidation logic)
 
 **Trade-offs**:
 - Small query overhead per metadata lookup (acceptable for read-only DuckDB connections)
-- Future optimization: Add optional caching layer via wrapper implementation
+- Snapshot resolution adds one SQL query per catalog operation (configurable via TTL)
 
 ### Data Flow
 
