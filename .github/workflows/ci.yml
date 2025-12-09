@@ -9,6 +9,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   fmt:
@@ -31,7 +32,7 @@ jobs:
     strategy:
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-latest-m
           - macos-latest
         rust: [stable]
     steps:
@@ -42,6 +43,9 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
           components: clippy
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Cache cargo registry
         uses: actions/cache@v4

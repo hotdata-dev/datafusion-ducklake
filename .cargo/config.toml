@@ -1,0 +1,5 @@
+[build]
+# Use sccache for faster compilation
+# Install: cargo install sccache
+# To enable: Set RUSTC_WRAPPER=sccache in your environment
+# rustc-wrapper = "sccache"  # Uncomment after installing sccache
