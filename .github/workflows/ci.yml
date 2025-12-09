@@ -14,7 +14,7 @@ env:
 jobs:
   fmt:
     name: Rustfmt
-    runs-on: ubuntu-22.04-4core
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +32,7 @@ jobs:
     strategy:
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-latest-m
           - macos-latest
         rust: [stable]
     steps:
