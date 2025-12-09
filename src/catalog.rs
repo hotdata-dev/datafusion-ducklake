@@ -11,21 +11,36 @@ use crate::schema::DuckLakeSchema;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 
+/// Trait for providing current time (allows mocking in tests)
+trait Clock: Send + Sync + std::fmt::Debug {
+    fn now(&self) -> Instant;
+}
+
+/// Standard clock using std::time::Instant
+#[derive(Debug)]
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
 /// Configuration for snapshot resolution behavior
 #[derive(Debug, Clone)]
 pub struct SnapshotConfig {
-    /// Time-to-live for cached snapshot ID in seconds
-    /// - Some(0): Always query for latest snapshot (maximum freshness)
-    /// - Some(n) where n > 0: Cache snapshot for n seconds
+    /// Time-to-live for cached snapshot ID
+    /// - Some(Duration::ZERO): Always query for latest snapshot (maximum freshness)
+    /// - Some(duration) where duration > 0: Cache snapshot for specified duration
     /// - None: Cache forever (snapshot frozen at catalog creation)
-    pub ttl_seconds: Option<u64>,
+    pub ttl: Option<Duration>,
 }
 
 impl Default for SnapshotConfig {
     fn default() -> Self {
         Self {
-            // Default to 0 for maximum freshness
-            ttl_seconds: Some(0),
+            // Default to Duration::ZERO for maximum freshness
+            ttl: Some(Duration::ZERO),
         }
     }
 }
@@ -54,6 +69,8 @@ pub struct DuckLakeCatalog {
     config: SnapshotConfig,
     /// Cached snapshot with timestamp
     cached_snapshot: RwLock<Option<SnapshotCache>>,
+    /// Clock provider for time operations (allows mocking in tests)
+    clock: Arc<dyn Clock>,
 }
 
 impl DuckLakeCatalog {
@@ -87,95 +104,94 @@ impl DuckLakeCatalog {
             catalog_path,
             config,
             cached_snapshot: RwLock::new(None),
+            clock: Arc::new(SystemClock),
         })
     }
 
+    /// Internal constructor with injectable clock (for testing)
+    #[cfg(test)]
+    fn from_arc_provider_with_clock(
+        provider: Arc<dyn MetadataProvider>,
+        config: SnapshotConfig,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        let data_path = provider.get_data_path()?;
+        let (object_store_url, catalog_path) = parse_object_store_url(&data_path)?;
+
+        Ok(Self {
+            provider,
+            object_store_url: Arc::new(object_store_url),
+            catalog_path,
+            config,
+            cached_snapshot: RwLock::new(None),
+            clock,
+        })
+    }
+
+    /// Helper function for double-checked locking pattern to get or refresh snapshot
+    /// Returns cached snapshot if valid according to predicate, otherwise queries fresh snapshot
+    fn get_or_refresh_snapshot<F>(&self, is_valid: F) -> Result<i64>
+    where
+        F: Fn(&SnapshotCache, Instant) -> bool,
+    {
+        // Check if cache is valid (read lock)
+        {
+            let cache = self
+                .cached_snapshot
+                .read()
+                .expect("Snapshot cache lock poisoned");
+            if let Some(cached) = cache.as_ref()
+                && is_valid(cached, self.clock.now())
+            {
+                return Ok(cached.snapshot_id);
+            }
+        }
+
+        // Cache invalid or empty, refresh (write lock)
+        let mut cache = self
+            .cached_snapshot
+            .write()
+            .expect("Snapshot cache lock poisoned");
+
+        // Re-calculate now for precise timing (time may have elapsed acquiring write lock)
+        let now = self.clock.now();
+
+        // Double-check (another thread might have refreshed)
+        if let Some(cached) = cache.as_ref()
+            && is_valid(cached, now)
+        {
+            return Ok(cached.snapshot_id);
+        }
+
+        // Query fresh snapshot
+        let snapshot_id = self
+            .provider
+            .get_current_snapshot()
+            .inspect_err(|e| tracing::error!(error = %e, "Failed to get current snapshot"))?;
+        *cache = Some(SnapshotCache {
+            snapshot_id,
+            cached_at: now,
+        });
+
+        Ok(snapshot_id)
+    }
+
     fn get_current_snapshot_id(&self) -> Result<i64> {
-        match self.config.ttl_seconds {
-            // TTL = 0: Always query for fresh snapshot
-            Some(0) => self
+        match self.config.ttl {
+            // TTL = Duration::ZERO: Always query for fresh snapshot
+            Some(ttl) if ttl.is_zero() => self
                 .provider
                 .get_current_snapshot()
                 .inspect_err(|e| tracing::error!(error = %e, "Failed to get current snapshot")),
 
             // TTL > 0: Use cache if not expired
-            Some(ttl) => {
-                let now = Instant::now();
+            Some(ttl) => self.get_or_refresh_snapshot(|cached, now| {
+                let age = now.duration_since(cached.cached_at);
+                age < ttl
+            }),
 
-                // Check if cache is valid (read lock)
-                {
-                    let cache = self
-                        .cached_snapshot
-                        .read()
-                        .expect("Snapshot cache lock poisoned");
-                    if let Some(cached) = cache.as_ref() {
-                        let age = now.duration_since(cached.cached_at);
-                        if age < Duration::from_secs(ttl) {
-                            return Ok(cached.snapshot_id);
-                        }
-                    }
-                }
-
-                // Cache expired or empty, refresh (write lock)
-                let mut cache = self
-                    .cached_snapshot
-                    .write()
-                    .expect("Snapshot cache lock poisoned");
-
-                // Double-check (another thread might have refreshed)
-                if let Some(cached) = cache.as_ref() {
-                    let age = now.duration_since(cached.cached_at);
-                    if age < Duration::from_secs(ttl) {
-                        return Ok(cached.snapshot_id);
-                    }
-                }
-
-                // Query fresh snapshot
-                let snapshot_id = self.provider.get_current_snapshot().inspect_err(
-                    |e| tracing::error!(error = %e, "Failed to get current snapshot"),
-                )?;
-                *cache = Some(SnapshotCache {
-                    snapshot_id,
-                    cached_at: now,
-                });
-
-                Ok(snapshot_id)
-            },
-
-            // TTL = None: Cache forever (query once, never refresh)
-            None => {
-                // Check if already cached
-                {
-                    let cache = self
-                        .cached_snapshot
-                        .read()
-                        .expect("Snapshot cache lock poisoned");
-                    if let Some(cached) = cache.as_ref() {
-                        return Ok(cached.snapshot_id);
-                    }
-                }
-
-                // Not cached, initialize
-                let mut cache = self
-                    .cached_snapshot
-                    .write()
-                    .expect("Snapshot cache lock poisoned");
-
-                // Double-check
-                if let Some(cached) = cache.as_ref() {
-                    return Ok(cached.snapshot_id);
-                }
-
-                let snapshot_id = self.provider.get_current_snapshot().inspect_err(
-                    |e| tracing::error!(error = %e, "Failed to get current snapshot"),
-                )?;
-                *cache = Some(SnapshotCache {
-                    snapshot_id,
-                    cached_at: Instant::now(),
-                });
-
-                Ok(snapshot_id)
-            },
+            // TTL = None: Cache forever
+            None => self.get_or_refresh_snapshot(|_cached, _now| true),
         }
     }
 }
@@ -239,9 +255,37 @@ mod tests {
     use crate::metadata_provider::{
         DuckLakeTableColumn, DuckLakeTableFile, SchemaMetadata, TableMetadata,
     };
+    use std::cell::RefCell;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicI64, Ordering};
     use std::thread;
-    use std::time::Duration as StdDuration;
+
+    /// Mock clock for deterministic time testing
+    #[derive(Debug)]
+    struct MockClock {
+        current_time: Mutex<RefCell<Instant>>,
+    }
+
+    impl MockClock {
+        fn new() -> Self {
+            Self {
+                current_time: Mutex::new(RefCell::new(Instant::now())),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            let guard = self.current_time.lock().unwrap();
+            let mut time = guard.borrow_mut();
+            *time += duration;
+        }
+    }
+
+    impl Clock for MockClock {
+        fn now(&self) -> Instant {
+            let guard = self.current_time.lock().unwrap();
+            *guard.borrow()
+        }
+    }
 
     /// Mock metadata provider for testing snapshot resolution
     #[derive(Debug)]
@@ -324,7 +368,7 @@ mod tests {
     #[test]
     fn test_snapshot_config_default() {
         let config = SnapshotConfig::default();
-        assert_eq!(config.ttl_seconds, Some(0));
+        assert_eq!(config.ttl, Some(Duration::ZERO));
     }
 
     #[test]
@@ -332,7 +376,7 @@ mod tests {
         let provider = Arc::new(MockMetadataProvider::new(100));
         let provider_trait: Arc<dyn MetadataProvider> = provider.clone();
         let config = SnapshotConfig {
-            ttl_seconds: Some(0),
+            ttl: Some(Duration::ZERO),
         };
         let catalog = DuckLakeCatalog::from_arc_provider(provider_trait, config).unwrap();
 
@@ -353,7 +397,7 @@ mod tests {
         let provider = Arc::new(MockMetadataProvider::new(100));
         let provider_trait: Arc<dyn MetadataProvider> = provider.clone();
         let config = SnapshotConfig {
-            ttl_seconds: None,
+            ttl: None,
         };
         let catalog = DuckLakeCatalog::from_arc_provider(provider_trait, config).unwrap();
 
@@ -373,10 +417,16 @@ mod tests {
     fn test_ttl_with_duration() {
         let provider = Arc::new(MockMetadataProvider::new(100));
         let provider_trait: Arc<dyn MetadataProvider> = provider.clone();
+        let mock_clock = Arc::new(MockClock::new());
         let config = SnapshotConfig {
-            ttl_seconds: Some(1),
+            ttl: Some(Duration::from_secs(1)),
         };
-        let catalog = DuckLakeCatalog::from_arc_provider(provider_trait, config).unwrap();
+        let catalog = DuckLakeCatalog::from_arc_provider_with_clock(
+            provider_trait,
+            config,
+            mock_clock.clone(),
+        )
+        .unwrap();
 
         // First query caches snapshot 100
         let snapshot1 = catalog.get_current_snapshot_id().unwrap();
@@ -389,8 +439,8 @@ mod tests {
         let snapshot2 = catalog.get_current_snapshot_id().unwrap();
         assert_eq!(snapshot2, 100);
 
-        // Wait for TTL to expire
-        thread::sleep(StdDuration::from_millis(1100));
+        // Advance time past TTL
+        mock_clock.advance(Duration::from_secs(2));
 
         // Query after expiration fetches fresh snapshot
         let snapshot3 = catalog.get_current_snapshot_id().unwrap();
@@ -401,7 +451,7 @@ mod tests {
     fn test_concurrent_snapshot_access() {
         let provider = MockMetadataProvider::new(100);
         let config = SnapshotConfig {
-            ttl_seconds: Some(1),
+            ttl: Some(Duration::from_secs(1)),
         };
         let catalog = Arc::new(DuckLakeCatalog::new_with_config(provider, config).unwrap());
 
@@ -411,9 +461,8 @@ mod tests {
         for _ in 0..10 {
             let catalog_clone = Arc::clone(&catalog);
             let handle = thread::spawn(move || {
-                for _ in 0..5 {
+                for _ in 0..10 {
                     let _ = catalog_clone.get_current_snapshot_id();
-                    thread::sleep(StdDuration::from_millis(50));
                 }
             });
             handles.push(handle);

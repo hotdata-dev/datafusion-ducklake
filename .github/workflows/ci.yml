@@ -31,7 +31,7 @@ jobs:
     strategy:
       matrix:
         os:
-          - ubuntu-latest
+          - ubuntu-latest-m
           - macos-latest
         rust: [stable]
     steps:
