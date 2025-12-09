@@ -75,7 +75,7 @@ jobs:
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             cargo test --features skip-tests-with-docker
           else
-            cargo test --jobs 1
+            cargo test
           fi
 
       - name: Check documentation
