@@ -4,6 +4,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::Result;
+use crate::information_schema::InformationSchemaProvider;
 use crate::metadata_provider::MetadataProvider;
 use crate::path_resolver::parse_object_store_url;
 use crate::schema::DuckLakeSchema;
@@ -53,25 +54,38 @@ impl CatalogProvider for DuckLakeCatalog {
     fn schema_names(&self) -> Vec<String> {
         let snapshot_id = match self.get_current_snapshot_id() {
             Ok(id) => id,
-            Err(_) => return Vec::new(),
+            Err(_) => return vec!["information_schema".to_string()],
         };
 
-        // Query database with snapshot_id
-        self.provider
+        // Start with information_schema
+        let mut names = vec!["information_schema".to_string()];
+
+        // Add data schemas from catalog
+        let data_schemas = self
+            .provider
             .list_schemas(snapshot_id)
             .unwrap_or_default()
             .into_iter()
-            .map(|s| s.schema_name)
-            .collect()
+            .map(|s| s.schema_name);
+
+        names.extend(data_schemas);
+        names
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
+        // Handle information_schema specially
+        if name == "information_schema" {
+            return Some(Arc::new(InformationSchemaProvider::new(Arc::clone(
+                &self.provider,
+            ))));
+        }
+
         let snapshot_id = match self.get_current_snapshot_id() {
             Ok(id) => id,
             Err(_) => return None,
         };
 
-        // Query database with snapshot_id
+        // Query database with snapshot_id for data schemas
         match self.provider.get_schema_by_name(name, snapshot_id) {
             Ok(Some(meta)) => {
                 // Resolve schema path hierarchically

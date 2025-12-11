@@ -5,6 +5,8 @@ use crate::Result;
 pub const SQL_GET_LATEST_SNAPSHOT: &str =
     "SELECT COALESCE(MAX(snapshot_id), 0) FROM ducklake_snapshot";
 
+pub const SQL_LIST_SNAPSHOTS: &str = "SELECT snapshot_id, CAST(snapshot_time AS VARCHAR) as timestamp FROM ducklake_snapshot ORDER BY snapshot_id";
+
 pub const SQL_LIST_SCHEMAS: &str =
     "SELECT schema_id, schema_name, path, path_is_relative FROM ducklake_schema
      WHERE ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)";
@@ -64,6 +66,15 @@ pub const SQL_TABLE_EXISTS: &str = "SELECT EXISTS(
          AND ? >= begin_snapshot
          AND (? < end_snapshot OR end_snapshot IS NULL)
      )";
+
+/// Metadata for a snapshot in the DuckLake catalog
+#[derive(Debug, Clone)]
+pub struct SnapshotMetadata {
+    /// Unique identifier for this snapshot
+    pub snapshot_id: i64,
+    /// Timestamp when the snapshot was created (optional)
+    pub timestamp: Option<String>,
+}
 
 /// Metadata for a schema in the DuckLake catalog
 #[derive(Debug, Clone)]
@@ -172,6 +183,9 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
 
     /// Get the data path from catalog metadata (not snapshot-dependent)
     fn get_data_path(&self) -> Result<String>;
+
+    /// List all snapshots in the catalog
+    fn list_snapshots(&self) -> Result<Vec<SnapshotMetadata>>;
 
     /// List schemas for a specific snapshot
     fn list_schemas(&self, snapshot_id: i64) -> Result<Vec<SchemaMetadata>>;

@@ -38,6 +38,7 @@
 pub mod catalog;
 pub mod delete_filter;
 pub mod error;
+pub mod information_schema;
 pub mod metadata_provider;
 pub mod metadata_provider_duckdb;
 pub mod path_resolver;
@@ -51,6 +52,7 @@ pub type Result<T> = std::result::Result<T, DuckLakeError>;
 // Re-export main types for convenience
 pub use catalog::DuckLakeCatalog;
 pub use error::DuckLakeError;
+pub use information_schema::InformationSchemaProvider;
 pub use metadata_provider::MetadataProvider;
 pub use metadata_provider_duckdb::DuckdbMetadataProvider;
 pub use schema::DuckLakeSchema;

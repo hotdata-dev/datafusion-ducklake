@@ -2,8 +2,8 @@ use crate::DuckLakeError;
 use crate::metadata_provider::{
     DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, MetadataProvider, SQL_GET_DATA_FILES,
     SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT, SQL_GET_SCHEMA_BY_NAME, SQL_GET_TABLE_BY_NAME,
-    SQL_GET_TABLE_COLUMNS, SQL_LIST_SCHEMAS, SQL_LIST_TABLES, SQL_TABLE_EXISTS, SchemaMetadata,
-    TableMetadata,
+    SQL_GET_TABLE_COLUMNS, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES, SQL_TABLE_EXISTS,
+    SchemaMetadata, SnapshotMetadata, TableMetadata,
 };
 use duckdb::AccessMode::ReadOnly;
 use duckdb::{Config, Connection, params};
@@ -69,6 +69,24 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let conn = self.open_connection()?;
         let data_path: String = conn.query_row(SQL_GET_DATA_PATH, [], |row| row.get(0))?;
         Ok(data_path)
+    }
+
+    fn list_snapshots(&self) -> crate::Result<Vec<SnapshotMetadata>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_LIST_SNAPSHOTS)?;
+
+        let snapshots = stmt
+            .query_map([], |row| {
+                let snapshot_id: i64 = row.get(0)?;
+                let timestamp: Option<String> = row.get(1)?;
+                Ok(SnapshotMetadata {
+                    snapshot_id,
+                    timestamp,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(snapshots)
     }
 
     fn list_schemas(&self, snapshot_id: i64) -> crate::Result<Vec<SchemaMetadata>> {

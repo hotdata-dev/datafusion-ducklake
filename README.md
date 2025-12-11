@@ -16,6 +16,7 @@ A DataFusion extension for querying [DuckLake](https://ducklake.select). DuckLak
 - Parquet footer size hints for optimized I/O
 - Filter pushdown to Parquet for row group pruning and page-level filtering
 - Dynamic metadata lookup (no upfront catalog caching)
+- SQL-queryable `information_schema` for catalog metadata (snapshots, schemas, tables, columns, files)
 
 ## Known Limitations
 

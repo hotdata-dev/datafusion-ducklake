@@ -443,19 +443,19 @@ async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
 
             let schema_names = ctx.catalog(catalog_name).unwrap().schema_names();
 
-            assert_eq!(1, schema_names.len());
-            assert_eq!(schema_names, vec!["main"]);
+            // Should have information_schema and main
+            assert_eq!(2, schema_names.len());
+            assert_eq!(schema_names, vec!["information_schema", "main"]);
 
-            schema_names.iter().for_each(|s| {
-                let table_names = ctx
-                    .catalog(catalog_name)
-                    .unwrap()
-                    .schema(s)
-                    .unwrap()
-                    .table_names();
-                assert_eq!(1, table_names.len());
-                assert_eq!(table_names, vec!["users"]);
-            });
+            // Check main schema has users table
+            let main_table_names = ctx
+                .catalog(catalog_name)
+                .unwrap()
+                .schema("main")
+                .unwrap()
+                .table_names();
+            assert_eq!(1, main_table_names.len());
+            assert_eq!(main_table_names, vec!["users"]);
 
             Ok::<_, DataFusionError>(task_id)
         });
