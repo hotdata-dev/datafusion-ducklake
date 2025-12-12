@@ -13,7 +13,7 @@
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
-use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, register_ducklake_functions};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use std::env;
@@ -66,10 +66,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create DataFusion session context
     let ctx = SessionContext::new_with_config_rt(config, runtime.clone());
 
-    // Register the DuckLake catalog
+    // Get the provider before moving the catalog
+    let provider = ducklake_catalog.provider();
+
+    // Register the DuckLake catalog (standard DataFusion pattern)
     ctx.register_catalog("ducklake", Arc::new(ducklake_catalog));
 
+    // Register table functions (ducklake_snapshots, ducklake_table_info, ducklake_list_files)
+    register_ducklake_functions(&ctx, provider);
+
     println!("✓ Registered DuckLake catalog with DataFusion");
+    println!(
+        "✓ Registered table functions (ducklake_snapshots, ducklake_table_info, ducklake_list_files)"
+    );
 
     // List available schemas
     let catalogs = ctx.catalog_names();

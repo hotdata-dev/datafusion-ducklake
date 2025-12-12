@@ -39,6 +39,13 @@ impl DuckLakeCatalog {
         })
     }
 
+    /// Get the metadata provider for this catalog
+    ///
+    /// This is useful when you need to register table functions separately.
+    pub fn provider(&self) -> Arc<dyn MetadataProvider> {
+        self.provider.clone()
+    }
+
     fn get_current_snapshot_id(&self) -> Result<i64> {
         self.provider
             .get_current_snapshot()

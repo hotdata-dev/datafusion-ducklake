@@ -1,7 +1,7 @@
-//! Integration tests for information_schema virtual tables
+//! Integration tests for information_schema virtual tables and table functions
 
 use datafusion::prelude::*;
-use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
+use datafusion_ducklake::{register_ducklake_functions, DuckLakeCatalog, DuckdbMetadataProvider};
 use std::sync::Arc;
 
 mod common;
@@ -332,5 +332,116 @@ async fn test_information_schema_files_filtering() -> Result<(), Box<dyn std::er
     assert!(!results.is_empty(), "Should have files for users table");
 
     println!("✓ Files filtering test passed");
+    Ok(())
+}
+
+// Table Functions Tests
+
+#[tokio::test]
+async fn test_ducklake_snapshots_function() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = tempfile::tempdir()?;
+    let catalog_path = temp_dir.path().join("test.ducklake");
+
+    common::create_catalog_no_deletes(&catalog_path)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let ctx = SessionContext::new();
+
+    // Register table functions
+    register_ducklake_functions(&ctx, Arc::new(provider));
+
+    // Query using function syntax
+    let df = ctx.sql("SELECT * FROM ducklake_snapshots()").await?;
+    let results = df.collect().await?;
+
+    assert!(!results.is_empty(), "Should have snapshots");
+    println!("✓ ducklake_snapshots() function test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ducklake_table_info_function() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = tempfile::tempdir()?;
+    let catalog_path = temp_dir.path().join("test.ducklake");
+
+    common::create_catalog_no_deletes(&catalog_path)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let ctx = SessionContext::new();
+
+    register_ducklake_functions(&ctx, Arc::new(provider));
+
+    let df = ctx
+        .sql("SELECT table_name, file_count, file_size_bytes FROM ducklake_table_info()")
+        .await?;
+    let results = df.collect().await?;
+
+    assert!(!results.is_empty(), "Should have table info");
+    println!("✓ ducklake_table_info() function test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_ducklake_list_files_function() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = tempfile::tempdir()?;
+    let catalog_path = temp_dir.path().join("test.ducklake");
+
+    common::create_catalog_no_deletes(&catalog_path)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let ctx = SessionContext::new();
+
+    register_ducklake_functions(&ctx, Arc::new(provider));
+
+    let df = ctx
+        .sql("SELECT file_path, file_size_bytes FROM ducklake_list_files()")
+        .await?;
+    let results = df.collect().await?;
+
+    assert!(!results.is_empty(), "Should have files");
+    println!("✓ ducklake_list_files() function test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_table_info_aggregation() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = tempfile::tempdir()?;
+    let catalog_path = temp_dir.path().join("test.ducklake");
+
+    common::create_catalog_no_deletes(&catalog_path)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let ctx = SessionContext::new();
+
+    register_ducklake_functions(&ctx, Arc::new(provider));
+
+    // Get total storage
+    let df = ctx
+        .sql("SELECT SUM(file_size_bytes) as total_bytes FROM ducklake_table_info()")
+        .await?;
+    let results = df.collect().await?;
+
+    assert!(!results.is_empty(), "Should have aggregation results");
+    println!("✓ Table info aggregation test passed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_function_rejects_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = tempfile::tempdir()?;
+    let catalog_path = temp_dir.path().join("test.ducklake");
+
+    common::create_catalog_no_deletes(&catalog_path)?;
+
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let ctx = SessionContext::new();
+
+    register_ducklake_functions(&ctx, Arc::new(provider));
+
+    // These functions should reject arguments
+    let result = ctx.sql("SELECT * FROM ducklake_snapshots('arg')").await;
+    assert!(result.is_err(), "Should reject arguments");
+
+    println!("✓ Function argument validation test passed");
     Ok(())
 }
