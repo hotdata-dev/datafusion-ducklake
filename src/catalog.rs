@@ -51,7 +51,6 @@ impl DuckLakeCatalog {
     /// All schemas and tables returned will use this snapshot, guaranteeing
     /// query consistency even if multiple catalog/schema/table lookups occur
     /// during query planning.
-    
     pub fn with_snapshot(provider: Arc<dyn MetadataProvider>, snapshot_id: i64) -> Result<Self> {
         let data_path = provider.get_data_path()?;
         let (object_store_url, catalog_path) = parse_object_store_url(&data_path)?;
