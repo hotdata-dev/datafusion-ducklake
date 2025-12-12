@@ -1,7 +1,7 @@
 //! Integration tests for information_schema virtual tables and table functions
 
 use datafusion::prelude::*;
-use datafusion_ducklake::{register_ducklake_functions, DuckLakeCatalog, DuckdbMetadataProvider};
+use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, register_ducklake_functions};
 use std::sync::Arc;
 
 mod common;
