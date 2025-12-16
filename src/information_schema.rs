@@ -498,7 +498,7 @@ impl TableInfoTable {
         // Aggregate file statistics
         for file in &all_files {
             let key = (file.schema_name.clone(), file.table_name.clone());
-            let entry = table_stats.entry(key).or_insert_with(TableStats::default);
+            let entry = table_stats.entry(key).or_default();
             entry.file_count += 1;
             entry.file_size += file.file.file.file_size_bytes;
             if file.file.delete_file.is_some() {
