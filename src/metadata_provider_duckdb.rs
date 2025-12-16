@@ -359,7 +359,7 @@ impl MetadataProvider for DuckdbMetadataProvider {
                             None
                         };
 
-                    let max_row_count = row.get::<_, Option<i64>>(12)?.unwrap_or(0);
+                    let max_row_count = row.get::<_, Option<i64>>(12)?;
 
                     Ok(FileWithTable {
                         schema_name,
@@ -369,7 +369,7 @@ impl MetadataProvider for DuckdbMetadataProvider {
                             delete_file,
                             row_id_start: None,
                             snapshot_id: None,
-                            max_row_count: Some(max_row_count),
+                            max_row_count,
                         },
                     })
                 },

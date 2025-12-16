@@ -433,8 +433,8 @@ pub struct TableInfoTable {
 impl TableInfoTable {
     pub fn new(provider: Arc<dyn MetadataProvider>) -> Self {
         let schema = Arc::new(Schema::new(vec![
+            Field::new("schema_name", DataType::Utf8, false),
             Field::new("table_name", DataType::Utf8, false),
-            Field::new("schema_id", DataType::Int64, false),
             Field::new("table_id", DataType::Int64, false),
             Field::new("file_count", DataType::Int64, false),
             Field::new("file_size_bytes", DataType::Int64, false),
@@ -512,57 +512,45 @@ impl TableInfoTable {
             }
         }
 
-        // Convert to vector for array building
-        // Tuple: (table_name, schema_id, table_id, file_count, file_size, del_count, del_size)
-        let mut all_table_info: Vec<_> = table_stats
-            .into_iter()
-            .map(|((_schema_name, table_name), stats)| {
-                (
-                    table_name,
-                    0i64, // schema_id placeholder (not used in display)
-                    stats.table_id,
-                    stats.file_count,
-                    stats.file_size,
-                    stats.delete_count,
-                    stats.delete_size,
-                )
-            })
-            .collect();
+        // Convert to vector and sort for deterministic output
+        let mut all_table_info: Vec<_> = table_stats.into_iter().collect();
+        all_table_info.sort_by(|a, b| {
+            // Sort by schema_name, then table_name
+            a.0.0.cmp(&b.0.0).then_with(|| a.0.1.cmp(&b.0.1))
+        });
 
-        // Sort for deterministic output by table_name
-        all_table_info.sort_by(|a, b| a.0.cmp(&b.0));
+        // Build arrays in a single pass
+        let mut table_names = Vec::with_capacity(all_table_info.len());
+        let mut schema_names = Vec::with_capacity(all_table_info.len());
+        let mut table_ids = Vec::with_capacity(all_table_info.len());
+        let mut file_counts = Vec::with_capacity(all_table_info.len());
+        let mut file_sizes = Vec::with_capacity(all_table_info.len());
+        let mut delete_file_counts = Vec::with_capacity(all_table_info.len());
+        let mut delete_file_sizes = Vec::with_capacity(all_table_info.len());
 
-        // Build arrays
-        let table_names: ArrayRef = Arc::new(StringArray::from(
-            all_table_info
-                .iter()
-                .map(|t| t.0.as_str())
-                .collect::<Vec<_>>(),
-        ));
-        let schema_ids: ArrayRef = Arc::new(Int64Array::from(
-            all_table_info.iter().map(|t| t.1).collect::<Vec<_>>(),
-        ));
-        let table_ids: ArrayRef = Arc::new(Int64Array::from(
-            all_table_info.iter().map(|t| t.2).collect::<Vec<_>>(),
-        ));
-        let file_counts: ArrayRef = Arc::new(Int64Array::from(
-            all_table_info.iter().map(|t| t.3).collect::<Vec<_>>(),
-        ));
-        let file_sizes: ArrayRef = Arc::new(Int64Array::from(
-            all_table_info.iter().map(|t| t.4).collect::<Vec<_>>(),
-        ));
-        let delete_file_counts: ArrayRef = Arc::new(Int64Array::from(
-            all_table_info.iter().map(|t| t.5).collect::<Vec<_>>(),
-        ));
-        let delete_file_sizes: ArrayRef = Arc::new(Int64Array::from(
-            all_table_info.iter().map(|t| t.6).collect::<Vec<_>>(),
-        ));
+        for ((schema_name, table_name), stats) in all_table_info {
+            schema_names.push(schema_name);
+            table_names.push(table_name);
+            table_ids.push(stats.table_id);
+            file_counts.push(stats.file_count);
+            file_sizes.push(stats.file_size);
+            delete_file_counts.push(stats.delete_count);
+            delete_file_sizes.push(stats.delete_size);
+        }
+
+        let schema_names: ArrayRef = Arc::new(StringArray::from(schema_names));
+        let table_names: ArrayRef = Arc::new(StringArray::from(table_names));
+        let table_ids: ArrayRef = Arc::new(Int64Array::from(table_ids));
+        let file_counts: ArrayRef = Arc::new(Int64Array::from(file_counts));
+        let file_sizes: ArrayRef = Arc::new(Int64Array::from(file_sizes));
+        let delete_file_counts: ArrayRef = Arc::new(Int64Array::from(delete_file_counts));
+        let delete_file_sizes: ArrayRef = Arc::new(Int64Array::from(delete_file_sizes));
 
         RecordBatch::try_new(
             self.schema.clone(),
             vec![
+                schema_names,
                 table_names,
-                schema_ids,
                 table_ids,
                 file_counts,
                 file_sizes,

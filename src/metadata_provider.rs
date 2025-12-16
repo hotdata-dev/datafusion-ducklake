@@ -313,30 +313,14 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     /// Check if table exists for a specific snapshot
     fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<bool>;
 
-    // Bulk query methods for efficient information_schema operations
-    // These methods avoid N+1 query problems by using SQL JOINs
+    // Bulk query methods for information_schema
 
-    /// List all tables across all schemas for a snapshot (bulk query)
-    ///
-    /// Returns all tables with their schema names in a single database query,
-    /// avoiding the N+1 query problem when iterating schemas → tables.
-    ///
-    /// NOTE: Inefficient for single-table lookups. Use get_table_by_name() instead.
+    /// List all tables across all schemas for a snapshot
     fn list_all_tables(&self, snapshot_id: i64) -> Result<Vec<TableWithSchema>>;
 
-    /// List all columns across all tables for a snapshot (bulk query)
-    ///
-    /// Returns all columns with their schema and table names in a single database query,
-    /// avoiding the N+1 query problem when iterating schemas → tables → columns.
-    ///
-    /// NOTE: Inefficient for single-table column lookups. Use get_table_structure() instead.
+    /// List all columns across all tables for a snapshot
     fn list_all_columns(&self, snapshot_id: i64) -> Result<Vec<ColumnWithTable>>;
 
-    /// List all files across all tables for a snapshot (bulk query)
-    ///
-    /// Returns all data files with their schema and table names in a single database query,
-    /// avoiding the N+1 query problem when iterating schemas → tables → files.
-    ///
-    /// NOTE: Inefficient for single-table file lookups. Use get_table_files_for_select() instead.
+    /// List all files across all tables for a snapshot
     fn list_all_files(&self, snapshot_id: i64) -> Result<Vec<FileWithTable>>;
 }
