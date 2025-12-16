@@ -468,25 +468,42 @@ impl TableInfoTable {
         // Group files by table and aggregate statistics
         use std::collections::HashMap;
 
-        let mut table_stats: HashMap<(String, String), (i64, i64, i64, i64, i64)> = HashMap::new();
+        #[derive(Default, Debug)]
+        struct TableStats {
+            table_id: i64,
+            file_count: i64,
+            file_size: i64,
+            delete_count: i64,
+            delete_size: i64,
+        }
 
-        // Initialize all tables with zero stats (table_id, file_count, file_size, del_count, del_size)
+        type TableKey = (String, String);
+
+        let mut table_stats: HashMap<TableKey, TableStats> = HashMap::new();
+
+        // Initialize all tables with zero stats
         for t in &all_tables {
             table_stats.insert(
                 (t.schema_name.clone(), t.table.table_name.clone()),
-                (t.table.table_id, 0, 0, 0, 0),
+                TableStats {
+                    table_id: t.table.table_id,
+                    file_count: 0,
+                    file_size: 0,
+                    delete_count: 0,
+                    delete_size: 0,
+                },
             );
         }
 
         // Aggregate file statistics
         for file in &all_files {
             let key = (file.schema_name.clone(), file.table_name.clone());
-            let entry = table_stats.entry(key).or_insert((0, 0, 0, 0, 0));
-            entry.1 += 1; // file_count
-            entry.2 += file.file.file.file_size_bytes; // file_size_bytes
+            let entry = table_stats.entry(key).or_insert_with(TableStats::default);
+            entry.file_count += 1;
+            entry.file_size += file.file.file.file_size_bytes;
             if file.file.delete_file.is_some() {
-                entry.3 += 1; // delete_file_count
-                entry.4 += file
+                entry.delete_count += 1;
+                entry.delete_size += file
                     .file
                     .delete_file
                     .as_ref()
@@ -499,17 +516,17 @@ impl TableInfoTable {
         // Tuple: (table_name, schema_id, table_id, file_count, file_size, del_count, del_size)
         let mut all_table_info: Vec<_> = table_stats
             .into_iter()
-            .map(
-                |(
-                    (_schema_name, table_name),
-                    (table_id, file_count, file_size, del_count, del_size),
-                )| {
-                    (
-                        table_name, 0i64, // schema_id placeholder (not used in display)
-                        table_id, file_count, file_size, del_count, del_size,
-                    )
-                },
-            )
+            .map(|((_schema_name, table_name), stats)| {
+                (
+                    table_name,
+                    0i64, // schema_id placeholder (not used in display)
+                    stats.table_id,
+                    stats.file_count,
+                    stats.file_size,
+                    stats.delete_count,
+                    stats.delete_size,
+                )
+            })
             .collect();
 
         // Sort for deterministic output by table_name
