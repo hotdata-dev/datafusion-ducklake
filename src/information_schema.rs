@@ -91,7 +91,7 @@ impl TableProvider for SnapshotsTable {
     }
 
     fn table_type(&self) -> TableType {
-        TableType::Base
+        TableType::View
     }
 
     async fn scan(
@@ -186,7 +186,7 @@ impl TableProvider for SchemataTable {
     }
 
     fn table_type(&self) -> TableType {
-        TableType::Base
+        TableType::View
     }
 
     async fn scan(
@@ -234,62 +234,46 @@ impl TablesTable {
             .get_current_snapshot()
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        let schemas = self
+        // Single bulk query instead of N+1 queries
+        let all_tables = self
             .provider
-            .list_schemas(snapshot_id)
+            .list_all_tables(snapshot_id)
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        let mut all_tables = Vec::new();
-        for schema in schemas {
-            let tables = self
-                .provider
-                .list_tables(schema.schema_id, snapshot_id)
-                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-            for table in tables {
-                all_tables.push((snapshot_id, schema.schema_name.clone(), table));
-            }
-        }
-
-        let snapshot_ids: ArrayRef = Arc::new(Int64Array::from(
-            all_tables
-                .iter()
-                .map(|(sid, _, _)| *sid)
-                .collect::<Vec<_>>(),
-        ));
+        let snapshot_ids: ArrayRef = Arc::new(Int64Array::from(vec![snapshot_id; all_tables.len()]));
 
         let schema_names: ArrayRef = Arc::new(StringArray::from(
             all_tables
                 .iter()
-                .map(|(_, sname, _)| sname.as_str())
+                .map(|t| t.schema_name.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let table_ids: ArrayRef = Arc::new(Int64Array::from(
             all_tables
                 .iter()
-                .map(|(_, _, table)| table.table_id)
+                .map(|t| t.table.table_id)
                 .collect::<Vec<_>>(),
         ));
 
         let table_names: ArrayRef = Arc::new(StringArray::from(
             all_tables
                 .iter()
-                .map(|(_, _, table)| table.table_name.as_str())
+                .map(|t| t.table.table_name.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let paths: ArrayRef = Arc::new(StringArray::from(
             all_tables
                 .iter()
-                .map(|(_, _, table)| table.path.as_str())
+                .map(|t| t.table.path.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let path_is_relative: ArrayRef = Arc::new(BooleanArray::from(
             all_tables
                 .iter()
-                .map(|(_, _, table)| table.path_is_relative)
+                .map(|t| t.table.path_is_relative)
                 .collect::<Vec<_>>(),
         ));
 
@@ -312,7 +296,7 @@ impl TableProvider for TablesTable {
     }
 
     fn table_type(&self) -> TableType {
-        TableType::Base
+        TableType::View
     }
 
     async fn scan(
@@ -359,66 +343,44 @@ impl ColumnsTable {
             .get_current_snapshot()
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        let schemas = self
+        // Single bulk query instead of N*M queries
+        let all_columns_data = self
             .provider
-            .list_schemas(snapshot_id)
+            .list_all_columns(snapshot_id)
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-        let mut all_columns_data = Vec::new();
-        for schema in schemas {
-            let tables = self
-                .provider
-                .list_tables(schema.schema_id, snapshot_id)
-                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-            for table in tables {
-                let columns = self
-                    .provider
-                    .get_table_structure(table.table_id)
-                    .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-                for column in columns {
-                    all_columns_data.push((
-                        schema.schema_name.clone(),
-                        table.table_name.clone(),
-                        column,
-                    ));
-                }
-            }
-        }
 
         let schema_names: ArrayRef = Arc::new(StringArray::from(
             all_columns_data
                 .iter()
-                .map(|(sname, _, _)| sname.as_str())
+                .map(|c| c.schema_name.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let table_names: ArrayRef = Arc::new(StringArray::from(
             all_columns_data
                 .iter()
-                .map(|(_, tname, _)| tname.as_str())
+                .map(|c| c.table_name.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let column_ids: ArrayRef = Arc::new(Int64Array::from(
             all_columns_data
                 .iter()
-                .map(|(_, _, col)| col.column_id)
+                .map(|c| c.column.column_id)
                 .collect::<Vec<_>>(),
         ));
 
         let column_names: ArrayRef = Arc::new(StringArray::from(
             all_columns_data
                 .iter()
-                .map(|(_, _, col)| col.column_name.as_str())
+                .map(|c| c.column.column_name.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let column_types: ArrayRef = Arc::new(StringArray::from(
             all_columns_data
                 .iter()
-                .map(|(_, _, col)| col.column_type.as_str())
+                .map(|c| c.column.column_type.as_str())
                 .collect::<Vec<_>>(),
         ));
 
@@ -441,7 +403,7 @@ impl TableProvider for ColumnsTable {
     }
 
     fn table_type(&self) -> TableType {
-        TableType::Base
+        TableType::View
     }
 
     async fn scan(
@@ -490,46 +452,67 @@ impl TableInfoTable {
             .get_current_snapshot()
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        let schemas = self
+        // Single bulk query instead of N*M queries
+        let all_files = self
             .provider
-            .list_schemas(snapshot_id)
+            .list_all_files(snapshot_id)
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        let mut all_table_info = Vec::new();
+        // Get all tables to include tables with no files
+        let all_tables = self
+            .provider
+            .list_all_tables(snapshot_id)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        for schema in schemas {
-            let tables = self
-                .provider
-                .list_tables(schema.schema_id, snapshot_id)
-                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        // Group files by table and aggregate statistics
+        use std::collections::HashMap;
 
-            for table in tables {
-                let files = self
-                    .provider
-                    .get_table_files_for_select(table.table_id, snapshot_id)
-                    .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let mut table_stats: HashMap<(String, String), (i64, i64, i64, i64, i64)> = HashMap::new();
 
-                // Aggregate file statistics
-                let file_count = files.len() as i64;
-                let file_size_bytes: i64 = files.iter().map(|f| f.file.file_size_bytes).sum();
-                let delete_file_count =
-                    files.iter().filter(|f| f.delete_file.is_some()).count() as i64;
-                let delete_file_size_bytes: i64 = files
-                    .iter()
-                    .filter_map(|f| f.delete_file.as_ref().map(|d| d.file_size_bytes))
-                    .sum();
+        // Initialize all tables with zero stats (table_id, file_count, file_size, del_count, del_size)
+        for t in &all_tables {
+            table_stats.insert(
+                (t.schema_name.clone(), t.table.table_name.clone()),
+                (t.table.table_id, 0, 0, 0, 0),
+            );
+        }
 
-                all_table_info.push((
-                    table.table_name,
-                    schema.schema_id,
-                    table.table_id,
-                    file_count,
-                    file_size_bytes,
-                    delete_file_count,
-                    delete_file_size_bytes,
-                ));
+        // Aggregate file statistics
+        for file in &all_files {
+            let key = (file.schema_name.clone(), file.table_name.clone());
+            let entry = table_stats.entry(key).or_insert((0, 0, 0, 0, 0));
+            entry.1 += 1; // file_count
+            entry.2 += file.file.file.file_size_bytes; // file_size_bytes
+            if file.file.delete_file.is_some() {
+                entry.3 += 1; // delete_file_count
+                entry.4 += file
+                    .file
+                    .delete_file
+                    .as_ref()
+                    .map(|d| d.file_size_bytes)
+                    .unwrap_or(0); // delete_file_size_bytes
             }
         }
+
+        // Convert to vector for array building
+        // Tuple: (table_name, schema_id, table_id, file_count, file_size, del_count, del_size)
+        let mut all_table_info: Vec<_> = table_stats
+            .into_iter()
+            .map(|((_schema_name, table_name), (table_id, file_count, file_size, del_count, del_size))| {
+                (
+                    table_name,
+                    0i64, // schema_id placeholder (not used in display)
+                    table_id,
+                    file_count,
+                    file_size,
+                    del_count,
+                    del_size,
+                )
+            })
+            .collect();
+
+        // Sort for deterministic output by table_name
+        all_table_info.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Build arrays
         let table_names: ArrayRef = Arc::new(StringArray::from(
@@ -584,7 +567,7 @@ impl TableProvider for TableInfoTable {
     }
 
     fn table_type(&self) -> TableType {
-        TableType::Base
+        TableType::View
     }
 
     async fn scan(
@@ -629,59 +612,37 @@ impl FilesTable {
             .get_current_snapshot()
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        let schemas = self
+        // Single bulk query instead of N*M queries
+        let all_files_data = self
             .provider
-            .list_schemas(snapshot_id)
+            .list_all_files(snapshot_id)
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-        let mut all_files_data = Vec::new();
-        for schema in schemas {
-            let tables = self
-                .provider
-                .list_tables(schema.schema_id, snapshot_id)
-                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-            for table in tables {
-                let files = self
-                    .provider
-                    .get_table_files_for_select(table.table_id, snapshot_id)
-                    .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-                for file in files {
-                    all_files_data.push((
-                        schema.schema_name.clone(),
-                        table.table_name.clone(),
-                        file,
-                    ));
-                }
-            }
-        }
 
         let schema_names: ArrayRef = Arc::new(StringArray::from(
             all_files_data
                 .iter()
-                .map(|(sname, _, _)| sname.as_str())
+                .map(|f| f.schema_name.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let table_names: ArrayRef = Arc::new(StringArray::from(
             all_files_data
                 .iter()
-                .map(|(_, tname, _)| tname.as_str())
+                .map(|f| f.table_name.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let file_paths: ArrayRef = Arc::new(StringArray::from(
             all_files_data
                 .iter()
-                .map(|(_, _, file)| file.file.path.as_str())
+                .map(|f| f.file.file.path.as_str())
                 .collect::<Vec<_>>(),
         ));
 
         let file_sizes: ArrayRef = Arc::new(Int64Array::from(
             all_files_data
                 .iter()
-                .map(|(_, _, file)| file.file.file_size_bytes)
+                .map(|f| f.file.file.file_size_bytes)
                 .collect::<Vec<_>>(),
         ));
 
@@ -689,14 +650,14 @@ impl FilesTable {
         let record_counts: ArrayRef = Arc::new(Int64Array::from(
             all_files_data
                 .iter()
-                .map(|(_, _, file)| file.max_row_count)
+                .map(|f| f.file.max_row_count)
                 .collect::<Vec<_>>(),
         ));
 
         let has_delete_file: ArrayRef = Arc::new(BooleanArray::from(
             all_files_data
                 .iter()
-                .map(|(_, _, file)| file.delete_file.is_some())
+                .map(|f| f.file.delete_file.is_some())
                 .collect::<Vec<_>>(),
         ));
 
@@ -719,7 +680,7 @@ impl TableProvider for FilesTable {
     }
 
     fn table_type(&self) -> TableType {
-        TableType::Base
+        TableType::View
     }
 
     async fn scan(
@@ -743,7 +704,7 @@ impl TableProvider for FilesTable {
 /// Provides live metadata tables that query the catalog database on every access.
 /// No upfront data loading - all queries execute fresh against the metadata provider.
 #[derive(Debug)]
-pub struct InformationSchemaProvider {
+pub(crate) struct InformationSchemaProvider {
     provider: Arc<dyn MetadataProvider>,
 }
 
@@ -787,9 +748,6 @@ impl SchemaProvider for InformationSchemaProvider {
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        matches!(
-            name,
-            "snapshots" | "schemata" | "tables" | "table_info" | "columns" | "files"
-        )
+        self.table_names().iter().any(|t| t == name)
     }
 }

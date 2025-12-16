@@ -71,11 +71,23 @@ impl CatalogProvider for DuckLakeCatalog {
         let data_schemas = self
             .provider
             .list_schemas(snapshot_id)
+            .inspect_err(|e| {
+                tracing::error!(
+                    error = %e,
+                    snapshot_id = %snapshot_id,
+                    "Failed to list schemas from catalog"
+                )
+            })
             .unwrap_or_default()
             .into_iter()
             .map(|s| s.schema_name);
 
         names.extend(data_schemas);
+
+        // Ensure deterministic order and no duplicates
+        names.sort();
+        names.dedup();
+
         names
     }
 

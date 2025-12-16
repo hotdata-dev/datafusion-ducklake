@@ -1,9 +1,10 @@
 use crate::DuckLakeError;
 use crate::metadata_provider::{
-    DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, MetadataProvider, SQL_GET_DATA_FILES,
-    SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT, SQL_GET_SCHEMA_BY_NAME, SQL_GET_TABLE_BY_NAME,
-    SQL_GET_TABLE_COLUMNS, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES, SQL_TABLE_EXISTS,
-    SchemaMetadata, SnapshotMetadata, TableMetadata,
+    ColumnWithTable, DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, FileWithTable,
+    MetadataProvider, SQL_GET_DATA_FILES, SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT,
+    SQL_GET_SCHEMA_BY_NAME, SQL_GET_TABLE_BY_NAME, SQL_GET_TABLE_COLUMNS, SQL_LIST_ALL_COLUMNS,
+    SQL_LIST_ALL_FILES, SQL_LIST_ALL_TABLES, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES,
+    SQL_TABLE_EXISTS, SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema,
 };
 use duckdb::AccessMode::ReadOnly;
 use duckdb::{Config, Connection, params};
@@ -262,5 +263,108 @@ impl MetadataProvider for DuckdbMetadataProvider {
             |row| row.get(0),
         )?;
         Ok(exists)
+    }
+
+    fn list_all_tables(&self, snapshot_id: i64) -> crate::Result<Vec<TableWithSchema>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_LIST_ALL_TABLES)?;
+
+        let tables = stmt
+            .query_map(
+                params![snapshot_id, snapshot_id, snapshot_id, snapshot_id],
+                |row| {
+                    let schema_name: String = row.get(0)?;
+                    let table = TableMetadata {
+                        table_id: row.get(1)?,
+                        table_name: row.get(2)?,
+                        path: row.get(3)?,
+                        path_is_relative: row.get(4)?,
+                    };
+                    Ok(TableWithSchema { schema_name, table })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(tables)
+    }
+
+    fn list_all_columns(&self, snapshot_id: i64) -> crate::Result<Vec<ColumnWithTable>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_LIST_ALL_COLUMNS)?;
+
+        let columns = stmt
+            .query_map(
+                params![snapshot_id, snapshot_id, snapshot_id, snapshot_id],
+                |row| {
+                    let schema_name: String = row.get(0)?;
+                    let table_name: String = row.get(1)?;
+                    let column = DuckLakeTableColumn {
+                        column_id: row.get(2)?,
+                        column_name: row.get(3)?,
+                        column_type: row.get(4)?,
+                    };
+                    Ok(ColumnWithTable {
+                        schema_name,
+                        table_name,
+                        column,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(columns)
+    }
+
+    fn list_all_files(&self, snapshot_id: i64) -> crate::Result<Vec<FileWithTable>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_LIST_ALL_FILES)?;
+
+        let files = stmt
+            .query_map(
+                params![snapshot_id, snapshot_id, snapshot_id, snapshot_id, snapshot_id, snapshot_id],
+                |row| {
+                    let schema_name: String = row.get(0)?;
+                    let table_name: String = row.get(1)?;
+
+                    // Parse data file (skip column 2: data_file_id, only used for JOIN)
+                    let data_file = DuckLakeFileData {
+                        path: row.get(3)?,
+                        path_is_relative: row.get(4)?,
+                        file_size_bytes: row.get(5)?,
+                        footer_size: row.get(6)?,
+                        encryption_key: String::new(),
+                    };
+
+                    // Parse optional delete file (column 7: delete_file_id, check if exists but don't store)
+                    let delete_file = if let Ok(Some(_delete_file_id)) = row.get::<_, Option<i64>>(7) {
+                        Some(DuckLakeFileData {
+                            path: row.get(8)?,
+                            path_is_relative: row.get(9)?,
+                            file_size_bytes: row.get(10)?,
+                            footer_size: row.get(11)?,
+                            encryption_key: String::new(),
+                        })
+                    } else {
+                        None
+                    };
+
+                    let max_row_count = row.get::<_, Option<i64>>(12)?.unwrap_or(0);
+
+                    Ok(FileWithTable {
+                        schema_name,
+                        table_name,
+                        file: DuckLakeTableFile {
+                            file: data_file,
+                            delete_file,
+                            row_id_start: None,
+                            snapshot_id: None,
+                            max_row_count: Some(max_row_count),
+                        },
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(files)
     }
 }
