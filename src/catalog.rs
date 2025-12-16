@@ -15,10 +15,13 @@ use datafusion::datasource::object_store::ObjectStoreUrl;
 ///
 /// Connects to a DuckLake catalog database and provides access to schemas and tables.
 /// Uses dynamic metadata lookup - schemas are queried on-demand from the catalog database.
+/// Bound to a specific snapshot ID for query consistency.
 #[derive(Debug)]
 pub struct DuckLakeCatalog {
     /// Metadata provider for querying catalog
     provider: Arc<dyn MetadataProvider>,
+    /// Snapshot ID this catalog is bound to (for query consistency)
+    snapshot_id: i64,
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
@@ -27,13 +30,35 @@ pub struct DuckLakeCatalog {
 
 impl DuckLakeCatalog {
     /// Create a new DuckLake catalog with a metadata provider
+    ///
+    /// Gets the current snapshot ID at creation time and binds the catalog to it.
+    /// For backward compatibility. For explicit snapshot control, use `with_snapshot()`.
     pub fn new(provider: impl MetadataProvider + 'static) -> Result<Self> {
         let provider = Arc::new(provider) as Arc<dyn MetadataProvider>;
+        let snapshot_id = provider.get_current_snapshot()?;
         let data_path = provider.get_data_path()?;
         let (object_store_url, catalog_path) = parse_object_store_url(&data_path)?;
 
         Ok(Self {
             provider,
+            snapshot_id,
+            object_store_url: Arc::new(object_store_url),
+            catalog_path,
+        })
+    }
+
+    /// Create a catalog bound to a specific snapshot ID
+    ///
+    /// All schemas and tables returned will use this snapshot, guaranteeing
+    /// query consistency even if multiple catalog/schema/table lookups occur
+    /// during query planning.
+    pub fn with_snapshot(provider: Arc<dyn MetadataProvider>, snapshot_id: i64) -> Result<Self> {
+        let data_path = provider.get_data_path()?;
+        let (object_store_url, catalog_path) = parse_object_store_url(&data_path)?;
+
+        Ok(Self {
+            provider,
+            snapshot_id,
             object_store_url: Arc::new(object_store_url),
             catalog_path,
         })
@@ -45,12 +70,6 @@ impl DuckLakeCatalog {
     pub fn provider(&self) -> Arc<dyn MetadataProvider> {
         self.provider.clone()
     }
-
-    fn get_current_snapshot_id(&self) -> Result<i64> {
-        self.provider
-            .get_current_snapshot()
-            .inspect_err(|e| tracing::error!(error = %e, "Failed to get current snapshot"))
-    }
 }
 
 impl CatalogProvider for DuckLakeCatalog {
@@ -59,22 +78,17 @@ impl CatalogProvider for DuckLakeCatalog {
     }
 
     fn schema_names(&self) -> Vec<String> {
-        let snapshot_id = match self.get_current_snapshot_id() {
-            Ok(id) => id,
-            Err(_) => return vec!["information_schema".to_string()],
-        };
-
         // Start with information_schema
         let mut names = vec!["information_schema".to_string()];
 
-        // Add data schemas from catalog
+        // Add data schemas from catalog using the pinned snapshot_id
         let data_schemas = self
             .provider
-            .list_schemas(snapshot_id)
+            .list_schemas(self.snapshot_id)
             .inspect_err(|e| {
                 tracing::error!(
                     error = %e,
-                    snapshot_id = %snapshot_id,
+                    snapshot_id = %self.snapshot_id,
                     "Failed to list schemas from catalog"
                 )
             })
@@ -99,13 +113,8 @@ impl CatalogProvider for DuckLakeCatalog {
             ))));
         }
 
-        let snapshot_id = match self.get_current_snapshot_id() {
-            Ok(id) => id,
-            Err(_) => return None,
-        };
-
-        // Query database with snapshot_id for data schemas
-        match self.provider.get_schema_by_name(name, snapshot_id) {
+        // Query database with the pinned snapshot_id for data schemas
+        match self.provider.get_schema_by_name(name, self.snapshot_id) {
             Ok(Some(meta)) => {
                 // Resolve schema path hierarchically
                 let schema_path = if meta.path_is_relative {
@@ -116,12 +125,12 @@ impl CatalogProvider for DuckLakeCatalog {
                     meta.path
                 };
 
-                // Pass snapshot_id to schema
+                // Pass the pinned snapshot_id to schema
                 Some(Arc::new(DuckLakeSchema::new(
                     meta.schema_id,
                     meta.schema_name,
                     Arc::clone(&self.provider),
-                    snapshot_id, // Propagate snapshot_id
+                    self.snapshot_id, // Propagate pinned snapshot_id
                     self.object_store_url.clone(),
                     schema_path,
                 )) as Arc<dyn SchemaProvider>)

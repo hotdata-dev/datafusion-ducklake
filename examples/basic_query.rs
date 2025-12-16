@@ -1,19 +1,30 @@
-//! Basic DuckLake query example
+//! Basic DuckLake query example with snapshot isolation
 //!
 //! This example demonstrates how to:
 //! 1. Create a DuckLake catalog from a DuckDB catalog file
-//! 2. Register it with DataFusion
-//! 3. Execute a simple SELECT query
+//! 2. Bind the catalog to a specific snapshot for query consistency
+//! 3. Register it with DataFusion
+//! 4. Execute a simple SELECT query
+//!
+//! ## Snapshot Isolation
+//!
+//! Each DuckLake catalog is bound to a specific snapshot ID at creation time.
+//! This guarantees that all queries through that catalog see a consistent view
+//! of the data, even if multiple schema/table lookups happen during query planning
+//! or if the underlying data changes.
+//!
+//! To query data at different points in time, create separate catalogs bound to
+//! different snapshot IDs.
 //!
 //! To run this example, you need:
 //! - A DuckDB database file with DuckLake tables
 //! - Parquet data files referenced by the catalog
 //!
-//! Usage: cargo run --example basic_query
+//! Usage: cargo run --example basic_query <catalog.db> <sql>
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
-use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, register_ducklake_functions};
+use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, MetadataProvider, register_ducklake_functions};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use std::env;
@@ -37,7 +48,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to DuckLake catalog: {}", catalog_path);
 
     // Create the metadata provider
-    let provider = DuckdbMetadataProvider::new(catalog_path)?;
+    let provider = Arc::new(DuckdbMetadataProvider::new(catalog_path)?);
+
+    // Get the current snapshot ID
+    // This ensures query consistency - all metadata lookups will use this snapshot
+    let snapshot_id = provider.get_current_snapshot()?;
+    println!("Current snapshot ID: {}", snapshot_id);
 
     // Create runtime and register object stores
     // For MinIO or S3, register the object store with the runtime
@@ -56,8 +72,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 
-    // Create the DuckLake catalog
-    let ducklake_catalog = DuckLakeCatalog::new(provider)?;
+    // Create the DuckLake catalog bound to the snapshot
+    // This ensures all queries through this catalog see consistent data
+    // from this specific snapshot, even if the underlying data changes
+    let ducklake_catalog = DuckLakeCatalog::with_snapshot(provider, snapshot_id)?;
+
+    // Alternative: Use the backward-compatible constructor that automatically
+    // binds to the current snapshot:
+    // let ducklake_catalog = DuckLakeCatalog::new(DuckdbMetadataProvider::new(catalog_path)?)?;
 
     println!("✓ Connected to DuckLake catalog");
 
