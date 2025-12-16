@@ -280,7 +280,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
                         path: row.get(3)?,
                         path_is_relative: row.get(4)?,
                     };
-                    Ok(TableWithSchema { schema_name, table })
+                    Ok(TableWithSchema {
+                        schema_name,
+                        table,
+                    })
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?;
@@ -321,7 +324,14 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
         let files = stmt
             .query_map(
-                params![snapshot_id, snapshot_id, snapshot_id, snapshot_id, snapshot_id, snapshot_id],
+                params![
+                    snapshot_id,
+                    snapshot_id,
+                    snapshot_id,
+                    snapshot_id,
+                    snapshot_id,
+                    snapshot_id
+                ],
                 |row| {
                     let schema_name: String = row.get(0)?;
                     let table_name: String = row.get(1)?;
@@ -336,17 +346,18 @@ impl MetadataProvider for DuckdbMetadataProvider {
                     };
 
                     // Parse optional delete file (column 7: delete_file_id, check if exists but don't store)
-                    let delete_file = if let Ok(Some(_delete_file_id)) = row.get::<_, Option<i64>>(7) {
-                        Some(DuckLakeFileData {
-                            path: row.get(8)?,
-                            path_is_relative: row.get(9)?,
-                            file_size_bytes: row.get(10)?,
-                            footer_size: row.get(11)?,
-                            encryption_key: String::new(),
-                        })
-                    } else {
-                        None
-                    };
+                    let delete_file =
+                        if let Ok(Some(_delete_file_id)) = row.get::<_, Option<i64>>(7) {
+                            Some(DuckLakeFileData {
+                                path: row.get(8)?,
+                                path_is_relative: row.get(9)?,
+                                file_size_bytes: row.get(10)?,
+                                footer_size: row.get(11)?,
+                                encryption_key: String::new(),
+                            })
+                        } else {
+                            None
+                        };
 
                     let max_row_count = row.get::<_, Option<i64>>(12)?.unwrap_or(0);
 

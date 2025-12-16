@@ -24,7 +24,9 @@
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
-use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, MetadataProvider, register_ducklake_functions};
+use datafusion_ducklake::{
+    DuckLakeCatalog, DuckdbMetadataProvider, MetadataProvider, register_ducklake_functions,
+};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use std::env;

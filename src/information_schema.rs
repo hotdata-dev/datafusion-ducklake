@@ -240,7 +240,8 @@ impl TablesTable {
             .list_all_tables(snapshot_id)
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        let snapshot_ids: ArrayRef = Arc::new(Int64Array::from(vec![snapshot_id; all_tables.len()]));
+        let snapshot_ids: ArrayRef =
+            Arc::new(Int64Array::from(vec![snapshot_id; all_tables.len()]));
 
         let schema_names: ArrayRef = Arc::new(StringArray::from(
             all_tables
@@ -498,17 +499,17 @@ impl TableInfoTable {
         // Tuple: (table_name, schema_id, table_id, file_count, file_size, del_count, del_size)
         let mut all_table_info: Vec<_> = table_stats
             .into_iter()
-            .map(|((_schema_name, table_name), (table_id, file_count, file_size, del_count, del_size))| {
-                (
-                    table_name,
-                    0i64, // schema_id placeholder (not used in display)
-                    table_id,
-                    file_count,
-                    file_size,
-                    del_count,
-                    del_size,
-                )
-            })
+            .map(
+                |(
+                    (_schema_name, table_name),
+                    (table_id, file_count, file_size, del_count, del_size),
+                )| {
+                    (
+                        table_name, 0i64, // schema_id placeholder (not used in display)
+                        table_id, file_count, file_size, del_count, del_size,
+                    )
+                },
+            )
             .collect();
 
         // Sort for deterministic output by table_name
