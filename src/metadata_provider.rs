@@ -5,6 +5,8 @@ use crate::Result;
 pub const SQL_GET_LATEST_SNAPSHOT: &str =
     "SELECT COALESCE(MAX(snapshot_id), 0) FROM ducklake_snapshot";
 
+pub const SQL_LIST_SNAPSHOTS: &str = "SELECT snapshot_id, CAST(snapshot_time AS VARCHAR) as timestamp FROM ducklake_snapshot ORDER BY snapshot_id";
+
 pub const SQL_LIST_SCHEMAS: &str =
     "SELECT schema_id, schema_name, path, path_is_relative FROM ducklake_schema
      WHERE ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)";
@@ -65,6 +67,77 @@ pub const SQL_TABLE_EXISTS: &str = "SELECT EXISTS(
          AND (? < end_snapshot OR end_snapshot IS NULL)
      )";
 
+// Bulk queries for information_schema (avoids N+1 query problem)
+
+pub const SQL_LIST_ALL_TABLES: &str = "
+    SELECT
+        s.schema_name,
+        t.table_id,
+        t.table_name,
+        t.path,
+        t.path_is_relative
+    FROM ducklake_schema s
+    JOIN ducklake_table t ON s.schema_id = t.schema_id
+    WHERE ? >= s.begin_snapshot
+      AND (? < s.end_snapshot OR s.end_snapshot IS NULL)
+      AND ? >= t.begin_snapshot
+      AND (? < t.end_snapshot OR t.end_snapshot IS NULL)
+    ORDER BY s.schema_name, t.table_name";
+
+pub const SQL_LIST_ALL_COLUMNS: &str = "
+    SELECT
+        s.schema_name,
+        t.table_name,
+        c.column_id,
+        c.column_name,
+        c.column_type
+    FROM ducklake_schema s
+    JOIN ducklake_table t ON s.schema_id = t.schema_id
+    JOIN ducklake_column c ON t.table_id = c.table_id
+    WHERE ? >= s.begin_snapshot
+      AND (? < s.end_snapshot OR s.end_snapshot IS NULL)
+      AND ? >= t.begin_snapshot
+      AND (? < t.end_snapshot OR t.end_snapshot IS NULL)
+    ORDER BY s.schema_name, t.table_name, c.column_order";
+
+pub const SQL_LIST_ALL_FILES: &str = "
+    SELECT
+        s.schema_name,
+        t.table_name,
+        data.data_file_id,
+        data.path AS data_file_path,
+        data.path_is_relative AS data_path_is_relative,
+        data.file_size_bytes AS data_file_size,
+        data.footer_size AS data_footer_size,
+        del.delete_file_id,
+        del.path AS delete_file_path,
+        del.path_is_relative AS delete_path_is_relative,
+        del.file_size_bytes AS delete_file_size,
+        del.footer_size AS delete_footer_size,
+        del.delete_count
+    FROM ducklake_schema s
+    JOIN ducklake_table t ON s.schema_id = t.schema_id
+    JOIN ducklake_data_file data ON t.table_id = data.table_id
+    LEFT JOIN ducklake_delete_file del
+        ON data.data_file_id = del.data_file_id
+        AND del.table_id = t.table_id
+        AND ? >= del.begin_snapshot
+        AND (? < del.end_snapshot OR del.end_snapshot IS NULL)
+    WHERE ? >= s.begin_snapshot
+      AND (? < s.end_snapshot OR s.end_snapshot IS NULL)
+      AND ? >= t.begin_snapshot
+      AND (? < t.end_snapshot OR t.end_snapshot IS NULL)
+    ORDER BY s.schema_name, t.table_name, data.path";
+
+/// Metadata for a snapshot in the DuckLake catalog
+#[derive(Debug, Clone)]
+pub struct SnapshotMetadata {
+    /// Unique identifier for this snapshot
+    pub snapshot_id: i64,
+    /// Timestamp when the snapshot was created (optional)
+    pub timestamp: Option<String>,
+}
+
 /// Metadata for a schema in the DuckLake catalog
 #[derive(Debug, Clone)]
 pub struct SchemaMetadata {
@@ -89,6 +162,37 @@ pub struct TableMetadata {
     pub path: String,
     /// Whether the path is relative to the schema's path
     pub path_is_relative: bool,
+}
+
+/// Table metadata with its schema name (for bulk queries)
+#[derive(Debug, Clone)]
+pub struct TableWithSchema {
+    /// Name of the schema this table belongs to
+    pub schema_name: String,
+    /// Table metadata
+    pub table: TableMetadata,
+}
+
+/// Column metadata with its schema and table names (for bulk queries)
+#[derive(Debug, Clone)]
+pub struct ColumnWithTable {
+    /// Name of the schema this column's table belongs to
+    pub schema_name: String,
+    /// Name of the table this column belongs to
+    pub table_name: String,
+    /// Column metadata
+    pub column: DuckLakeTableColumn,
+}
+
+/// File metadata with its schema and table names (for bulk queries)
+#[derive(Debug, Clone)]
+pub struct FileWithTable {
+    /// Name of the schema this file's table belongs to
+    pub schema_name: String,
+    /// Name of the table this file belongs to
+    pub table_name: String,
+    /// File metadata
+    pub file: DuckLakeTableFile,
 }
 
 /// Column definition for a DuckLake table
@@ -173,6 +277,9 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     /// Get the data path from catalog metadata (not snapshot-dependent)
     fn get_data_path(&self) -> Result<String>;
 
+    /// List all snapshots in the catalog
+    fn list_snapshots(&self) -> Result<Vec<SnapshotMetadata>>;
+
     /// List schemas for a specific snapshot
     fn list_schemas(&self, snapshot_id: i64) -> Result<Vec<SchemaMetadata>>;
 
@@ -205,4 +312,15 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
 
     /// Check if table exists for a specific snapshot
     fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<bool>;
+
+    // Bulk query methods for information_schema
+
+    /// List all tables across all schemas for a snapshot
+    fn list_all_tables(&self, snapshot_id: i64) -> Result<Vec<TableWithSchema>>;
+
+    /// List all columns across all tables for a snapshot
+    fn list_all_columns(&self, snapshot_id: i64) -> Result<Vec<ColumnWithTable>>;
+
+    /// List all files across all tables for a snapshot
+    fn list_all_files(&self, snapshot_id: i64) -> Result<Vec<FileWithTable>>;
 }

@@ -62,6 +62,15 @@ impl SchemaProvider for DuckLakeSchema {
         // Use cached snapshot_id
         self.provider
             .list_tables(self.schema_id, self.snapshot_id)
+            .inspect_err(|e| {
+                tracing::error!(
+                    error = %e,
+                    schema_id = %self.schema_id,
+                    snapshot_id = %self.snapshot_id,
+                    schema_name = %self.schema_name,
+                    "Failed to list tables from catalog"
+                )
+            })
             .unwrap_or_default()
             .into_iter()
             .map(|t| t.table_name)

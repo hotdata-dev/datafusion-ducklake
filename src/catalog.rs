@@ -4,6 +4,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::Result;
+use crate::information_schema::InformationSchemaProvider;
 use crate::metadata_provider::MetadataProvider;
 use crate::path_resolver::parse_object_store_url;
 use crate::schema::DuckLakeSchema;
@@ -62,6 +63,13 @@ impl DuckLakeCatalog {
             catalog_path,
         })
     }
+
+    /// Get the metadata provider for this catalog
+    ///
+    /// This is useful when you need to register table functions separately.
+    pub fn provider(&self) -> Arc<dyn MetadataProvider> {
+        self.provider.clone()
+    }
 }
 
 impl CatalogProvider for DuckLakeCatalog {
@@ -70,17 +78,42 @@ impl CatalogProvider for DuckLakeCatalog {
     }
 
     fn schema_names(&self) -> Vec<String> {
-        // Use the catalog's pinned snapshot_id
-        self.provider
+        // Start with information_schema
+        let mut names = vec!["information_schema".to_string()];
+
+        // Add data schemas from catalog using the pinned snapshot_id
+        let data_schemas = self
+            .provider
             .list_schemas(self.snapshot_id)
+            .inspect_err(|e| {
+                tracing::error!(
+                    error = %e,
+                    snapshot_id = %self.snapshot_id,
+                    "Failed to list schemas from catalog"
+                )
+            })
             .unwrap_or_default()
             .into_iter()
-            .map(|s| s.schema_name)
-            .collect()
+            .map(|s| s.schema_name);
+
+        names.extend(data_schemas);
+
+        // Ensure deterministic order and no duplicates
+        names.sort();
+        names.dedup();
+
+        names
     }
 
     fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        // Use the catalog's pinned snapshot_id
+        // Handle information_schema specially
+        if name == "information_schema" {
+            return Some(Arc::new(InformationSchemaProvider::new(Arc::clone(
+                &self.provider,
+            ))));
+        }
+
+        // Query database with the pinned snapshot_id for data schemas
         match self.provider.get_schema_by_name(name, self.snapshot_id) {
             Ok(Some(meta)) => {
                 // Resolve schema path hierarchically

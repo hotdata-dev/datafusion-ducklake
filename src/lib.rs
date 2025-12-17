@@ -38,11 +38,13 @@
 pub mod catalog;
 pub mod delete_filter;
 pub mod error;
+pub mod information_schema;
 pub mod metadata_provider;
 pub mod metadata_provider_duckdb;
 pub mod path_resolver;
 pub mod schema;
 pub mod table;
+pub mod table_functions;
 pub mod types;
 
 // Result type for DuckLake operations
@@ -55,3 +57,4 @@ pub use metadata_provider::MetadataProvider;
 pub use metadata_provider_duckdb::DuckdbMetadataProvider;
 pub use schema::DuckLakeSchema;
 pub use table::DuckLakeTable;
+pub use table_functions::register_ducklake_functions;
