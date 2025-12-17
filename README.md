@@ -57,9 +57,6 @@ This project is under active development. The roadmap below reflects major areas
 ### Write Support
 
 - Initial write support for DuckLake tables
-- Append-only writes
-- Foundations for future upsert and delete workflows
-- Proper snapshot and commit handling
 
 ### Time Travel & Versioning
 
