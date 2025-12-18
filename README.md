@@ -2,7 +2,7 @@
 
 **This is an early pre-release and very much a work in progress.**
 
-A DataFusion extension for querying [DuckLake](https://ducklake.select). DuckLake is an integrated data lake and catalog format that stores metadata in SQL databases and data as Parquet files on disk or object storage.
+A [DataFusion](https://datafusion.apache.org/) extension for querying [DuckLake](https://ducklake.select). DuckLake is an integrated data lake and catalog format that stores metadata in SQL databases and data as Parquet files on disk or object storage.
 
 The goal of this project is to make DuckLake a first-class, Arrow-native lakehouse format inside DataFusion.
 
