@@ -1,0 +1,126 @@
+# name: test/sql/partitioning/partition_nop.test
+# description: Test partitioning nop options.
+# group: [partitioning]
+
+require ducklake
+
+require parquet
+
+# partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_partitioning_nop', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE partitioned_tbl(part_key INTEGER, values VARCHAR);
+
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key);
+
+
+statement ok
+INSERT INTO partitioned_tbl SELECT i%2, concat('thisisastring_', i) FROM range(5) t(i)
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+1
+
+# This should do nothing
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+1
+
+# This should now change the partition, since it's different
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key, values);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+2
+
+# This doesn't change, since it's the same
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key, values);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+2
+
+# This will now change it, since it's a different order
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (values, part_key);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+3
+
+# We can return to a previous partition
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+4
+
+# Lets check that multiple tables still works fine
+statement ok
+CREATE TABLE partitioned_tbl_2(part_key INTEGER, values VARCHAR);
+
+statement ok
+ALTER TABLE partitioned_tbl_2 SET PARTITIONED BY (part_key);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+5
+
+statement ok
+ALTER TABLE partitioned_tbl_2 SET PARTITIONED BY (part_key);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+5
+
+statement ok
+ALTER TABLE partitioned_tbl_2 SET PARTITIONED BY (values, part_key);
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+6
+
+# We can remove all partition of a table
+statement ok
+ALTER TABLE partitioned_tbl RESET PARTITIONED BY;
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+7
+
+# But if it is already empty we nop
+statement ok
+ALTER TABLE partitioned_tbl RESET PARTITIONED BY;
+
+query I
+select count(*) FROM ducklake_metadata.ducklake_partition_info
+----
+7
+

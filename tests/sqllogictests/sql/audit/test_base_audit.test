@@ -1,0 +1,277 @@
+# name: test/sql/audit/test_base_audit.test
+# description: test ducklake can keep track of audits on the base table
+# group: [audit]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_audit')
+
+statement ok
+CREATE TABLE ducklake.test(a integer, b varchar);
+
+query II
+SELECT * FROM ducklake.test
+----
+
+# At this point all our author and messages are NULL
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots()
+----
+0	NULL	NULL
+1	NULL	NULL
+
+# If we insert information here, it gets commited without commit information as well
+statement ok
+INSERT INTO ducklake.test VALUES (0, 'oogie');
+
+# At this point all our author and messages are NULL
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 2
+----
+2	NULL	NULL
+
+
+# Now we get a nice message and author
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (1, 'pedro');
+
+statement ok
+CALL ducklake.set_commit_message('Pedro', 'Inserting myself');
+
+statement ok
+COMMIT;
+
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 3
+----
+3	Pedro	Inserting myself
+
+# We can also have only an author
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (2, 'Thijs');
+
+statement ok
+CALL ducklake.set_commit_message('Pedro', '');
+
+statement ok
+COMMIT;
+
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 4
+----
+4	Pedro	(empty)
+
+# Only the message
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (3, 'Mark');
+
+statement ok
+CALL ducklake.set_commit_message(NULL, 'Adding Mark');
+
+statement ok
+COMMIT;
+
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 5
+----
+5	NULL	Adding Mark
+
+# NULLS
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (4, 'Gabor');
+
+statement ok
+CALL ducklake.set_commit_message(NULL, NULL);
+
+statement ok
+COMMIT;
+
+# Empty
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (5, 'Tom');
+
+statement ok
+CALL ducklake.set_commit_message('', '');
+
+statement ok
+COMMIT;
+
+# Both NULL and (empty) are accepted and treated as NULL
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id > 5
+----
+6	NULL	NULL
+7	(empty)	(empty)
+
+# Test that ROLLBACK doesn't mess things up
+# Empty
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (6, 'Hannes');
+
+statement ok
+CALL ducklake.set_commit_message('Pedro', 'Adding Hannes');
+
+statement ok
+ROLLBACK;
+
+statement ok
+INSERT INTO ducklake.test VALUES (6, 'Hannes');
+
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 8
+----
+8	NULL	NULL
+
+statement ok
+CALL ducklake.set_option('require_commit_message', True)
+
+statement error
+INSERT INTO ducklake.test VALUES (7, 'Morgana');
+----
+Commit Information for the snapshot is required but has not been provided.
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (7, 'Morgana');
+
+statement ok
+CALL ducklake.set_commit_message('Pedro', 'Adding Morgana');
+
+statement ok
+Commit;
+
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 9
+----
+9	Pedro	Adding Morgana
+
+
+statement error
+INSERT INTO ducklake.test VALUES (8, 'Odara');
+----
+Commit Information for the snapshot is required but has not been provided.
+
+# We can set it back to false
+statement ok
+CALL ducklake.set_option('require_commit_message', False)
+
+
+statement ok
+INSERT INTO ducklake.test VALUES (8, 'Odara');
+
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 10
+----
+10	NULL	NULL
+
+# Changing commit message afterwards
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (9, 'Teddy');
+
+statement ok
+CALL ducklake.set_commit_message('Pedro', 'bla');
+
+statement ok
+CALL ducklake.set_commit_message('Mark', 'Inserting Teddy');
+
+statement ok
+COMMIT;
+
+# Last set should survive
+query III
+SELECT snapshot_id, author, commit_message FROM ducklake.snapshots() where snapshot_id = 11
+----
+11	Mark	Inserting Teddy
+
+# Lets check that our previous insertion has a null value for extra info
+query IIII
+SELECT snapshot_id, author, commit_message, commit_extra_info FROM ducklake.snapshots() where snapshot_id = 11
+----
+11	Mark	Inserting Teddy	NULL
+
+# Let's add some extra info to the next commit
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (10, 'Ollie');
+
+statement ok
+CALL ducklake.set_commit_message('Pedro', 'Inserting Ollie', extra_info=>'{''barks'':7, ''cuteness'':10}');
+
+statement ok
+COMMIT;
+
+# Lets check ollie is inserted with the correct extra_info
+query IIII
+SELECT snapshot_id, author, commit_message, commit_extra_info FROM ducklake.snapshots() where snapshot_id = 12
+----
+12	Pedro	Inserting Ollie	{'barks':7, 'cuteness':10}
+
+# Empty is also valid
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO ducklake.test VALUES (11, 'Jack Black');
+
+statement ok
+CALL ducklake.set_commit_message('Pedro', 'Inserting the greatest musician of the world.', extra_info=>'');
+
+statement ok
+COMMIT;
+
+# Lets check ollie is inserted with the correct extra_info
+query IIII
+SELECT snapshot_id, author, commit_message, commit_extra_info FROM ducklake.snapshots() where snapshot_id = 13
+----
+13	Pedro	Inserting the greatest musician of the world.	(empty)
+
+# Check all data was inserted correctly at the end
+query II
+FROM ducklake.test
+----
+0	oogie
+1	pedro
+2	Thijs
+3	Mark
+4	Gabor
+5	Tom
+6	Hannes
+7	Morgana
+8	Odara
+9	Teddy
+10	Ollie
+11	Jack Black

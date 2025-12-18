@@ -1,0 +1,52 @@
+# name: test/sql/comments/comment_on_column.test
+# description: test ducklake comments on a column
+# group: [comments]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_column_comments_files')
+
+statement ok
+CREATE TABLE ducklake.test_table as SELECT 1 as test_table_column
+
+### Comment on column from table
+query I
+select comment from duckdb_columns() where column_name='test_table_column';
+----
+NULL
+
+statement ok
+COMMENT ON COLUMN ducklake.test_table.test_table_column IS 'very gezellige column'
+
+query I
+select comment from duckdb_columns() where column_name='test_table_column';
+----
+very gezellige column
+
+statement ok
+BEGIN
+
+statement ok
+COMMENT ON COLUMN ducklake.test_table.test_table_column IS 'toch niet zo gezellig'
+
+query I
+select comment from duckdb_columns() where column_name='test_table_column';
+----
+toch niet zo gezellig
+
+# take that back!
+statement ok
+ROLLBACK
+
+query I
+select comment from duckdb_columns() where column_name='test_table_column';
+----
+very gezellige column

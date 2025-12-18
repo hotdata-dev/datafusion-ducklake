@@ -1,0 +1,80 @@
+# name: test/sql/settings/parquet_compression.test
+# description: Test parquet compression
+# group: [settings]
+
+require ducklake
+
+require parquet
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_parquet_compression.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_parquet_compression')
+
+statement ok
+CALL ducklake.set_option('parquet_compression', 'zstd')
+
+statement ok
+CALL ducklake.set_option('parquet_version', '2')
+
+statement ok
+CALL ducklake.set_option('parquet_compression_level', '17')
+
+statement ok
+CALL ducklake.set_option('parquet_row_group_size', '64000')
+
+statement ok
+CREATE TABLE ducklake.tbl AS SELECT i, 'hello world' || i str FROM range(100000) t(i)
+
+# zstd + v2 encodings are used
+query II
+SELECT DISTINCT compression, encodings FROM parquet_metadata('__TEST_DIR__/ducklake_parquet_compression/**') ORDER BY ALL
+----
+ZSTD	DELTA_BINARY_PACKED
+ZSTD	DELTA_LENGTH_BYTE_ARRAY
+
+# we have two row groups (of up to 64K rows)
+query I
+SELECT COUNT(DISTINCT row_group_id) FROM parquet_metadata('__TEST_DIR__/ducklake_parquet_compression/**') ORDER BY ALL
+----
+2
+
+# ensure setting persists across restarts
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_parquet_compression.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_parquet_compression')
+
+statement ok
+INSERT INTO ducklake.tbl VALUES (42, 'hello world');
+
+query II
+SELECT DISTINCT compression, encodings FROM parquet_metadata('__TEST_DIR__/ducklake_parquet_compression/**') ORDER BY ALL
+----
+ZSTD	DELTA_BINARY_PACKED
+ZSTD	DELTA_LENGTH_BYTE_ARRAY
+
+# unknown settings
+statement error
+CALL ducklake.set_option('parquet_compression', 'zstdx')
+----
+Unsupported
+
+statement error
+CALL ducklake.set_option('parquet_version', 'z')
+----
+Could not convert
+
+statement error
+CALL ducklake.set_option('parquet_compression_level', 'z')
+----
+Could not convert
+
+statement error
+CALL ducklake.set_option('parquet_row_group_size', 'z')
+----
+Could not convert
+
+statement error
+CALL ducklake.set_option('parquet_bla', '42')
+----
+Unsupported

@@ -1,0 +1,57 @@
+# name: test/sql/data_inlining/data_inlining_alter.test
+# description: test data inlining with ALTER statements
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_alter_files', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.test AS SELECT 1 i, 2 j
+
+query II
+FROM ducklake.test
+----
+1	2
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN k INTEGER
+
+statement ok
+INSERT INTO ducklake.test VALUES (10, 20, 30);
+
+query III
+FROM ducklake.test
+----
+1	2	NULL
+10	20	30
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN i
+
+query II
+FROM ducklake.test
+----
+2	NULL
+20	30
+
+statement ok
+ALTER TABLE ducklake.test ALTER j SET TYPE BIGINT
+
+statement ok
+INSERT INTO ducklake.test VALUES (1000000000000, 0)
+
+query II
+FROM ducklake.test
+----
+2	NULL
+20	30
+1000000000000	0

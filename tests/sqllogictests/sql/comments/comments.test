@@ -1,0 +1,83 @@
+# name: test/sql/comments/comments.test
+# description: test ducklake comments
+# group: [comments]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_comments_files')
+
+### Comment on Tables
+statement ok
+CREATE TABLE ducklake.test(i INTEGER, j INTEGER);
+
+statement ok
+COMMENT ON TABLE ducklake.test IS 'very gezellige table'
+
+query I
+select comment from duckdb_tables() where table_name='test';
+----
+very gezellige table
+
+# Reverting to null goes like dis
+statement ok
+COMMENT ON TABLE ducklake.test IS NULL
+
+query I
+select comment from duckdb_tables() where table_name='test';
+----
+NULL
+
+# rollback
+statement ok
+BEGIN
+
+statement ok
+COMMENT ON TABLE ducklake.test IS 'rolled back comment'
+
+query I
+select comment from duckdb_tables() where table_name='test';
+----
+rolled back comment
+
+statement ok
+ROLLBACK
+
+query I
+select comment from duckdb_tables() where table_name='test';
+----
+NULL
+
+## Comment on view
+statement ok
+CREATE VIEW ducklake.test_view as SELECT 1 as test_view_column
+
+query I
+select comment from duckdb_views() where view_name='test_view';
+----
+NULL
+
+statement ok
+COMMENT ON VIEW ducklake.test_view IS 'very gezellige view'
+
+query I
+select comment from duckdb_views() where view_name='test_view';
+----
+very gezellige view
+
+statement error
+COMMENT ON VIEW ducklake.test IS '123'
+----
+not a view
+
+statement error
+COMMENT ON TABLE ducklake.test_view IS '123'
+----
+not a table

@@ -1,0 +1,180 @@
+# name: test/sql/partitioning/basic_partitioning.test
+# description: Test partitioning
+# group: [partitioning]
+
+require ducklake
+
+require parquet
+
+# partitioning based on a column
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_partitioning.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_partitioning', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE partitioned_tbl(part_key INTEGER, values VARCHAR);
+
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key);
+
+statement ok
+INSERT INTO partitioned_tbl SELECT i%2, concat('thisisastring_', i) FROM range(10000) t(i)
+
+statement ok
+ALTER TABLE partitioned_tbl RENAME TO partitioned_tbl_renamed
+
+# check if rename causes partition info to get dropped
+query I
+SELECT COUNT(*) FROM ducklake_metadata.ducklake_partition_info WHERE end_snapshot IS NOT NULL
+----
+0
+
+statement ok
+ALTER TABLE partitioned_tbl_renamed RENAME TO partitioned_tbl
+
+query I
+SELECT COUNT(*) FROM partitioned_tbl WHERE part_key=0
+----
+5000
+
+# verify files are partitioned
+query III
+SELECT data_file_id, partition_id, regexp_extract(path, '.*(part_key=[0-9])[/\\].*', 1) FROM ducklake_metadata.ducklake_data_file
+ORDER BY ALL
+----
+0	2	part_key=0
+1	2	part_key=1
+
+# verify files are pruned when querying the partitions
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM partitioned_tbl WHERE part_key=1
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# verify partition values are written
+query IIII
+SELECT * FROM ducklake_metadata.ducklake_file_partition_value
+----
+0	1	0	0
+1	1	0	1
+
+# append to partition
+statement ok
+INSERT INTO partitioned_tbl SELECT (i%2) + 1, concat('thisisanotherstring_', i) FROM range(10000) t(i)
+
+query I
+SELECT COUNT(*) FROM partitioned_tbl WHERE part_key=2
+----
+5000
+
+query III
+SELECT data_file_id, partition_id, regexp_extract(path, '.*(part_key=[0-9])[/\\].*', 1) FROM ducklake_metadata.ducklake_data_file
+ORDER BY ALL
+----
+0	2	part_key=0
+1	2	part_key=1
+2	2	part_key=1
+3	2	part_key=2
+
+# set partition and append in the same transaction
+statement ok
+CREATE TABLE partition_tbl2(part_key INTEGER, values VARCHAR);
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE partition_tbl2 SET PARTITIONED BY (part_key);
+
+statement ok
+INSERT INTO partition_tbl2 SELECT i%2, concat('thisisastring_', i) FROM range(10000) t(i)
+
+query I
+SELECT COUNT(*) FROM partition_tbl2 WHERE part_key=0
+----
+5000
+
+statement ok
+COMMIT
+
+query III
+SELECT data_file_id, partition_id, regexp_extract(path, '.*(part_key=[0-9])[/\\].*', 1)
+FROM ducklake_metadata.ducklake_data_file
+WHERE table_id = 3
+ORDER BY ALL
+----
+4	4	part_key=0
+5	4	part_key=1
+
+query I
+SELECT COUNT(*) FROM partition_tbl2 WHERE part_key=0
+----
+5000
+
+# create table, set partition and append in the same transaction
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE partition_tbl3(part_key INTEGER, values VARCHAR);
+
+statement ok
+ALTER TABLE partition_tbl3 SET PARTITIONED BY (part_key);
+
+statement ok
+INSERT INTO partition_tbl3 SELECT i%2, concat('yetanotherstring_', i) FROM range(10000) t(i)
+
+query I
+SELECT COUNT(*) FROM partition_tbl3 WHERE part_key=0
+----
+5000
+
+statement ok
+COMMIT
+
+query I
+SELECT COUNT(*) FROM partition_tbl3 WHERE part_key=0
+----
+5000
+
+query III
+SELECT data_file_id, partition_id, regexp_extract(path, '.*(part_key=[0-9])[/\\].*', 1)
+FROM ducklake_metadata.ducklake_data_file
+WHERE table_id = 5
+ORDER BY ALL
+----
+6	6	part_key=0
+7	6	part_key=1
+
+# detach and re-run
+statement ok
+USE memory
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_partitioning.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_partitioning', METADATA_CATALOG 'ducklake_metadata2')
+
+statement ok
+USE ducklake
+
+query I
+SELECT COUNT(*) FROM partitioned_tbl WHERE part_key=2
+----
+5000
+
+query I
+SELECT COUNT(*) FROM partition_tbl2 WHERE part_key=0
+----
+5000
+
+statement ok
+DROP TABLE partitioned_tbl
+
+query I
+SELECT COUNT(*) FROM partition_tbl2 WHERE part_key=0
+----
+5000

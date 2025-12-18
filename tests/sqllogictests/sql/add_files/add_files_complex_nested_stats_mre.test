@@ -1,0 +1,79 @@
+# name: test/sql/add_files/add_files_complex_nested_stats_mre.test
+# description: MRE for statistics mismatch with array and struct array columns
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/stats_data', METADATA_CATALOG 'metadata');
+
+# Schema that reproduces the original error: array + struct array + other types
+statement ok
+CREATE TABLE ducklake.test_table(
+    data_array DOUBLE[],
+    diagnostics STRUCT("key" VARCHAR, "value" VARCHAR)[],
+    seq_num UINTEGER
+);
+
+statement ok
+COPY (SELECT 
+    [1.0::DOUBLE, 2.0] as data_array,
+    [{'key': 'status', 'value': 'active'}] as diagnostics,
+    100::UINTEGER as seq_num
+) TO '${DATA_PATH}/file1.parquet';
+
+statement ok
+COPY (SELECT 
+    [3.0::DOUBLE, 4.0, 5.0] as data_array,
+    [{'key': 'type', 'value': 'test'}, {'key': 'state', 'value': 'running'}] as diagnostics,
+    200::UINTEGER as seq_num
+) TO '${DATA_PATH}/file2.parquet';
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test_table', '${DATA_PATH}/file1.parquet')
+
+query III
+SELECT column_id, min_value, max_value FROM metadata.ducklake_file_column_stats ORDER BY data_file_id, column_id
+----
+2	1.0	2.0
+5	status	status
+6	active	active
+7	100	100
+
+
+query III
+SELECT column_id, min_value, max_value FROM metadata.ducklake_table_column_stats ORDER BY column_id
+----
+2	1.0	2.0
+5	status	status
+6	active	active
+7	100	100
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test_table', '${DATA_PATH}/file2.parquet')
+
+query IIII
+SELECT data_file_id, column_id, min_value, max_value FROM metadata.ducklake_file_column_stats ORDER BY data_file_id, column_id
+----
+1	2	1.0	2.0
+1	5	status	status
+1	6	active	active
+1	7	100	100
+2	2	3.0	5.0
+2	5	state	type
+2	6	running	test
+2	7	200	200
+
+query III
+SELECT column_id, min_value, max_value FROM metadata.ducklake_table_column_stats ORDER BY column_id
+----
+2	1.0	5.0
+5	state	type
+6	active	test
+7	100	200

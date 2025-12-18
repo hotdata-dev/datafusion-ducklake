@@ -1,0 +1,40 @@
+# name: test/sql/alter/mixed_alter.test
+# description: test ducklake mixed alter statements
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_mixed_alter_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 INTEGER, col2 INTEGER, col3 INTEGER);
+
+statement ok
+INSERT INTO ducklake.test (col1, col2, col3) VALUES (1, 2, 3);
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col2
+
+statement ok
+INSERT INTO ducklake.test (col1, col3) VALUES (10, 20);
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN col2 VARCHAR
+
+statement ok
+INSERT INTO ducklake.test (col1, col3, col2) VALUES (100, 300, 'hello world');
+
+query III
+SELECT col1, col2, col3 FROM ducklake.test
+----
+1	NULL	3
+10	NULL	20
+100	hello world	300

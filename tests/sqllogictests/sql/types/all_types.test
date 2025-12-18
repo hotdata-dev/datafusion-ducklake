@@ -1,0 +1,50 @@
+# name: test/sql/types/all_types.test
+# description: test ducklake with different data types
+# group: [types]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_all_types_files', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+CREATE VIEW all_types AS SELECT * EXCLUDE (BIGNUM, BIT, small_enum,
+medium_enum,
+large_enum,
+"union",
+fixed_int_array,
+fixed_varchar_array,
+fixed_nested_int_array,
+fixed_nested_varchar_array,
+fixed_struct_array,
+struct_of_fixed_array,
+fixed_array_of_int_list,
+list_of_fixed_int_array, hugeint, uhugeint, interval, time_tz) FROM test_all_types();
+
+query I nosort alltypes
+FROM all_types
+----
+
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.data_types AS FROM all_types
+
+query I nosort alltypes
+FROM ducklake.data_types
+----
+
+statement ok
+COMMIT
+
+query I nosort alltypes
+FROM ducklake.data_types
+----

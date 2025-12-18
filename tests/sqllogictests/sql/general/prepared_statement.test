@@ -1,0 +1,32 @@
+# name: test/sql/general/prepared_statement.test
+# description: Test prepared statements with DuckLake
+# group: [general]
+
+require ducklake
+
+require parquet
+
+statement ok
+SET parquet_metadata_cache=true;
+
+# FIXME: succeeds on v1.3 branch but fails on v1.3.0 release
+mode skip
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_prepared_files')
+
+statement ok
+CREATE TABLE ducklake.tbl AS FROM range(1000) t(i);
+
+statement ok
+PREPARE v1 AS SELECT * FROM ducklake.tbl LIMIT 3
+
+statement error
+EXECUTE v1
+----
+this use case is not yet supported

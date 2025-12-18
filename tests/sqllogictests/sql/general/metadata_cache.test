@@ -1,0 +1,34 @@
+# name: test/sql/general/metadata_cache.test
+# description: Test COUNT(*) with Parquet metadata cache
+# group: [general]
+
+require ducklake
+
+require parquet
+
+statement ok
+SET parquet_metadata_cache=true;
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_pq_metadata_cache_files')
+
+statement ok
+CREATE TABLE ducklake.tbl AS FROM range(1000) t(i);
+
+statement ok
+DELETE FROM ducklake.tbl WHERE i%2=0
+
+query I
+SELECT COUNT(*) FROM ducklake.tbl
+----
+500
+
+query I
+SELECT COUNT(*) FROM ducklake.tbl
+----
+500

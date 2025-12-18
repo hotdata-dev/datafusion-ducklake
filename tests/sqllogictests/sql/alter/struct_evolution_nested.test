@@ -1,0 +1,87 @@
+# name: test/sql/alter/struct_evolution_nested.test
+# description: test ducklake struct nested evolution
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_struct_evolution_nested_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 STRUCT(i INT, j STRUCT(c1 TINYINT, c2 INT[]), k INT));
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'i': 1, 'j': {'c1': 2, 'c2': []}, 'k': 1})
+
+# add a column to j and promote c1
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(i INT, j STRUCT(c1 INT, c2 INT[], c3 TINYINT), k INT);
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'i': 10, 'j': {'c1': 1000, 'c2': [1, 2, 3], 'c3': 25}, 'k': 10})
+
+query I
+FROM ducklake.test
+----
+{'i': 1, 'j': {'c1': 2, 'c2': [], 'c3': NULL}, 'k': 1}
+{'i': 10, 'j': {'c1': 1000, 'c2': [1, 2, 3], 'c3': 25}, 'k': 10}
+
+# drop struct fields again
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(j STRUCT(c2 INT[]), k INT);
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'j': {'c2': [100]}, 'k': 100})
+
+query I
+FROM ducklake.test
+----
+{'j': {'c2': []}, 'k': 1}
+{'j': {'c2': [1, 2, 3]}, 'k': 10}
+{'j': {'c2': [100]}, 'k': 100}
+
+# add a nested column
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(j STRUCT(c2 INT[], x STRUCT(a INT, b INT, c INT)), k INT);
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'j': {'c2': NULL, 'x': {'a': 1, 'b': 2, 'c': 3}}, 'k': 1000})
+
+query I
+FROM ducklake.test
+----
+{'j': {'c2': [], 'x': NULL}, 'k': 1}
+{'j': {'c2': [1, 2, 3], 'x': NULL}, 'k': 10}
+{'j': {'c2': [100], 'x': NULL}, 'k': 100}
+{'j': {'c2': NULL, 'x': {'a': 1, 'b': 2, 'c': 3}}, 'k': 1000}
+
+# drop the column entirely
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(k INT);
+
+query I
+FROM ducklake.test
+----
+{'k': 1}
+{'k': 10}
+{'k': 100}
+{'k': 1000}
+
+# now add a new deeply nested column
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN col2 STRUCT(i INT, j STRUCT(c1 TINYINT, c2 INT[]), k INT)
+
+query II
+FROM ducklake.test
+----
+{'k': 1}	NULL
+{'k': 10}	NULL
+{'k': 100}	NULL
+{'k': 1000}	NULL

@@ -1,0 +1,113 @@
+# name: test/sql/default/add_column_with_default.test
+# description: Test adding a column with default values with DuckLake
+# group: [default]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_default', METADATA_CATALOG 'xx')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test VALUES (1);
+
+statement ok
+INSERT INTO ducklake.test VALUES (2);
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN j INTEGER DEFAULT 42
+
+statement ok
+INSERT INTO ducklake.test VALUES (100, 100)
+
+query II
+FROM ducklake.test ORDER BY ALL
+----
+1	42
+2	42
+100	100
+
+statement ok
+COMMIT
+
+query II
+FROM ducklake.test ORDER BY ALL
+----
+1	42
+2	42
+100	100
+
+# alter the default
+foreach finaltransaction ROLLBACK COMMIT
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test DEFAULT VALUES
+
+statement ok
+ALTER TABLE ducklake.test ALTER i SET DEFAULT 1000
+
+statement ok
+ALTER TABLE ducklake.test ALTER j DROP DEFAULT
+
+statement ok
+INSERT INTO ducklake.test DEFAULT VALUES
+
+query II
+FROM ducklake.test ORDER BY ALL
+----
+1	42
+2	42
+100	100
+1000	NULL
+NULL	42
+
+statement ok
+${finaltransaction}
+
+endloop
+
+query IIIIII
+SELECT table_id, column_id, initial_default, default_value, default_value_type, default_value_dialect FROM xx.ducklake_column
+----
+1	1	NULL	NULL	literal	duckdb
+1	2	42	42	literal	duckdb
+1	1	NULL	1000	literal	duckdb
+1	2	42	NULL	literal	duckdb
+
+statement ok
+INSERT INTO ducklake.test DEFAULT VALUES
+
+query II
+FROM ducklake.test ORDER BY ALL
+----
+1	42
+2	42
+100	100
+1000	NULL
+1000	NULL
+NULL	42
+
+statement error
+ALTER TABLE ducklake.test ALTER nonexistent_column SET DEFAULT 1000
+----
+nonexistent_column
+
+statement error
+ALTER TABLE ducklake.test ALTER nonexistent_column DROP DEFAULT
+----
+nonexistent_column

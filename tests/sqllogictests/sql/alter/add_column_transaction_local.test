@@ -1,0 +1,32 @@
+# name: test/sql/alter/add_column_transaction_local.test
+# description: test ducklake add columns
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_col_tl_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 INTEGER);
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test VALUES (42);
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN new_col2 INTEGER
+
+query II
+SELECT * FROM ducklake.test
+----
+42	NULL

@@ -1,0 +1,73 @@
+# name: test/sql/general/data_path_tag.test
+# description: test ducklakes database have a tag['data_path'] via duckdb_databases()
+# group: [general]
+
+require ducklake
+
+require parquet
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_duckdb_tag_data_path.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_duckdb_tables_files', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test FROM range(100);
+
+query III
+SELECT table_name, estimated_size, column_count FROM duckdb_tables() WHERE database_name='ducklake';
+----
+test	100	1
+
+### Newly created DuckLake with DATA_PATH, returns the one provided
+
+query I
+SELECT count(*) FROM (SELECT tags['data_path'] as data_path FROM duckdb_databases() WHERE tags['data_path'] IS NOT NULL AND data_path ILIKE '%ducklake_duckdb_tables_files%');
+----
+1
+
+statement ok
+DETACH ducklake;
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_duckdb_tag_data_path.db' AS ducklake;
+
+### Existing DuckLake with no DATA_PATH, returns the one from the metadata catalog
+
+query I
+SELECT count(*) FROM (SELECT tags['data_path'] as data_path FROM duckdb_databases() WHERE tags['data_path'] IS NOT NULL AND data_path ILIKE '%ducklake_duckdb_tables_files%');
+----
+1
+
+statement ok
+DETACH ducklake;
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_duckdb_tag_data_path.db' AS ducklake (DATA_PATH something_else, OVERRIDE_DATA_PATH TRUE);
+
+### Existing DuckLake with different DATA_PATH, returns the currently provided one
+
+query I
+SELECT count(*) FROM (SELECT tags['data_path'] as data_path FROM duckdb_databases() WHERE tags['data_path'] IS NOT NULL AND data_path ILIKE '%ducklake_duckdb_tables_files%');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT tags['data_path'] as data_path FROM duckdb_databases() WHERE tags['data_path'] IS NOT NULL AND data_path ILIKE '%something_else%');
+----
+1
+
+statement ok
+DETACH ducklake;
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_duckdb_tag_data_path.db' AS ducklake;
+
+### Existing DuckLake with no DATA_PATH, returns the one from the metadata catalog (the original one, not the overridden one)
+
+query I
+SELECT count(*) FROM (SELECT tags['data_path'] as data_path FROM duckdb_databases() WHERE tags['data_path'] IS NOT NULL AND data_path ILIKE '%ducklake_duckdb_tables_files%');
+----
+1
+

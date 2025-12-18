@@ -1,0 +1,83 @@
+# name: test/sql/add_files/add_files_type_check_string_blob.test
+# description: test ducklake adding files with string/blob
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+require json
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_files_string_blob')
+
+statement ok
+COPY (SELECT 'hello world' AS col1) TO '${DATA_PATH}/string.parquet';
+
+statement ok
+COPY (SELECT '\x80'::BLOB AS col1) TO '${DATA_PATH}/blob.parquet';
+
+statement ok
+COPY (SELECT '{"hello": "world"}'::JSON AS col1) TO '${DATA_PATH}/json.parquet';
+
+##########
+# string #
+##########
+statement ok
+CREATE OR REPLACE TABLE ducklake.test(col1 VARCHAR);
+
+statement error
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/blob.parquet')
+----
+BLOB
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/string.parquet')
+
+query I
+FROM ducklake.test
+----
+hello world
+
+########
+# blob #
+########
+statement ok
+CREATE OR REPLACE TABLE ducklake.test(col1 BLOB);
+
+statement error
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/string.parquet')
+----
+VARCHAR
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/blob.parquet')
+
+query I
+FROM ducklake.test
+----
+\x80
+
+########
+# json #
+########
+statement ok
+CREATE OR REPLACE TABLE ducklake.test(col1 JSON);
+
+statement error
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/string.parquet')
+----
+VARCHAR
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/json.parquet')
+
+query I
+FROM ducklake.test
+----
+{"hello": "world"}

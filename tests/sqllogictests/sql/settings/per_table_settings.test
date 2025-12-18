@@ -1,0 +1,117 @@
+# name: test/sql/settings/per_table_settings.test
+# description: Test per-table settings
+# group: [settings]
+
+require ducklake
+
+require parquet
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_per_table_settings.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_per_table_settings_files');
+
+# test different settings per schema/table
+statement ok
+CREATE TABLE ducklake.t1(str VARCHAR)
+
+statement ok
+CREATE TABLE ducklake.t2(str VARCHAR)
+
+statement ok
+CREATE SCHEMA ducklake.s1;
+
+statement ok
+CREATE TABLE ducklake.s1.t1(str VARCHAR);
+
+statement ok
+CREATE TABLE ducklake.s1.t2(str VARCHAR);
+
+# global default -> uncompressed
+statement ok
+CALL ducklake.set_option('parquet_compression', 'uncompressed')
+
+# t1 -> zstd
+statement ok
+CALL ducklake.set_option('parquet_compression', 'zstd', table_name => 't1')
+
+# schema s1 -> lz4
+statement ok
+CALL ducklake.set_option('parquet_compression', 'lz4', schema => 's1')
+
+# s1.t1 -> gzip
+statement ok
+CALL ducklake.set_option('parquet_compression', 'gzip', schema => 's1', table_name => 't1')
+
+# non-existent schema/table
+statement error
+CALL ducklake.set_option('parquet_compression', 'gzip', table_name => 'nonexistent_table')
+----
+nonexistent_table
+
+statement error
+CALL ducklake.set_option('parquet_compression', 'gzip', schema => 'nonexistent_schema')
+----
+nonexistent_schema
+
+loop i 0 2
+
+# t1 uses zstd (table-specific setting)
+query I
+INSERT INTO ducklake.t1 SELECT 'hello world' || i str FROM range(1000) t(i)
+----
+1000
+
+query I
+SELECT DISTINCT compression FROM parquet_metadata('__TEST_DIR__/ducklake_per_table_settings_files/main/t1/**') ORDER BY ALL
+----
+ZSTD
+
+# t2 uses uncompressed (global setting)
+query I
+INSERT INTO ducklake.t2 SELECT 'hello world' || i str FROM range(1000) t(i)
+----
+1000
+
+query I
+SELECT DISTINCT compression FROM parquet_metadata('__TEST_DIR__/ducklake_per_table_settings_files/main/t2/**') ORDER BY ALL
+----
+UNCOMPRESSED
+
+# s1.t1 uses gzip (table-specific setting)
+query I
+INSERT INTO ducklake.s1.t1 SELECT 'hello world' || i str FROM range(1000) t(i)
+----
+1000
+
+query I
+SELECT DISTINCT compression FROM parquet_metadata('__TEST_DIR__/ducklake_per_table_settings_files/s1/t1/**') ORDER BY ALL
+----
+GZIP
+
+# s1.t2 uses lz4 (schema-specific setting)
+query I
+INSERT INTO ducklake.s1.t2 SELECT 'hello world' || i str FROM range(1000) t(i)
+----
+1000
+
+query I
+SELECT DISTINCT compression FROM parquet_metadata('__TEST_DIR__/ducklake_per_table_settings_files/s1/t2/**') ORDER BY ALL
+----
+LZ4_RAW
+
+# all these options are persisted - restart and do it again
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_per_table_settings.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_per_table_settings_files');
+
+endloop
+
+# options retrieval - check that all options are present with correct values and scopes
+query IIII
+SELECT option_name, value, scope, scope_entry FROM ducklake.options() WHERE option_name='parquet_compression' ORDER BY scope, value;
+----
+parquet_compression	uncompressed	GLOBAL	NULL
+parquet_compression	lz4	SCHEMA	s1
+parquet_compression	gzip	TABLE	s1.t1
+parquet_compression	zstd	TABLE	main.t1

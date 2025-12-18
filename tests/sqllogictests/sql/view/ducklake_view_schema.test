@@ -1,0 +1,140 @@
+# name: test/sql/view/ducklake_view_schema.test
+# description: Test views in schemas in DuckLake
+# group: [view]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_view_schema_files')
+
+statement ok
+CREATE SCHEMA ducklake.s1;
+
+statement ok
+CREATE SCHEMA ducklake.s2;
+
+statement ok
+CREATE VIEW ducklake.s1.v1 AS SELECT 42 i
+
+statement ok
+CREATE VIEW ducklake.s2.v1 AS SELECT 'hello' a, 'world' b
+
+query I
+SELECT * FROM ducklake.s1.v1
+----
+42
+
+query II
+SELECT * FROM ducklake.s2.v1
+----
+hello	world
+
+# drop the schemas again
+statement error
+DROP SCHEMA ducklake.s1
+----
+there are entries that depend on it
+
+statement ok
+DROP VIEW ducklake.s1.v1
+
+statement ok
+DROP SCHEMA ducklake.s1
+
+statement ok
+DROP SCHEMA ducklake.s2 CASCADE
+
+# the schemas are now gone
+statement error
+CREATE VIEW ducklake.s2.v1 AS SELECT 42
+----
+not found
+
+foreach commit_query ROLLBACK COMMIT
+
+# now try all of this transaction-local
+statement ok
+BEGIN
+
+statement ok
+CREATE SCHEMA ducklake.s1;
+
+statement ok
+CREATE SCHEMA ducklake.s2;
+
+query I
+SELECT schema_name FROM duckdb_schemas() WHERE database_name='ducklake' ORDER BY ALL
+----
+main
+s1
+s2
+
+statement ok
+CREATE VIEW ducklake.s1.v1 AS SELECT 42 i
+
+statement ok
+CREATE VIEW ducklake.s2.v1 AS SELECT 'hello' a, 'world' b
+
+query I
+SELECT * FROM ducklake.s1.v1
+----
+42
+
+query II
+SELECT * FROM ducklake.s2.v1
+----
+hello	world
+
+statement ok
+${commit_query}
+
+endloop
+
+query I
+SELECT * FROM ducklake.s1.v1
+----
+42
+
+query II
+SELECT * FROM ducklake.s2.v1
+----
+hello	world
+
+# drop and re-create a schema within the same transaction
+statement ok
+BEGIN
+
+statement ok
+DROP SCHEMA ducklake.s1 CASCADE
+
+query I
+SELECT schema_name FROM duckdb_schemas() WHERE database_name='ducklake' ORDER BY ALL
+----
+main
+s2
+
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok
+CREATE VIEW ducklake.s1.v1 AS SELECT 42 i
+
+query I
+SELECT * FROM ducklake.s1.v1
+----
+42
+
+statement ok
+COMMIT
+
+query I
+SELECT * FROM ducklake.s1.v1
+----
+42

@@ -1,0 +1,59 @@
+# name: test/sql/types/struct.test
+# description: test storing struct types in ducklake
+# group: [types]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_struct_files')
+
+statement ok
+CREATE TABLE ducklake.test(s STRUCT(i INTEGER, j INTEGER));
+
+query I
+SELECT * FROM ducklake.test
+----
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'i': 1, 'j': 2}), ({'i': NULL, 'j': 3}), (NULL);
+
+query I
+SELECT * FROM ducklake.test
+----
+{'i': 1, 'j': 2}
+{'i': NULL, 'j': 3}
+NULL
+
+query I
+SELECT * FROM ducklake.test WHERE s.i=1
+----
+{'i': 1, 'j': 2}
+
+query I
+SELECT * FROM ducklake.test WHERE s.i=100
+----
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'i': 4, 'j': 5}), ({'i': 6, 'j': 7});
+
+query I
+SELECT * FROM ducklake.test
+----
+{'i': 1, 'j': 2}
+{'i': NULL, 'j': 3}
+NULL
+{'i': 4, 'j': 5}
+{'i': 6, 'j': 7}
+
+# stats
+query I
+SELECT stats(s.i) FROM ducklake.test LIMIT 1
+----
+<REGEX>:.*Min.*1.*Max.*6.*Has Null.*true.*

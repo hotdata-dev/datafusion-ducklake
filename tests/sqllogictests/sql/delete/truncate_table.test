@@ -1,0 +1,81 @@
+# name: test/sql/delete/truncate_table.test
+# description: Test ducklake truncating a table
+# group: [delete]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_truncate_files')
+
+# transaction local truncate
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.test_local AS SELECT i id FROM range(10000) t(i);
+
+query I
+SELECT COUNT(*) FROM ducklake.test_local
+----
+10000
+
+query I
+DELETE FROM ducklake.test_local
+----
+10000
+
+query I
+SELECT COUNT(*) FROM ducklake.test_local
+----
+0
+
+statement ok
+COMMIT
+
+# verify that we are not writing any files here
+query I
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_truncate_files/*')
+----
+0
+
+statement ok
+CREATE TABLE ducklake.test AS SELECT i id FROM range(10000) t(i);
+
+statement ok
+BEGIN
+
+query I
+DELETE FROM ducklake.test
+----
+10000
+
+query I
+SELECT COUNT(*) FROM ducklake.test
+----
+0
+
+statement ok
+COMMIT
+
+query I
+SELECT COUNT(*) FROM ducklake.test
+----
+0
+
+# verify that we are not writing a delete file if we clear the file list
+query I
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_truncate_files/*-delete.parquet')
+----
+0
+
+query I
+DELETE FROM ducklake.test
+----
+0

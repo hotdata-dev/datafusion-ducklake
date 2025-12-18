@@ -1,0 +1,26 @@
+# name: test/sql/stats/cardinality.test
+# description: test ducklake cardinality extension
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_cardinality_files')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test FROM range(1000);
+
+query II
+EXPLAIN SELECT * FROM ducklake.test
+----
+physical_plan	<REGEX>:.*~1,000.*

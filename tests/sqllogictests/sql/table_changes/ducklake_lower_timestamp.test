@@ -1,0 +1,40 @@
+# name: test/sql/table_changes/ducklake_lower_timestamp.test
+# description: test issue #330 is fixed
+# group: [table_changes]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_lower_timestamp')
+
+statement ok
+use ducklake;
+
+statement ok
+create or replace table repro (foo int, bar text, update_ts timestamptz);
+
+statement ok
+insert into repro by name select 1 as foo, '1' as bar, current_timestamp as update_ts;
+
+statement ok
+insert into repro by name select 2 as foo, '2' as bar, current_timestamp as update_ts;
+
+statement ok
+insert into repro by name select 3 as foo, '3' as bar, current_timestamp as update_ts;
+
+query I
+SELECT COUNT(*) FROM ducklake.table_changes('repro', 0, 4);
+----
+3
+
+query I
+SELECT COUNT(*) from ducklake.table_changes('repro', date '1970-01-01', now())
+----
+3

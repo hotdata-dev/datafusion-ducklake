@@ -1,0 +1,55 @@
+# name: test/sql/concurrent/file_level_conflict.test
+# description: test concurrent inserts
+# group: [concurrent]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/concurrent_insert_conflict', BUSY_TIMEOUT 10000)
+
+statement ok
+use ducklake;
+
+statement ok
+CREATE TABLE tbl (key INTEGER, grouping INTEGER);
+
+statement ok
+ALTER TABLE tbl SET PARTITIONED BY (grouping);
+
+statement ok
+insert into tbl select i as key, i%20 as grouping from range (0,1000) t(i);
+
+statement ok
+SET ducklake_max_retry_count = 100;
+
+# This will not cause any conflicts, since we are deleating once from each file.
+concurrentloop i 0 20
+
+statement ok
+DELETE FROM ducklake.tbl WHERE key = ${i}
+
+endloop
+
+query II
+SELECT COUNT(*), SUM(key) FROM ducklake.tbl
+----
+980	499310
+
+# Lets do multiple files on the same transaction
+concurrentloop i 20 30
+
+statement ok
+DELETE FROM ducklake.tbl WHERE key = ${i} OR KEY = ${i} + 10
+
+endloop
+
+query II
+SELECT COUNT(*), SUM(key) FROM ducklake.tbl
+----
+960	498720

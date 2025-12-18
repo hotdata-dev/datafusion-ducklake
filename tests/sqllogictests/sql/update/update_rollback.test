@@ -1,0 +1,43 @@
+# name: test/sql/update/update_rollback.test
+# description: Test ducklake update rollback
+# group: [update]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_update_rollback_files');
+
+statement ok
+CREATE TABLE ducklake.test AS SELECT 1000 + i id, i % 10 as val FROM range(1000) t(i);
+
+statement ok
+BEGIN
+
+statement ok
+UPDATE ducklake.test SET id=id+1
+
+query III
+SELECT COUNT(*), SUM(id), SUM(val) FROM ducklake.test
+----
+1000	1500500	4500
+
+statement ok
+ROLLBACK
+
+query III
+SELECT COUNT(*), SUM(id), SUM(val) FROM ducklake.test
+----
+1000	1499500	4500
+
+# verify any additional files were deleted
+query I
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_update_rollback_files/main/test/*.parquet')
+----
+1

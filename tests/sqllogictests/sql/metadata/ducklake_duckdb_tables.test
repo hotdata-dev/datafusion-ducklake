@@ -1,0 +1,26 @@
+# name: test/sql/metadata/ducklake_duckdb_tables.test
+# description: test duckdb_tables with ducklake
+# group: [metadata]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_duckdb_tables_files', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test FROM range(100);
+
+query III
+SELECT table_name, estimated_size, column_count FROM duckdb_tables() WHERE database_name='ducklake';
+----
+test	100	1

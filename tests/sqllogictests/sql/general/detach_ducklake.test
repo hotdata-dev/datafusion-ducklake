@@ -1,0 +1,30 @@
+# name: test/sql/general/detach_ducklake.test
+# description: Test detaching ducklake
+# group: [general]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_detach_files', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_detach_files', METADATA_CATALOG 'ducklake_metadata')
+
+# what happens if we detach the metadata catalog?
+statement ok
+DETACH ducklake_metadata
+
+statement error
+CREATE TABLE ducklake.tbl(i INTEGER)
+----
+Catalog "ducklake_metadata" does not exist!

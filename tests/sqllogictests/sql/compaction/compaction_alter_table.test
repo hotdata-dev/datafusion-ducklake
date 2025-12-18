@@ -1,0 +1,136 @@
+# name: test/sql/compaction/compaction_alter_table.test
+# description: test compaction on a database that is altered
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_compaction_alter_files')
+
+# snapshot 1
+statement ok
+CREATE TABLE ducklake.test(id INTEGER, i INTEGER);
+
+# snapshot 2
+statement ok
+INSERT INTO ducklake.test VALUES (1, 10);
+
+# snapshot 3
+statement ok
+INSERT INTO ducklake.test VALUES (2, 20);
+
+# snapshot 4
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN j INTEGER
+
+# snapshot 5
+statement ok
+INSERT INTO ducklake.test VALUES (3, 30, 300);
+
+# snapshot 6
+statement ok
+INSERT INTO ducklake.test VALUES (4, 40, 400);
+
+# snapshot 7
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN i
+
+# snapshot 8
+statement ok
+INSERT INTO ducklake.test VALUES (5, 500);
+
+# snapshot 9
+statement ok
+INSERT INTO ducklake.test VALUES (6, 600);
+
+# snapshot 10
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN i VARCHAR
+
+# snapshot 11
+statement ok
+INSERT INTO ducklake.test VALUES (7, 700, 'hello');
+
+# snapshot 12
+statement ok
+INSERT INTO ducklake.test VALUES (8, 800, 'world');
+
+query IIIII
+SELECT snapshot_id, rowid, * FROM ducklake.test ORDER BY ALL
+----
+2	0	1	NULL	NULL
+3	1	2	NULL	NULL
+5	2	3	300	NULL
+6	3	4	400	NULL
+8	4	5	500	NULL
+9	5	6	600	NULL
+11	6	7	700	hello
+12	7	8	800	world
+
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_alter_files/**/*')
+----
+8
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+# we cannot merge across alter statements - so this results in 4 separate merges
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_alter_files/**/*')
+----
+12
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# four files remain
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_alter_files/**/*')
+----
+4
+
+# verify correct behavior when operating on the compacted file
+# time travel
+query IIII
+SELECT snapshot_id, rowid, * FROM ducklake.test AT (VERSION => 3) ORDER BY ALL
+----
+2	0	1	10
+3	1	2	20
+
+query IIIII
+SELECT snapshot_id, rowid, * FROM ducklake.test AT (VERSION => 6) ORDER BY ALL
+----
+2	0	1	10	NULL
+3	1	2	20	NULL
+5	2	3	30	300
+6	3	4	40	400
+
+query IIII
+SELECT snapshot_id, rowid, * FROM ducklake.test AT (VERSION => 9) ORDER BY ALL
+----
+2	0	1	NULL
+3	1	2	NULL
+5	2	3	300
+6	3	4	400
+8	4	5	500
+9	5	6	600
+
+query IIIII
+SELECT snapshot_id, rowid, * FROM ducklake.test ORDER BY ALL
+----
+2	0	1	NULL	NULL
+3	1	2	NULL	NULL
+5	2	3	300	NULL
+6	3	4	400	NULL
+8	4	5	500	NULL
+9	5	6	600	NULL
+11	6	7	700	hello
+12	7	8	800	world

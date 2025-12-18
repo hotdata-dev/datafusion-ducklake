@@ -1,0 +1,131 @@
+# name: test/sql/data_inlining/inlining_global_options.test
+# description: Test global options for the inlining function ducklake_flush_inlined_data
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/inlining_global_options', DATA_INLINING_ROW_LIMIT 2)
+
+statement ok
+use ducklake
+
+# Create one Table with two files
+statement ok
+CREATE TABLE example (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO example (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO example (key, value) VALUES ('baz', 'qux');
+
+# Create another Table with two files
+statement ok
+CREATE TABLE example_2 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO example_2 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO example_2 (key, value) VALUES ('baz', 'qux');
+
+# Different schema with another table with two files
+statement ok
+CREATE SCHEMA s1;
+
+statement ok
+CREATE TABLE s1.example (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO s1.example (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CREATE TABLE s1.example_2 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example_2 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO s1.example_2 (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CREATE TABLE s1.example_3 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example_3 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO s1.example_3 (key, value) VALUES ('baz', 'qux');
+
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+
+statement ok
+CALL ducklake.set_option('auto_compact', false, schema=> 'main')
+
+statement ok
+CALL ducklake.set_option('auto_compact', false, schema=> 's1')
+
+statement ok
+CALL ducklake.set_option('auto_compact', true, schema=> 'main', table_name =>'example_2')
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake');
+
+# We write a new file for table id 2
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+10	2
+
+statement ok
+CALL ducklake.set_option('auto_compact', true, schema=> 's1', table_name =>'example_2')
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake');
+
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+10	2
+11	5
+
+statement ok
+CALL ducklake.set_option('auto_compact', true, schema=> 's1')
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake');
+
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+10	2
+11	5
+12	4
+13	6
+
+statement ok
+CALL ducklake.set_option('auto_compact', true, schema=> 'main')
+
+statement ok
+CALL ducklake_flush_inlined_data('ducklake');
+
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+10	2
+11	5
+12	4
+13	6
+14	1

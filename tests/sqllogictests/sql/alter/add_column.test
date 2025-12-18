@@ -1,0 +1,65 @@
+# name: test/sql/alter/add_column.test
+# description: test ducklake add columns
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_col_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 INTEGER);
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN new_col2 INTEGER
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN new_col2 INTEGER
+----
+already exists
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN IF NOT EXISTS new_col2 INTEGER
+
+statement ok
+INSERT INTO ducklake.test VALUES (1, 2), (NULL, 3);
+
+query II
+SELECT col1, new_col2 FROM ducklake.test
+----
+1	2
+NULL	3
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN new_col3 VARCHAR
+
+query IIIIII
+DESCRIBE ducklake.test
+----
+col1	INTEGER	YES	NULL	NULL	NULL
+new_col2	INTEGER	YES	NULL	NULL	NULL
+new_col3	VARCHAR	YES	NULL	NULL	NULL
+
+statement ok
+INSERT INTO ducklake.test VALUES (1, 2, 'hello'), (NULL, 3, 'world');
+
+query III rowsort
+SELECT * FROM ducklake.test
+----
+1	2	NULL
+1	2	hello
+NULL	3	NULL
+NULL	3	world
+
+# filters
+query III rowsort
+SELECT * FROM ducklake.test WHERE new_col3='hello'
+----
+1	2	hello

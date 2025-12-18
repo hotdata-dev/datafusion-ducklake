@@ -1,0 +1,36 @@
+# name: test/sql/alter/rename_table_case.test
+# description: Test renaming tables in DuckLake
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/rename_table_case', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+USE ducklake
+
+statement ok
+create table MY_TABLE (i integer);
+
+statement ok
+insert into MY_TABLE values(42);
+
+statement ok
+alter table MY_TABLE rename to my_table;
+
+query I
+select * from my_table;
+----
+42
+
+query I
+select * from MY_TABLE;
+----
+42

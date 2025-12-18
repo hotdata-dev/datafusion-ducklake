@@ -1,0 +1,95 @@
+# name: test/sql/alter/struct_in_map_evolution.test
+# description: test ducklake struct field evolution in a list
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_struct_in_map_evolution_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 MAP(INT, STRUCT(i INT, j INT)));
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'1': {'i': 1, 'j': 2}})
+
+# add k TINYINT
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE MAP(INT, STRUCT(i INT, j INT, k TINYINT));
+
+query I
+FROM ducklake.test
+----
+{1={'i': 1, 'j': 2, 'k': NULL}}
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'2': {'i': 10, 'j': 20, 'k': 3}}), (MAP {'3': {'i': 11, 'j': 21, 'k': 10}})
+
+query I
+FROM ducklake.test
+----
+{1={'i': 1, 'j': 2, 'k': NULL}}
+{2={'i': 10, 'j': 20, 'k': 3}}
+{3={'i': 11, 'j': 21, 'k': 10}}
+
+statement error
+INSERT INTO ducklake.test VALUES (MAP {'4': {'i': 10, 'j': 20, 'k': 1000}})
+----
+out of range
+
+# promote k to INT
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE MAP(INT, STRUCT(i INT, j INT, k INTEGER));
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'4': {'i': 10, 'j': 20, 'k': 1000}})
+
+query I
+FROM ducklake.test
+----
+{1={'i': 1, 'j': 2, 'k': NULL}}
+{2={'i': 10, 'j': 20, 'k': 3}}
+{3={'i': 11, 'j': 21, 'k': 10}}
+{4={'i': 10, 'j': 20, 'k': 1000}}
+
+# drop i
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE MAP(INT, STRUCT(j INT, k INTEGER));
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'5': {'j': 150, 'k': 1000}}), (MAP {'6': {'j': 151, 'k': 1001}})
+
+query I
+FROM ducklake.test
+----
+{1={'j': 2, 'k': NULL}}
+{2={'j': 20, 'k': 3}}
+{3={'j': 21, 'k': 10}}
+{4={'j': 20, 'k': 1000}}
+{5={'j': 150, 'k': 1000}}
+{6={'j': 151, 'k': 1001}}
+
+# drop all original columns
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE MAP(INT, STRUCT(k INTEGER));
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'7': {'k': 10000}})
+
+query I
+FROM ducklake.test ORDER BY ALL
+----
+{1={'k': NULL}}
+{2={'k': 3}}
+{3={'k': 10}}
+{4={'k': 1000}}
+{5={'k': 1000}}
+{6={'k': 1001}}
+{7={'k': 10000}}

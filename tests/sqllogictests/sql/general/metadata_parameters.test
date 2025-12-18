@@ -1,0 +1,27 @@
+# name: test/sql/general/metadata_parameters.test
+# description: Test attach with metadata parameters
+# group: [general]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_metadata_parameters', META_TYPE 'DUCKDB')
+
+statement ok
+CREATE TABLE ducklake.tbl AS FROM range(1000) t(i);
+
+query I
+SELECT COUNT(*) FROM ducklake.tbl
+----
+1000
+
+statement error
+ATTACH 'ducklake:${DATA_PATH}/ducklake_metadata_parametersxx.db' AS s (DATA_PATH '${DATA_PATH}/ducklake_metadata_parameters', META_TYPE 'DUCKDBXX')
+----
+duckdbxx

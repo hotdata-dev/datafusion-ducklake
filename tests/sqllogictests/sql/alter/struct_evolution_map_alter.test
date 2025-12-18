@@ -1,0 +1,157 @@
+# name: test/sql/alter/struct_evolution_map_alter.test
+# description: test ducklake struct field evolution within a map via alter
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_struct_evolution_alter_map_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 MAP(INT, STRUCT(i INT, j INT)));
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'1': {'i': 1, 'j': 2}})
+
+# add k INTEGER
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN col1.value.k INTEGER
+
+query I
+FROM ducklake.test
+----
+{1={'i': 1, 'j': 2, 'k': NULL}}
+
+statement ok
+COMMIT
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN col1.value.K INT
+----
+already exists
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN IF NOT EXISTS col1.value.k INT
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN col1.s INT
+----
+can only be added to structs
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN col1.val.s INT
+----
+does not exist
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'2': {'i': 10, 'j': 20, 'k': 3}}), (MAP {'3': {'i': 11, 'j': 21, 'k': 10}}), (MAP {'4': {'i': 100, 'j': 200, 'k': 1000}})
+
+query I
+FROM ducklake.test
+----
+{1={'i': 1, 'j': 2, 'k': NULL}}
+{2={'i': 10, 'j': 20, 'k': 3}}
+{3={'i': 11, 'j': 21, 'k': 10}}
+{4={'i': 100, 'j': 200, 'k': 1000}}
+
+# drop i
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col1.value.I
+
+query I
+FROM ducklake.test
+----
+{1={'j': 2, 'k': NULL}}
+{2={'j': 20, 'k': 3}}
+{3={'j': 21, 'k': 10}}
+{4={'j': 200, 'k': 1000}}
+
+statement ok
+COMMIT
+
+statement error
+ALTER TABLE ducklake.test DROP COLUMN col1.value.i
+----
+does not exist
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN IF EXISTS col1.value.i
+
+statement error
+ALTER TABLE ducklake.test DROP COLUMN col1.val.x
+----
+does not exist
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'5': {'j': 150, 'k': 1000}}), (MAP {'6': {'j': 151, 'k': 1001}})
+
+query I
+FROM ducklake.test
+----
+{1={'j': 2, 'k': NULL}}
+{2={'j': 20, 'k': 3}}
+{3={'j': 21, 'k': 10}}
+{4={'j': 200, 'k': 1000}}
+{5={'j': 150, 'k': 1000}}
+{6={'j': 151, 'k': 1001}}
+
+# conflict in rename
+statement error
+ALTER TABLE ducklake.test RENAME col1.value.J TO K
+----
+already exists
+
+# drop all original columns
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col1.value.j
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'7': {'k': 10000}})
+
+query I
+FROM ducklake.test ORDER BY ALL
+----
+{1={'k': NULL}}
+{2={'k': 3}}
+{3={'k': 10}}
+{4={'k': 1000}}
+{5={'k': 1000}}
+{6={'k': 1001}}
+{7={'k': 10000}}
+
+statement ok
+ALTER TABLE ducklake.test RENAME col1.value.K TO v1
+
+statement error
+ALTER TABLE ducklake.test RENAME col1.value.z TO v2
+----
+does not exist
+
+statement error
+ALTER TABLE ducklake.test RENAME col2.value.v1 TO v2
+----
+does not exist
+
+query I
+FROM ducklake.test ORDER BY ALL
+----
+{1={'v1': NULL}}
+{2={'v1': 3}}
+{3={'v1': 10}}
+{4={'v1': 1000}}
+{5={'v1': 1000}}
+{6={'v1': 1001}}
+{7={'v1': 10000}}

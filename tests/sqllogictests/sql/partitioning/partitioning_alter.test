@@ -1,0 +1,59 @@
+# name: test/sql/partitioning/partitioning_alter.test
+# description: Test partitioning by year/month/day
+# group: [partitioning]
+
+require ducklake
+
+require parquet
+
+# partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_partition_alter', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE partitioned_tbl(id INTEGER, ts TIMESTAMP, values VARCHAR);
+
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (year(ts), month(ts));
+
+statement ok
+INSERT INTO partitioned_tbl SELECT i, TIMESTAMP '2020-01-01' + interval (i) hours, concat('thisisastring_', i) FROM range(5000) t(i)
+
+statement ok
+ALTER TABLE partitioned_tbl DROP COLUMN id
+
+statement ok
+INSERT INTO partitioned_tbl SELECT TIMESTAMP '2020-01-01' + interval (i) hours, concat('thisisastring_', i) FROM range(5000, 10000) t(i)
+
+query IIII
+SELECT year(ts), COUNT(*), MIN(values), MAX(values) FROM partitioned_tbl GROUP BY year(ts)
+----
+2020	8784	thisisastring_0	thisisastring_999
+2021	1216	thisisastring_8784	thisisastring_9999
+
+query II
+SELECT DISTINCT regexp_extract(path, '.*year=([0-9]+)[/\\].*', 1)::INT AS year_part, regexp_extract(path, '.*month=([0-9]+)[/\\].*', 1)::INT AS month_part
+FROM glob('${DATA_PATH}/ducklake_partition_alter/**') t(path) ORDER BY ALL
+----
+2020	1
+2020	2
+2020	3
+2020	4
+2020	5
+2020	6
+2020	7
+2020	8
+2020	9
+2020	10
+2020	11
+2020	12
+2021	1
+2021	2

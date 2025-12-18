@@ -1,0 +1,150 @@
+# name: test/sql/alter/rename_table.test
+# description: Test renaming tables in DuckLake
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_rename_files', METADATA_CATALOG 'ducklake_meta')
+
+# test table renames
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test VALUES (42);
+
+query I
+SELECT * FROM ducklake.test
+----
+42
+
+statement ok
+ALTER TABLE ducklake.test RENAME TO test2
+
+query I
+SELECT * FROM ducklake.test2
+----
+42
+
+# rename a transaction-local table
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.local_test(i VARCHAR);
+
+statement ok
+INSERT INTO ducklake.local_test VALUES (42);
+
+statement ok
+ALTER TABLE ducklake.local_test RENAME TO local_test2
+
+statement ok
+INSERT INTO ducklake.local_test2 VALUES (84);
+
+query I
+SELECT * FROM ducklake.local_test2 ORDER BY ALL
+----
+42
+84
+
+# and I'll do it again!
+statement ok
+ALTER TABLE ducklake.local_test2 RENAME TO local_test3
+
+query I
+SELECT * FROM ducklake.local_test3
+----
+42
+84
+
+statement ok
+COMMIT
+
+query I
+SELECT * FROM ducklake.local_test3
+----
+42
+84
+
+# rename a regular table multiple times in a transaction
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test2 VALUES (1);
+
+statement ok
+ALTER TABLE ducklake.test2 RENAME TO test3
+
+statement ok
+INSERT INTO ducklake.test3 VALUES (2);
+
+statement ok
+ALTER TABLE ducklake.test3 RENAME TO test4
+
+statement ok
+INSERT INTO ducklake.test4 VALUES (3);
+
+statement ok
+ALTER TABLE ducklake.test4 RENAME TO test5
+
+statement ok
+INSERT INTO ducklake.test5 VALUES (4);
+
+statement ok
+COMMIT
+
+statement error
+SELECT * FROM ducklake.test2
+----
+does not exist
+
+statement error
+SELECT * FROM ducklake.test3
+----
+does not exist
+
+statement error
+SELECT * FROM ducklake.test4
+----
+does not exist
+
+query I
+SELECT * FROM ducklake.test5 ORDER BY ALL
+----
+1
+2
+3
+4
+42
+
+# rename followed by drop
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test5 RENAME TO test6
+
+statement ok
+DROP TABLE ducklake.test6
+
+statement error
+SELECT * FROM ducklake.test6
+----
+
+statement ok
+COMMIT
+
+statement error
+ALTER TABLE ducklake.nonexistent_table RENAME TO target
+----
+nonexistent_table

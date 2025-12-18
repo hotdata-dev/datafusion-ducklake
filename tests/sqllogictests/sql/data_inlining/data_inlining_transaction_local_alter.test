@@ -1,0 +1,56 @@
+# name: test/sql/data_inlining/data_inlining_transaction_local_alter.test
+# description: test alter of transaction local data that is inlined
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_local_alter_files', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER, j INTEGER)
+
+# insert -> alter is not supported
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test VALUES (42, 84);
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN k INTEGER
+----
+ALTER on a table with transaction-local inlined data is not supported
+
+statement ok
+ROLLBACK
+
+# alter -> insert works
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN k INTEGER
+
+statement ok
+INSERT INTO ducklake.test VALUES (42, 84, 100);
+
+query III
+FROM ducklake.test
+----
+42	84	100
+
+statement ok
+COMMIT
+
+query III
+FROM ducklake.test
+----
+42	84	100

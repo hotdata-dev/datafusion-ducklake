@@ -1,0 +1,38 @@
+# name: test/sql/add_files/add_files_table_changes.test
+# description: test ducklake adding files with table_changes function
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_files_table_changes');
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER, j INTEGER);
+
+statement ok
+COPY (SELECT 42 j, 84 i) TO '${DATA_PATH}/table_changes.parquet'
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/table_changes.parquet')
+
+query IIIII
+FROM ducklake.table_changes('test', 2, 2)
+----
+2	0	insert	84	42
+
+# now with deletions
+statement ok
+DELETE FROM ducklake.test
+
+query IIIII
+FROM ducklake.table_changes('test', 3, 3)
+----
+3	0	delete	84	42

@@ -1,0 +1,38 @@
+# name: test/sql/virtualcolumns/ducklake_virtual_columns.test
+# description: test ducklake virtual columns
+# group: [virtualcolumns]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_virtual_files')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test VALUES (1), (2), (3);
+
+query I
+SELECT file_row_number FROM ducklake.test
+----
+0
+1
+2
+
+query I
+SELECT file_row_number FROM ducklake.test WHERE file_row_number=1
+----
+1
+
+query I
+SELECT COUNT(DISTINCT filename) FROM ducklake.test WHERE contains(filename, 'ducklake_virtual_files')
+----
+1

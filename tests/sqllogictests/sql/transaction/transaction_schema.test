@@ -1,0 +1,34 @@
+# name: test/sql/transaction/transaction_schema.test
+# description: Test multi-schema support in DuckLake
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+# store multiple DuckLake catalogs in the same metadata store (with different schemas)
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake_1 (DATA_PATH '${DATA_PATH}/ducklake_files_s1', METADATA_SCHEMA 'metadata_s1')
+
+statement ok
+CREATE TABLE ducklake_1.tbl(i INTEGER);
+
+statement ok
+INSERT INTO ducklake_1.tbl VALUES (42);
+
+statement ok
+DETACH ducklake_1
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake_2 (DATA_PATH '${DATA_PATH}/ducklake_files_s2', METADATA_SCHEMA 'metadata_s2')
+
+statement ok
+CREATE TABLE ducklake_2.tbl(s VARCHAR);
+
+statement ok
+INSERT INTO ducklake_2.tbl VALUES ('hello world');

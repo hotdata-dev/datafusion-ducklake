@@ -1,0 +1,44 @@
+# name: test/sql/alter/struct_evolution_reuse.test
+# description: test ducklake struct field evolution re-use
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_struct_evolution_reuse_files', METADATA_CATALOG 'xx')
+
+statement ok
+CREATE TABLE ducklake.test(col1 STRUCT(i INT, j INT));
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'i': 1, 'j': 2})
+
+# drop column i
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(j INT);
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'i': 10, 'j': 20})
+
+query I
+FROM ducklake.test
+----
+{'j': 2}
+{'j': 20}
+
+# re-add column i
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(j INT, i INT);
+
+query I
+FROM ducklake.test
+----
+{'j': 2, 'i': NULL}
+{'j': 20, 'i': NULL}

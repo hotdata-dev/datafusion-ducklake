@@ -1,0 +1,128 @@
+# name: test/sql/compaction/merge_adjacent_global_option.test
+# description: Test global options for the merge adjacent function ducklake_merge_adjacent_files
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/merge_adjacent_global_option')
+
+statement ok
+use ducklake
+
+# Create one Table with two files
+statement ok
+CREATE TABLE example (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO example (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO example (key, value) VALUES ('baz', 'qux');
+
+# Create another Table with two files
+statement ok
+CREATE TABLE example_2 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO example_2 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO example_2 (key, value) VALUES ('baz', 'qux');
+
+# Different schema with another table with two files
+statement ok
+CREATE SCHEMA s1;
+
+statement ok
+CREATE TABLE s1.example (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO s1.example (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CREATE TABLE s1.example_2 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example_2 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO s1.example_2 (key, value) VALUES ('baz', 'qux');
+
+statement ok
+CREATE TABLE s1.example_3 (key VARCHAR, value VARCHAR);
+
+statement ok
+INSERT INTO s1.example_3 (key, value) VALUES ('foo', 'bar');
+
+statement ok
+INSERT INTO s1.example_3 (key, value) VALUES ('baz', 'qux');
+
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+0	1
+1	1
+2	2
+3	2
+4	4
+5	4
+6	5
+7	5
+8	6
+9	6
+
+# We define a table_name but not a schema name so we should be able to merge from example_2
+statement ok
+CALL ducklake.set_option('auto_compact', false , schema => 's1')
+
+statement ok
+CALL ducklake.set_option('auto_compact', false , schema => 'main')
+
+statement ok
+CALL ducklake.set_option('auto_compact', true , schema => 's1', table_name => 'example_2')
+
+statement ok
+CALL ducklake.set_option('auto_compact', true , schema => 'main', table_name => 'example_2')
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+# We can set specific tables to be merged
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+0	1
+1	1
+4	4
+5	4
+8	6
+9	6
+10	2
+11	5
+
+# We can set a whole schema
+statement ok
+CALL ducklake.set_option('auto_compact', true , schema => 's1')
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+query II
+SELECT data_file_id, table_id FROM __ducklake_metadata_ducklake.ducklake_data_file
+----
+0	1
+1	1
+10	2
+11	5
+12	4
+13	6

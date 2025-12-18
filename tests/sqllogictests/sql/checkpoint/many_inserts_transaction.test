@@ -1,0 +1,48 @@
+# name: test/sql/checkpoint/many_inserts_transaction.test
+# description: Test checkpoint with many inserts in one transaction
+# group: [checkpoint]
+
+require ducklake
+
+require parquet
+
+require icu
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/many_inserts_transaction/')
+
+statement ok
+use ducklake
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE integers(i INTEGER);
+
+statement ok
+INSERT INTO integers SELECT 1 FROM range(10);
+
+statement ok
+INSERT INTO integers SELECT 1;
+
+statement ok
+INSERT INTO integers SELECT 2;
+
+statement ok
+INSERT INTO integers SELECT 3;
+
+statement ok
+COMMIT;
+
+statement ok
+CHECKPOINT;
+
+query IIII
+SELECT MIN(i), MAX(i), COUNT(*), COUNT(i) FROM integers;
+----
+1	3	13	13

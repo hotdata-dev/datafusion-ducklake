@@ -1,0 +1,64 @@
+# name: test/sql/compaction/compaction_size_limit.test
+# description: Test Compaction over file size limits
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+require tpch
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/compaction_size_limit/')
+
+statement ok
+CALL dbgen(sf = 0.01);
+
+statement ok
+use ducklake
+
+# This should be enough to fit 3 files
+statement ok
+CALL ducklake.set_option('target_file_size', '5.4MB');
+
+statement ok
+CREATE TABLE test AS (SELECT * FROM memory.main.lineitem WHERE 0=1);
+
+loop i 0 5
+
+# This will generate 1.7 MB files
+statement ok
+INSERT INTO test SELECT * FROM memory.main.lineitem
+
+endloop
+
+# verify number of correct files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/compaction_size_limit/main/test/*')
+----
+5
+
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake')
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# verify we are down to two files now
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/compaction_size_limit/main/test/*')
+----
+2
+
+
+# Verify the data is still correct in size
+query I
+select count(*) FROM test;
+----
+300875

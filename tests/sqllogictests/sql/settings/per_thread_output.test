@@ -1,0 +1,49 @@
+# name: test/sql/settings/per_thread_output.test
+# description: Test per thread output option
+# group: [settings]
+
+require ducklake
+
+require parquet
+
+statement ok
+SET preserve_insertion_order=false;
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/per_thread_data')
+
+statement ok
+CALL ducklake.set_option('per_thread_output', 'true')
+
+# Setup some parquet files to read from
+statement ok
+CREATE TABLE ducklake.tbl_base AS (SELECT i AS col_a FROM range(0,1000000) tbl(i))
+
+# Now create a new files reading from those
+statement ok
+CREATE TABLE ducklake.tbl_actual AS (FROM ducklake.tbl_base)
+
+# Verify that multiple files were created
+query I
+SELECT COUNT(*) > 1 FROM ducklake_list_files('ducklake', 'tbl_actual')
+----
+true
+
+# Now set to off and repeat
+statement ok
+CALL ducklake.set_option('per_thread_output', 'false')
+
+statement ok
+CREATE TABLE ducklake.tbl_no_thread_output AS (FROM ducklake.tbl_base)
+
+# Verify that a single file was created
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'tbl_no_thread_output')
+----
+1
+

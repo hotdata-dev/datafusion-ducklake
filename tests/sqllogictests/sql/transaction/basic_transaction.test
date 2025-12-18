@@ -1,0 +1,85 @@
+# name: test/sql/transaction/basic_transaction.test
+# description: Test basic transaction support of ducklakes
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_tl_files', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+USE ducklake
+
+# table creation
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE test(i INTEGER, j INTEGER);
+
+# we can query the table
+query II
+SELECT * FROM test
+----
+
+query I
+SHOW TABLES
+----
+test
+
+
+statement ok
+ROLLBACK
+
+# after rollback the table no longer exists
+statement error
+SELECT * FROM test
+----
+does not exist
+
+query I
+SHOW TABLES
+----
+
+# create the table again
+statement ok
+CREATE TABLE test(i INTEGER, j INTEGER);
+
+# we can query transaction local data
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO test VALUES (42, 84)
+
+query II
+SELECT * FROM test
+----
+42	84
+
+# the data exists as files in the data directory
+query I
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_tl_files/**/*.parquet')
+----
+1
+
+statement ok
+ROLLBACK
+
+# rolling back deletes the rows from the table
+query II
+SELECT * FROM test
+----
+
+# it also deletes the written files from the data directory
+query I
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_tl_files/**/*.parquet')
+----
+0

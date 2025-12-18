@@ -1,0 +1,86 @@
+# name: test/sql/data_inlining/data_inlining_delete.test
+# description: test ducklake extension
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_delete_files', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.test AS SELECT 1 i, 2 j UNION ALL SELECT NULL, 3 UNION ALL SELECT 10, 20
+
+statement ok
+BEGIN
+
+# we can delete inlined data
+query I
+DELETE FROM ducklake.test WHERE i=1
+----
+1
+
+query II
+SELECT * FROM ducklake.test
+----
+NULL	3
+10	20
+
+statement ok
+COMMIT
+
+query II
+SELECT * FROM ducklake.test
+----
+NULL	3
+10	20
+
+# no files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_delete_files/**')
+----
+0
+
+# delete the other row
+statement ok
+BEGIN
+
+query I
+DELETE FROM ducklake.test WHERE i=10
+----
+1
+
+query II
+SELECT * FROM ducklake.test
+----
+NULL	3
+
+statement ok
+COMMIT
+
+query II
+SELECT * FROM ducklake.test
+----
+NULL	3
+
+# delete all remaining rows in the table
+query I
+DELETE FROM ducklake.test
+----
+1
+
+query II
+SELECT * FROM ducklake.test
+----
+
+# no files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_delete_files/**')
+----
+0

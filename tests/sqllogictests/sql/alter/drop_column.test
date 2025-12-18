@@ -1,0 +1,52 @@
+# name: test/sql/alter/drop_column.test
+# description: test ducklake drop columns
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_drop_col_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 INTEGER, col2 INTEGER, col3 INTEGER);
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col3
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col2
+
+statement error
+ALTER TABLE ducklake.test DROP COLUMN col2
+----
+does not
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN IF EXISTS col2
+
+statement error
+ALTER TABLE ducklake.test DROP COLUMN col1
+----
+only has one column remaining
+
+statement ok
+INSERT INTO ducklake.test VALUES (1), (2), (3);
+
+query I
+FROM ducklake.test
+----
+1
+2
+3
+
+statement error
+ALTER TABLE ducklake.test DROP COLUMN nonexistent_column
+----
+nonexistent_column
