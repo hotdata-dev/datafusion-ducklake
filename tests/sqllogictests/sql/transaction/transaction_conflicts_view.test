@@ -1,0 +1,128 @@
+# name: test/sql/transaction/transaction_conflicts_view.test
+# description: Test transaction conflicts in DuckLake
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_conflicts_view_files')
+
+statement ok
+SET immediate_transaction_mode=true
+
+# two transactions try to create a view with different names: no conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE VIEW ducklake.test2 AS SELECT 42
+
+statement ok con2
+CREATE VIEW ducklake.test3 AS SELECT 84
+
+statement ok con1
+COMMIT
+
+statement ok con2
+COMMIT
+
+# two transactions try to create a view with the same name: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE VIEW ducklake.test AS SELECT 42
+
+statement ok con2
+CREATE VIEW ducklake.test AS SELECT 84
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+Transaction conflict
+
+# two transactions try to create a view and table with the same name: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE TABLE ducklake.t_name AS SELECT 42
+
+statement ok con2
+CREATE VIEW ducklake.t_name AS SELECT 84
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+Transaction conflict
+
+# two transactions try to drop the same view: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+DROP VIEW ducklake.test
+
+statement ok con2
+DROP VIEW ducklake.test
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+statement ok
+CREATE VIEW ducklake.comment_view AS SELECT 42;
+
+# two transactions try to alter the same view: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+COMMENT ON VIEW ducklake.comment_view IS 'con1 comment'
+
+statement ok con2
+COMMENT ON VIEW ducklake.comment_view IS 'con2 comment'
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+another transaction has altered it
+
+query I
+SELECT comment FROM duckdb_views WHERE view_name='comment_view'
+----
+con1 comment

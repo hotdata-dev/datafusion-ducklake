@@ -1,0 +1,115 @@
+# name: test/sql/alter/struct_in_list_evolution.test
+# description: test ducklake struct field evolution in a list
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_struct_in_list_evolution_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 STRUCT(i INT, j INT)[]);
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'i': 1, 'j': 2}])
+
+# add k TINYINT
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(i INT, j INT, k TINYINT)[];
+
+query I
+FROM ducklake.test
+----
+[{'i': 1, 'j': 2, 'k': NULL}]
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'i': 10, 'j': 20, 'k': 3}]), ([{'i': 11, 'j': 21, 'k': 10}])
+
+query I
+FROM ducklake.test
+----
+[{'i': 1, 'j': 2, 'k': NULL}]
+[{'i': 10, 'j': 20, 'k': 3}]
+[{'i': 11, 'j': 21, 'k': 10}]
+
+statement error
+INSERT INTO ducklake.test VALUES ([{'i': 10, 'j': 20, 'k': 1000}])
+----
+out of range
+
+# promote k to INT
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(i INT, j INT, k INTEGER)[];
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'i': 100, 'j': 200, 'k': 1000}])
+
+query I
+FROM ducklake.test
+----
+[{'i': 1, 'j': 2, 'k': NULL}]
+[{'i': 10, 'j': 20, 'k': 3}]
+[{'i': 11, 'j': 21, 'k': 10}]
+[{'i': 100, 'j': 200, 'k': 1000}]
+
+# drop i
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(j INT, k INTEGER)[];
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'j': 150, 'k': 1000}]), ([{'j': 151, 'k': 1001}])
+
+query I
+FROM ducklake.test
+----
+[{'j': 2, 'k': NULL}]
+[{'j': 20, 'k': 3}]
+[{'j': 21, 'k': 10}]
+[{'j': 200, 'k': 1000}]
+[{'j': 150, 'k': 1000}]
+[{'j': 151, 'k': 1001}]
+
+# drop all original columns
+statement ok
+ALTER TABLE ducklake.test ALTER COLUMN col1 SET DATA TYPE STRUCT(k INTEGER)[];
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'k': 10000}])
+
+query I
+FROM ducklake.test ORDER BY ALL
+----
+[{'k': 3}]
+[{'k': 10}]
+[{'k': 1000}]
+[{'k': 1000}]
+[{'k': 1001}]
+[{'k': 10000}]
+[{'k': NULL}]
+
+query I
+SELECT col1[1].k FROM ducklake.test WHERE col1[1].k=1000
+----
+1000
+1000
+
+query I
+SELECT col1[1].k FROM ducklake.test WHERE col1[1].k>3 ORDER BY ALL
+----
+10
+1000
+1000
+1001
+10000
+
+query I
+SELECT col1[1].k FROM ducklake.test WHERE col1[1].k IS NULL
+----
+NULL

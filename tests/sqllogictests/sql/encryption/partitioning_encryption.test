@@ -1,0 +1,37 @@
+# name: test/sql/encryption/partitioning_encryption.test
+# description: Test partitioning with encryption
+# group: [encryption]
+
+require ducklake
+
+require parquet
+
+require httpfs
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_partitioning_encryption', METADATA_CATALOG 'ducklake_metadata', ENCRYPTED)
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE partitioned_tbl(part_key INTEGER, values VARCHAR);
+
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key);
+
+statement ok
+INSERT INTO partitioned_tbl SELECT i%2, concat('thisisastring_', i) FROM range(10000) t(i)
+
+# verify files are partitioned, but the information is not leaked in the filename
+query III
+SELECT data_file_id, partition_id, regexp_extract(path, '.*(part_key=[0-9])/.*', 1) FROM ducklake_metadata.ducklake_data_file
+ORDER BY ALL
+----
+0	2	(empty)
+1	2	(empty)

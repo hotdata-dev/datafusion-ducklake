@@ -1,0 +1,70 @@
+# name: test/sql/remove_orphans/mixed_paths.test
+# group: [remove_orphans]
+
+require ducklake
+
+require parquet
+
+# partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/mixed_paths', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE test (a integer)
+
+statement ok
+insert into test values (1);
+
+statement ok
+CREATE TABLE test_2 (a integer)
+
+statement ok
+insert into test_2 values (1);
+
+# Add orphaned file to both tables and to schema
+statement ok
+COPY test to '${DATA_PATH}/mixed_paths/main/test/bla.parquet';
+
+# Add orphaned file to both tables and to schema
+statement ok
+COPY test to '${DATA_PATH}/mixed_paths/main/test_2/bla.parquet';
+
+# Add orphaned file to both tables and to schema
+statement ok
+COPY test to '${DATA_PATH}/mixed_paths/main/bla.parquet';
+
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, dry_run => true);
+----
+3
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/mixed_paths/main/test/bla.parquet');
+
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, dry_run => true);
+----
+2
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/mixed_paths/main/test_2/bla.parquet');
+
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, dry_run => true);
+----
+1
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test_2', '${DATA_PATH}/mixed_paths/main/bla.parquet');
+
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, dry_run => true);
+----
+0

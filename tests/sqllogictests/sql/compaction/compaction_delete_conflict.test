@@ -1,0 +1,137 @@
+# name: test/sql/compaction/compaction_delete_conflict.test
+# description: Test transaction conflicts with compaction
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_conflicts_compaction_files')
+
+statement ok
+SET immediate_transaction_mode=true
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test VALUES (1);
+
+statement ok
+INSERT INTO ducklake.test VALUES (2);
+
+# try to commit a delete after a compaction: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CALL ducklake_merge_adjacent_files('ducklake');
+
+statement ok con2
+DELETE FROM ducklake.test
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+
+statement ok
+INSERT INTO ducklake.test VALUES (3);
+
+statement ok
+INSERT INTO ducklake.test VALUES (4);
+
+# try to commit a compaction after a deletion: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+DELETE FROM ducklake.test
+
+statement ok con2
+CALL ducklake_merge_adjacent_files('ducklake');
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+
+statement ok
+INSERT INTO ducklake.test VALUES (5);
+
+statement ok
+INSERT INTO ducklake.test VALUES (6);
+
+# two transactions both try to compact: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CALL ducklake_merge_adjacent_files('ducklake');
+
+statement ok con2
+CALL ducklake_merge_adjacent_files('ducklake');
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+
+statement ok
+INSERT INTO ducklake.test VALUES (7);
+
+statement ok
+INSERT INTO ducklake.test VALUES (8);
+
+# compaction and insert: no conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CALL ducklake_merge_adjacent_files('ducklake');
+
+statement ok con2
+INSERT INTO ducklake.test VALUES (9);
+
+statement ok con1
+COMMIT
+
+statement ok con2
+COMMIT
+
+query I
+SELECT * FROM ducklake.test ORDER BY ALL
+----
+5
+6
+7
+8
+9

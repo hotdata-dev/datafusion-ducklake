@@ -1,0 +1,118 @@
+# name: test/sql/list_files/ducklake_list_files.test
+# description: test duckdb_tables with ducklake
+# group: [list_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_list_files');
+
+# snapshot 1
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+# snapshot 2
+statement ok
+INSERT INTO ducklake.test FROM range(100);
+
+# snapshot 3
+statement ok
+INSERT INTO ducklake.test FROM range(100, 200);
+
+# snapshot 4
+statement ok
+INSERT INTO ducklake.test FROM range(200, 300);
+
+# partitions
+# snapshot 5
+statement ok
+CREATE TABLE ducklake.partitioned_tbl(part_key INT, value INT);
+
+# snapshot 6
+statement ok
+ALTER TABLE ducklake.partitioned_tbl SET PARTITIONED BY (part_key);
+
+# snapshot 7
+statement ok
+INSERT INTO ducklake.partitioned_tbl VALUES (1, 50), (2, 100);
+
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test')
+----
+3
+
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'partitioned_tbl')
+----
+2
+
+# schema parameter
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test', schema => 'main')
+----
+3
+
+# query from DuckLake directly, and then query using the file list directly
+query IIII
+SELECT MIN(i), MAX(i), COUNT(*), AVG(i) FROM ducklake.test
+----
+0	299	300	149.5
+
+statement ok
+SET VARIABLE parquet_files = (SELECT LIST(data_file) FROM ducklake_list_files('ducklake', 'test'))
+
+query IIII
+SELECT MIN(i), MAX(i), COUNT(*), AVG(i) FROM read_parquet(getvariable('parquet_files'))
+----
+0	299	300	149.5
+
+# get a file list at a specified version
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test', snapshot_version => 2)
+----
+1
+
+# at a specified timestamp
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test', snapshot_time => NOW())
+----
+3
+
+# no delete files currently
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test') WHERE delete_file IS NOT NULL
+----
+0
+
+# now delete
+statement ok
+DELETE FROM ducklake.test WHERE i%2=0 AND i < 150
+
+# we have two delete files now (we did not delete from the last file)
+query I
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test') WHERE delete_file IS NOT NULL
+----
+2
+
+statement error
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test', schema => 'unknown_schema')
+----
+does not exist
+
+statement error
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'unknown_table', schema => 'main')
+----
+does not exist
+
+# cannot specify both snapshot version and time
+statement error
+SELECT COUNT(*) FROM ducklake_list_files('ducklake', 'test', snapshot_version => 2, snapshot_time => NOW())
+----
+not both

@@ -1,0 +1,93 @@
+# name: test/sql/view/ducklake_rename_view.test
+# description: Test renaming views in DuckLake
+# group: [view]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_rename_view_files')
+
+statement ok
+CREATE VIEW ducklake.v1 AS SELECT 42
+
+statement ok
+ALTER VIEW ducklake.v1 RENAME TO v2
+
+query I
+SELECT * FROM ducklake.v2
+----
+42
+
+# rename in a transaction
+statement ok
+BEGIN
+
+statement ok
+ALTER VIEW ducklake.v2 RENAME TO v3
+
+statement error
+SELECT * FROM ducklake.v2
+----
+does not exist
+
+query I
+SELECT * FROM ducklake.v3
+----
+42
+
+statement ok
+ROLLBACK
+
+query I
+SELECT * FROM ducklake.v2
+----
+42
+
+# rename a transaction-local view
+statement ok
+BEGIN
+
+statement ok
+CREATE VIEW ducklake.local_view AS SELECT 100
+
+statement ok
+ALTER VIEW ducklake.local_view RENAME TO local_view2
+
+statement error
+SELECT * FROM ducklake.local_view
+----
+does not exist
+
+query I
+SELECT * FROM ducklake.local_view2
+----
+100
+
+# and I'll do it again!
+statement ok
+ALTER VIEW ducklake.local_view2 RENAME TO local_view3
+
+query I
+SELECT * FROM ducklake.local_view3
+----
+100
+
+statement ok
+COMMIT
+
+query I
+SELECT * FROM ducklake.local_view3
+----
+100
+
+statement error
+ALTER TABLE ducklake.local_view3 RENAME TO local_view4
+----
+not a table

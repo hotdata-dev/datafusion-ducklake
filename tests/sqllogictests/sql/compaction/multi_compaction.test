@@ -1,0 +1,61 @@
+# name: test/sql/compaction/multi_compaction.test
+# description: test chain of compaction statements
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_multi_compaction_files')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+foreach BASE 0 3
+
+statement ok
+INSERT INTO ducklake.test VALUES (${BASE} + 1);
+
+statement ok
+INSERT INTO ducklake.test VALUES (${BASE} + 2);
+
+statement ok
+INSERT INTO ducklake.test VALUES (${BASE} + 3);
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+endloop
+
+# delete the old files
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# all files have been compacted into one file
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_multi_compaction_files/**/*')
+----
+1
+
+# verify that after multi-compaction time travel still works
+query I
+SELECT * FROM ducklake.test AT (VERSION => 2)
+----
+1
+
+# row-ids/snapshot-ids are kept also across multiple compaction runs
+query III
+SELECT snapshot_id, rowid, * FROM ducklake.test ORDER BY ALL
+----
+2	0	1
+3	1	2
+4	2	3
+6	3	4
+7	4	5
+8	5	6

@@ -1,0 +1,91 @@
+# name: test/sql/compaction/mix_large_small_insertions.test
+# description: test ducklake mix of small and large insertions
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_compaction_mix_files', METADATA_CATALOG 'metadata')
+
+# set target file size very small
+statement ok
+CALL ducklake.set_option('target_file_size', '2KB');
+
+# snapshot 1
+statement ok
+CREATE TABLE ducklake.tbl(id INTEGER, str VARCHAR);
+
+# perform a mix of large and small insertions
+
+# snapshot 2
+statement ok
+INSERT INTO ducklake.tbl VALUES (1, 'hello');
+
+# snapshot 3
+statement ok
+INSERT INTO ducklake.tbl SELECT 100000 + i, concat('thisisastring', i) FROM range(10000) t(i)
+
+# snapshot 4
+statement ok
+INSERT INTO ducklake.tbl VALUES (2, 'world');
+
+# snapshot 5
+statement ok
+INSERT INTO ducklake.tbl VALUES (3, 'and');
+
+# snapshot 6
+statement ok
+INSERT INTO ducklake.tbl SELECT 200000 + i, concat('thisisalsoastring', i) FROM range(10000) t(i)
+
+# snapshot 7
+statement ok
+INSERT INTO ducklake.tbl VALUES (3, 'my');
+
+# snapshot 8
+statement ok
+INSERT INTO ducklake.tbl VALUES (3, 'friends');
+
+query IIII
+SELECT rowid, snapshot_id, * FROM ducklake.tbl WHERE snapshot_id NOT IN (3, 6) ORDER BY ALL
+----
+0	2	1	hello
+10001	4	2	world
+10002	5	3	and
+20003	7	3	my
+20004	8	3	friends
+
+# we should have 7 files now
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_mix_files/**/*.parquet')
+----
+7
+
+# now compact and cleanup
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# now we should have 3 files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_mix_files/**/*.parquet')
+----
+3
+
+# all row-ids and snapshots are still intact
+query IIII
+SELECT rowid, snapshot_id, * FROM ducklake.tbl WHERE snapshot_id NOT IN (3, 6) ORDER BY ALL
+----
+0	2	1	hello
+10001	4	2	world
+10002	5	3	and
+20003	7	3	my
+20004	8	3	friends

@@ -1,0 +1,64 @@
+# name: test/sql/insert/insert_column_list.test
+# description: test ducklake insert column list
+# group: [insert]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_insert_list_files')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER, j VARCHAR);
+
+statement ok
+INSERT INTO ducklake.test (j, i) VALUES ('hello', 84);
+
+query II
+SELECT * FROM ducklake.test
+----
+84	hello
+
+# insert default value
+statement ok
+INSERT INTO ducklake.test (j) VALUES ('world');
+
+statement ok
+INSERT INTO ducklake.test (i) VALUES (100);
+
+query II
+SELECT * FROM ducklake.test
+----
+84	hello
+NULL	world
+100	NULL
+
+statement ok
+INSERT INTO ducklake.test DEFAULT VALUES
+
+query II
+SELECT * FROM ducklake.test
+----
+84	hello
+NULL	world
+100	NULL
+NULL	NULL
+
+statement ok
+INSERT INTO ducklake.test VALUES (1000, DEFAULT), (DEFAULT, 'xxx');
+
+query II
+SELECT * FROM ducklake.test
+----
+84	hello
+NULL	world
+100	NULL
+NULL	NULL
+1000	NULL
+NULL	xxx

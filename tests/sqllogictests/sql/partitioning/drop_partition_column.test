@@ -1,0 +1,54 @@
+# name: test/sql/partitioning/drop_partition_column.test
+# description: Drop partitioning column
+# group: [partitioning]
+
+require ducklake
+
+require parquet
+
+# partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_drop_partition_column')
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE partitioned_tbl(part_key INTEGER, values VARCHAR);
+
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (part_key);
+
+statement ok
+INSERT INTO partitioned_tbl SELECT i%2, concat('thisisastring_', i) FROM range(10000) t(i)
+
+query I
+SELECT COUNT(*) FROM partitioned_tbl WHERE part_key=0
+----
+5000
+
+# cannot drop column on which we are partitioning
+statement error
+ALTER TABLE partitioned_tbl DROP COLUMN part_key
+----
+the table is partitioned by this column
+
+statement ok
+ALTER TABLE partitioned_tbl RESET PARTITIONED BY;
+
+# now we can
+statement ok
+ALTER TABLE partitioned_tbl DROP COLUMN part_key
+
+statement ok
+INSERT INTO partitioned_tbl SELECT concat('thisisastring_', i) FROM range(5000, 10000) t(i)
+
+query II
+SELECT COUNT(*), SUM(STRLEN(values)) FROM partitioned_tbl
+----
+15000	268890

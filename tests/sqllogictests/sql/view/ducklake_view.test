@@ -1,0 +1,79 @@
+# name: test/sql/view/ducklake_view.test
+# description: test ducklake view creation
+# group: [view]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_view_files')
+
+# create a view
+statement ok
+CREATE VIEW ducklake.v1 AS SELECT 42
+
+query I
+SELECT * FROM ducklake.v1
+----
+42
+
+query I
+SELECT sql FROM duckdb_views() WHERE database_name='ducklake'
+----
+CREATE VIEW v1 AS SELECT 42;
+
+# we can drop the view
+statement ok
+DROP VIEW ducklake.v1
+
+# aaaand it's gone
+statement error
+SELECT * FROM ducklake.v1
+----
+does not exist
+
+# transaction-local view drop and re-create
+statement ok
+CREATE VIEW ducklake.v1 AS SELECT 42
+
+statement ok
+BEGIN
+
+statement ok
+DROP VIEW ducklake.v1
+
+statement error
+FROM ducklake.v1
+----
+does not exist
+
+statement ok
+CREATE VIEW ducklake.v1 AS SELECT 84
+
+query I
+FROM ducklake.v1
+----
+84
+
+statement ok
+COMMIT
+
+query I
+FROM ducklake.v1
+----
+84
+
+# view with explicit column aliases
+statement ok
+CREATE VIEW ducklake.aliased_view(a) AS SELECT 42 AS X, 84 as Y
+
+query I
+SELECT a FROM ducklake.aliased_view
+----
+42

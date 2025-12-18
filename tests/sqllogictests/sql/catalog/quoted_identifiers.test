@@ -1,0 +1,28 @@
+# name: test/sql/catalog/quoted_identifiers.test
+# description: Test quoted identifiers in DuckLake
+# group: [catalog]
+
+require ducklake
+
+require parquet
+
+# windows doesn't like these paths
+require notwindows
+
+# SQLite databases do not support creating new schemas
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}''quoted'' "db".db' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake ''quoted'' "path"', METADATA_CATALOG '''quoted'' catalog "name"', METADATA_SCHEMA '''quoted'' catalog "schema"')
+
+statement ok
+CREATE TABLE ducklake."quoted 'table' ""name"""("quoted 'column' ""name""" INTEGER);
+
+query I
+SELECT "quoted 'column' ""name""" FROM ducklake."quoted 'table' ""name"""
+----
+
+statement ok
+DROP TABLE ducklake."quoted 'table' ""name"""

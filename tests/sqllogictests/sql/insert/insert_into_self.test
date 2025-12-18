@@ -1,0 +1,54 @@
+# name: test/sql/insert/insert_into_self.test
+# description: Test ducklake insert into self
+# group: [insert]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_insert_self_files')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER, j VARCHAR);
+
+statement ok
+BEGIN
+
+query I
+INSERT INTO ducklake.test VALUES (1, '2'), (NULL, '3');
+----
+2
+
+query I
+INSERT INTO ducklake.test FROM ducklake.test
+----
+2
+
+query I
+INSERT INTO ducklake.test FROM ducklake.test
+----
+4
+
+query I
+INSERT INTO ducklake.test FROM ducklake.test
+----
+8
+
+query I
+INSERT INTO ducklake.test SELECT a.i, a.j FROM ducklake.test a, ducklake.test b
+----
+256
+
+statement ok
+COMMIT
+
+query III
+SELECT SUM(i), SUM(STRLEN(j)), COUNT(*) FROM ducklake.test
+----
+136	272	272

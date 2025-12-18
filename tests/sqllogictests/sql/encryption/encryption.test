@@ -1,0 +1,77 @@
+# name: test/sql/encryption/encryption.test
+# description: Test ducklake encryption support
+# group: [encryption]
+
+require ducklake
+
+require parquet
+
+require httpfs
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_encryption.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_encryption_files', ENCRYPTED)
+
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.test AS SELECT i id FROM range(1000) t(i);
+
+# we can read them through ducklake
+query II
+SELECT COUNT(*), SUM(id) FROM ducklake.test
+----
+1000	499500
+
+statement ok
+COMMIT
+
+# also after committing
+query II
+SELECT COUNT(*), SUM(id) FROM ducklake.test
+----
+1000	499500
+
+# we cannot read the files using a regular parquet read as they have been encrypted - we need the encryption key
+statement error
+SELECT * FROM '__TEST_DIR__/ducklake_encryption_files/**/*.parquet'
+----
+encrypted
+
+# deletes are also encrypted
+statement ok
+BEGIN
+
+statement ok
+DELETE FROM ducklake.test WHERE id%2=0
+
+query II
+SELECT COUNT(*), SUM(id) FROM ducklake.test
+----
+500	250000
+
+statement ok
+COMMIT
+
+query II
+SELECT COUNT(*), SUM(id) FROM ducklake.test
+----
+500	250000
+
+# similarly we cannot read deletes, as they are encrypted
+statement error
+SELECT * FROM '__TEST_DIR__/ducklake_encryption_files/**/*-del*.parquet'
+----
+encrypted
+
+# restart an encrypted database works
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_encryption.db' AS ducklake
+
+query II
+SELECT COUNT(*), SUM(id) FROM ducklake.test
+----
+500	250000

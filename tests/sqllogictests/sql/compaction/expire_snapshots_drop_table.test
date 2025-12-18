@@ -1,0 +1,78 @@
+# name: test/sql/compaction/expire_snapshots_drop_table.test
+# description: test ducklake expiration of snapshots
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_expire_snapshots_drop_table_files', METADATA_CATALOG 'metadata')
+
+# delete all values in a table
+# snapshot 1
+statement ok
+CREATE TABLE ducklake.test(i INTEGER)
+
+# snapshot 2
+statement ok
+INSERT INTO ducklake.test FROM range(1000)
+
+# snapshot 3
+statement ok
+DELETE FROM ducklake.test WHERE i%4=0
+
+# snapshot 4
+statement ok
+DELETE FROM ducklake.test WHERE i%2=0
+
+# snapshot 5
+statement ok
+DROP TABLE ducklake.test
+
+# we have 3 files now (insert from snapshot 2, delete from snapshot 3, delete from snapshot 4)
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_expire_snapshots_drop_table_files/main/test/*')
+----
+3
+
+# explicitly expire snapshot 3 and cleanup files
+statement ok
+CALL ducklake_expire_snapshots('ducklake', versions => [3])
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# the deletes from snapshot 3 should now be gone
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_expire_snapshots_drop_table_files/main/test/*')
+----
+2
+
+# now expire snapshots 1, 2 and 4 - this should fully remove all traces of the table
+statement ok
+CALL ducklake_expire_snapshots('ducklake', versions => [1, 2, 4])
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# verify that all files are actually gone
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_expire_snapshots_drop_table_files/main/test/*')
+----
+0
+
+# all traces of the table are gone
+foreach tbl ducklake_table ducklake_column ducklake_table_stats ducklake_table_column_stats ducklake_data_file ducklake_delete_file
+
+query I
+SELECT COUNT(*) FROM metadata.${tbl}
+----
+0
+
+endloop

@@ -1,0 +1,112 @@
+# name: test/sql/time_travel/basic_time_travel.test
+# description: test time travel in ducklake
+# group: [time_travel]
+
+require ducklake
+
+require parquet
+
+require icu
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_time_travel_files')
+
+statement ok
+CREATE TABLE ducklake.test(s STRUCT(i INTEGER, j INTEGER));
+
+query I
+SELECT * FROM ducklake.test
+----
+
+statement ok
+INSERT INTO ducklake.test VALUES ({'i': 1, 'j': 2}), ({'i': NULL, 'j': 3}), (NULL);
+
+# non-existent version
+statement error
+SELECT * FROM ducklake.test AT (VERSION => 10)
+----
+No snapshot found at version 10
+
+# table does not exist
+statement error
+SELECT * FROM ducklake.test AT (VERSION => 0)
+----
+does not exist at version 0
+
+query I
+SELECT * FROM ducklake.test AT (VERSION => 1)
+----
+
+query I
+SELECT * FROM ducklake.test AT (VERSION => 2)
+----
+{'i': 1, 'j': 2}
+{'i': NULL, 'j': 3}
+NULL
+
+# timestamp-based query
+query I
+SELECT * FROM ducklake.test AT (TIMESTAMP => NOW())
+----
+{'i': 1, 'j': 2}
+{'i': NULL, 'j': 3}
+NULL
+
+statement ok
+SET VARIABLE snapshot_time = (SELECT snapshot_time FROM ducklake.snapshots() WHERE snapshot_id=1);
+
+query I
+SELECT * FROM ducklake.test AT (TIMESTAMP => getvariable('snapshot_time'))
+----
+
+# read a dropped table
+statement ok
+DROP TABLE ducklake.test
+
+statement error
+SELECT * FROM ducklake.test
+----
+does not exist
+
+query I
+SELECT * FROM ducklake.test AT (VERSION => 2)
+----
+{'i': 1, 'j': 2}
+{'i': NULL, 'j': 3}
+NULL
+
+# get a changeset
+query I rowsort
+SELECT * FROM ducklake.test AT (version => 2) EXCEPT SELECT * FROM ducklake.test AT (version => 1)
+----
+NULL
+{'i': 1, 'j': 2}
+{'i': NULL, 'j': 3}
+
+# time travel with schemas
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok
+CREATE TABLE ducklake.s1.tbl(i INT);
+
+statement ok
+INSERT INTO ducklake.s1.tbl VALUES (42);
+
+statement ok
+DROP SCHEMA ducklake.s1 CASCADE
+
+query I
+SELECT * FROM ducklake.s1.tbl AT (version => 6)
+----
+42
+
+statement error
+SELECT * FROM ducklake.s1.tbl AT (version => 7)
+----
+does not exist

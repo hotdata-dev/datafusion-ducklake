@@ -1,0 +1,35 @@
+# name: test/sql/update/update_same_transaction.test
+# description: Test running updates the same transaction
+# group: [update]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/update_same_transaction', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+BEGIN TRANSACTION;
+
+statement ok
+CREATE TABLE ducklake.test (id INTEGER, name TEXT);
+
+statement ok
+INSERT INTO ducklake.test VALUES (1, 'Bob');
+
+statement ok
+UPDATE ducklake.test SET name = 'Alice' Where id = 1;
+
+statement ok
+COMMIT;
+
+query T
+select name from ducklake.test where id = 1;
+----
+Alice

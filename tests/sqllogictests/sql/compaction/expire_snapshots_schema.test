@@ -1,0 +1,59 @@
+# name: test/sql/compaction/expire_snapshots_schema.test
+# description: test ducklake expiration of snapshots with schema changes
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_expire_snapshots_schema_files', METADATA_CATALOG 'metadata')
+
+# snapshot 1
+statement ok
+CREATE SCHEMA s1;
+
+# snapshot 2
+statement ok
+CREATE VIEW s1.vw AS SELECT 42
+
+# snapshot 3
+statement ok
+CREATE TABLE s1.tbl(i INTEGER)
+
+# snapshot 4
+statement ok
+DROP TABLE s1.tbl
+
+# snapshot 5
+statement ok
+DROP VIEW s1.vw
+
+# snapshot 6
+statement ok
+DROP SCHEMA s1
+
+# expire all snapshots
+statement ok
+CALL ducklake_expire_snapshots('ducklake', versions => [1, 2, 3, 4, 5])
+
+# we have one schema remaining (`main`)
+query I
+SELECT COUNT(*) FROM metadata.ducklake_schema
+----
+1
+
+# all traces of the schema are gone
+foreach tbl ducklake_view ducklake_table ducklake_column ducklake_table_stats ducklake_table_column_stats ducklake_data_file ducklake_delete_file
+
+query I
+SELECT COUNT(*) FROM metadata.${tbl}
+----
+0
+
+endloop

@@ -1,0 +1,61 @@
+# name: test/sql/types/map.test
+# description: test storing map types in ducklake
+# group: [types]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_map_files')
+
+statement ok
+CREATE TABLE ducklake.test(s MAP(VARCHAR, INTEGER));
+
+query I
+SELECT * FROM ducklake.test
+----
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'i': 1, 'j': 2}), (MAP {'j': 3}), (NULL);
+
+query I
+SELECT * FROM ducklake.test
+----
+{i=1, j=2}
+{j=3}
+NULL
+
+query I
+SELECT * FROM ducklake.test WHERE s.i=1
+----
+{i=1, j=2}
+
+query I
+SELECT * FROM ducklake.test WHERE s.i=100
+----
+
+statement ok
+INSERT INTO ducklake.test VALUES (MAP {'i': 4, 'j': 5}), (MAP {'i': 6});
+
+query I
+SELECT * FROM ducklake.test
+----
+{i=1, j=2}
+{j=3}
+NULL
+{i=4, j=5}
+{i=6}
+
+# map stats not supported yet
+mode skip
+
+query I
+SELECT stats(s.i) FROM ducklake.test LIMIT 1
+----
+<REGEX>:.*Min.*1.*Max.*6.*Has Null.*true.*

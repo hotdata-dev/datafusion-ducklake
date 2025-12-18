@@ -1,0 +1,50 @@
+# name: test/sql/alter/rename_column.test
+# description: test ducklake renanming columns
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_rename_col_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 INTEGER, col2 INTEGER);
+
+statement ok
+ALTER TABLE ducklake.test RENAME COLUMN col1 TO new_col1
+
+statement ok
+INSERT INTO ducklake.test VALUES (1, 2), (NULL, 3);
+
+query II
+SELECT new_col1, col2 FROM ducklake.test
+----
+1	2
+NULL	3
+
+statement ok
+ALTER TABLE ducklake.test RENAME COLUMN col2 TO new_col2
+
+query IIIIII
+DESCRIBE ducklake.test
+----
+new_col1	INTEGER	YES	NULL	NULL	NULL
+new_col2	INTEGER	YES	NULL	NULL	NULL
+
+query II
+SELECT new_col1, new_col2 FROM ducklake.test
+----
+1	2
+NULL	3
+
+statement error
+ALTER TABLE ducklake.test RENAME COLUMN blablabla TO k
+----
+column blablabla does not exist

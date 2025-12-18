@@ -1,0 +1,162 @@
+# name: test/sql/rowid/ducklake_row_id.test
+# description: test ducklake row-id tracking
+# group: [rowid]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_rowid_files', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+# empty
+query I
+SELECT rowid FROM ducklake.test
+----
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test SELECT i FROM range(3) t(i)
+
+statement ok
+INSERT INTO ducklake.test SELECT i FROM range(5, 7) t(i)
+
+# transaction local row ids
+query I
+SELECT rowid FROM ducklake.test
+----
+1000000000000000000
+1000000000000000001
+1000000000000000002
+1000000000000000003
+1000000000000000004
+
+query I
+SELECT rowid FROM ducklake.test WHERE rowid=1000000000000000001
+----
+1000000000000000001
+
+statement ok
+COMMIT
+
+statement ok
+INSERT INTO ducklake.test SELECT i FROM range(10, 15) t(i)
+
+query II
+SELECT rowid, i FROM ducklake.test ORDER BY rowid
+----
+0	0
+1	1
+2	2
+3	5
+4	6
+5	10
+6	11
+7	12
+8	13
+9	14
+
+query II
+SELECT rowid, i FROM ducklake.test WHERE rowid=3
+----
+3	5
+
+statement ok
+DELETE FROM ducklake.test WHERE i%2=1
+
+query II
+SELECT rowid, i FROM ducklake.test ORDER BY rowid
+----
+0	0
+2	2
+4	6
+5	10
+7	12
+9	14
+
+query I
+UPDATE ducklake.test SET i=i+1000 WHERE i<3 OR i>10
+----
+4
+
+query II
+SELECT rowid, i FROM ducklake.test ORDER BY rowid
+----
+0	1000
+2	1002
+4	6
+5	10
+7	1012
+9	1014
+
+query II
+SELECT rowid, i FROM ducklake.test WHERE rowid=9
+----
+9	1014
+
+statement ok
+BEGIN
+
+statement ok
+UPDATE ducklake.test SET i=i+2000
+
+query II
+SELECT rowid, i FROM ducklake.test ORDER BY rowid
+----
+0	3000
+2	3002
+4	2006
+5	2010
+7	3012
+9	3014
+
+statement ok
+UPDATE ducklake.test SET i=i+10000 WHERE i<3000 OR i>3006
+
+statement ok
+COMMIT
+
+query II
+SELECT rowid, i FROM ducklake.test ORDER BY rowid
+----
+0	3000
+2	3002
+4	12006
+5	12010
+7	13012
+9	13014
+
+query I
+UPDATE ducklake.test SET i=rowid WHERE rowid=5
+----
+1
+
+query II
+SELECT rowid, i FROM ducklake.test WHERE rowid >= 4 AND rowid < 10 ORDER BY rowid
+----
+4	12006
+5	5
+7	13012
+9	13014
+
+statement ok
+DELETE FROM ducklake.test WHERE rowid=7
+
+query II
+SELECT rowid, i FROM ducklake.test ORDER BY rowid
+----
+0	3000
+2	3002
+4	12006
+5	5
+9	13014

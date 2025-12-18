@@ -1,0 +1,167 @@
+# name: test/sql/stats/filter_pushdown.test
+# description: Test filter pushdown into DuckLake files
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_filter_pushdown_files')
+
+statement ok
+CREATE TABLE ducklake.filter_pushdown(v INTEGER, i INTEGER, d DATE, k DECIMAL(9, 3), s VARCHAR);
+
+# file 1 -
+# i: 0..1000
+# d: 2000-01-01 - 2000-02-11
+# k: 0..100
+# s: 000000...000999
+statement ok
+INSERT INTO ducklake.filter_pushdown
+SELECT i % 1000 v, i, (TIMESTAMP '2000-01-01' + interval (i) hour)::DATE, i / 10, printf('%06d', i)
+FROM range(1000) t(i);
+
+# file 2 -
+# i: 100000..101000
+# d: 2011-05-29 - 2011-07-10
+# k: 10000..10100
+# s: 100000...100999
+statement ok
+INSERT INTO ducklake.filter_pushdown
+SELECT i % 1000 v, i, (TIMESTAMP '2000-01-01' + interval (i) hour)::DATE, i / 10, printf('%06d', i)
+FROM range(100000,101000) t(i);
+
+# file 3 -
+# i: 500000..501000
+# d: 2027-01-15 - 2027-02-25
+# k: 50000..50100
+# s: 500000...500999
+statement ok
+INSERT INTO ducklake.filter_pushdown
+SELECT i % 1000 v, i, (TIMESTAMP '1970-01-01' + interval (i) hour)::DATE, i / 10, printf('%06d', i)
+FROM range(500000,501000) t(i);
+
+# integer filters
+query IIIII
+SELECT * FROM ducklake.filter_pushdown WHERE i=527
+----
+527	527	2000-01-22	52.700	000527
+
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i>100998
+----
+1001
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i>100998
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i>=100999
+----
+1001
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i>=100999
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i<100001
+----
+1001
+
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i<=100000
+----
+1001
+
+# date filter
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE d=DATE '2000-01-23';
+----
+24
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE d=DATE '2000-01-23';
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# decimal filter
+query IIIII
+SELECT * FROM ducklake.filter_pushdown WHERE k=25.3;
+----
+253	253	2000-01-11	25.300	000253
+
+query II
+EXPLAIN ANALYZE SELECT * FROM ducklake.filter_pushdown WHERE k=25.3;
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# varchar filter
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE s>= '500023';
+----
+977
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE s>= '500023';
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# multiple filters
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE d >= DATE '2011-05-29' AND k < 50000;
+----
+1000
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE d >= DATE '2011-05-29' AND k < 50000;
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# OR filters
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i=527 OR i=100527;
+----
+2
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i=527 OR i=100527;
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i in (500, 600, 700);
+----
+3
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i IN (500, 600, 700);
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# file 4 -
+# Single row so it should be able to be pruned with != filter
+statement ok
+INSERT INTO ducklake.filter_pushdown
+SELECT i % 1000 v, i, (TIMESTAMP '1970-01-01' + interval (i) hour)::DATE, i / 10, printf('%06d', i)
+FROM range(501000, 501001) t(i);
+
+# != (not equal) pushdown - should prune file with constant value
+query I
+SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i != 501000;
+----
+3000
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM ducklake.filter_pushdown WHERE i != 501000;
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 3.*

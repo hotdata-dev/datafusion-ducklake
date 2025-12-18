@@ -1,0 +1,119 @@
+# name: test/sql/stats/global_stats.test
+# description: Test global stats
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_global_stats', METADATA_CATALOG 'ducklake_meta')
+
+# test tracking of stats
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+INSERT INTO ducklake.test VALUES (42);
+
+query I
+SELECT stats(i) FROM ducklake.test LIMIT 1
+----
+<REGEX>:.*Min.*42.*Max.*42.*Has Null.*false.*
+
+statement ok
+INSERT INTO ducklake.test VALUES (84)
+
+query I
+SELECT stats(i) FROM ducklake.test LIMIT 1
+----
+<REGEX>:.*Min.*42.*Max.*84.*Has Null.*false.*
+
+statement ok
+INSERT INTO ducklake.test VALUES (NULL)
+
+query I
+SELECT stats(i) FROM ducklake.test LIMIT 1
+----
+<REGEX>:.*Min.*42.*Max.*84.*Has Null.*true.*
+
+# dates/timestamps
+statement ok
+CREATE TABLE ducklake.dates(d DATE);
+
+statement ok
+INSERT INTO ducklake.dates VALUES (date '1992-01-01');
+
+query I
+SELECT stats(d) FROM ducklake.dates LIMIT 1
+----
+<REGEX>:.*Min.*1992-01-01.*Max.*1992-01-01.*Has Null.*false.*
+
+statement ok
+INSERT INTO ducklake.dates VALUES (date '2000-02-03');
+
+query I
+SELECT stats(d) FROM ducklake.dates LIMIT 1
+----
+<REGEX>:.*Min.*1992-01-01.*Max.*2000-02-03.*Has Null.*false.*
+
+# strings
+statement ok
+CREATE TABLE ducklake.strings(s VARCHAR);
+
+statement ok
+INSERT INTO ducklake.strings VALUES ('hello world');
+
+query I
+SELECT stats(s) FROM ducklake.strings LIMIT 1
+----
+<REGEX>:.*Min.*hello wo.*Max.*hello wo.*Has Null.*false.*
+
+statement ok
+INSERT INTO ducklake.strings VALUES ('bye bye world');
+
+query I
+SELECT stats(s) FROM ducklake.strings LIMIT 1
+----
+<REGEX>:.*Min.*bye bye.*Max.*hello wo.*Has Null.*false.*
+
+# multiple inserts within the same transaction
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test VALUES (85);
+
+statement ok
+INSERT INTO ducklake.test VALUES (86);
+
+statement ok
+INSERT INTO ducklake.test VALUES (87);
+
+statement ok
+COMMIT
+
+query I
+SELECT stats(i) FROM ducklake.test LIMIT 1
+----
+<REGEX>:.*Min.*42.*Max.*87.*Has Null.*true.*
+
+# test stats with transaction-local changes
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test VALUES (100);
+
+query I
+SELECT * FROM ducklake.test WHERE i=100
+----
+100
+
+statement ok
+ROLLBACK

@@ -1,0 +1,111 @@
+# name: test/sql/data_inlining/data_inlining_flush_schema.test
+# description: test flushing inlined data to disk with the schema/table parameters
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_flush_schema_data', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok
+CREATE SCHEMA ducklake.s2
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+CREATE TABLE ducklake.s1.test(j VARCHAR);
+
+statement ok
+CREATE TABLE ducklake.s1.test2(d DATE);
+
+statement ok
+CREATE TABLE ducklake.s2.test(i VARCHAR, j INT);
+
+statement ok
+INSERT INTO ducklake.test VALUES (42);
+
+statement ok
+INSERT INTO ducklake.s1.test VALUES ('hello world')
+
+statement ok
+INSERT INTO ducklake.s1.test2 VALUES (DATE '1992-01-01')
+
+statement ok
+INSERT INTO ducklake.s2.test VALUES (42, 84)
+
+# all data is inlined
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_flush_schema_data/**')
+----
+0
+
+# flush the "test" table in the main schema
+statement ok
+CALL ducklake_flush_inlined_data('ducklake', table_name => 'test')
+
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_flush_schema_data/**')
+----
+1
+
+# flush the full "s1" schema
+statement ok
+CALL ducklake_flush_inlined_data('ducklake', schema_name => 's1')
+
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_flush_schema_data/**')
+----
+3
+
+# flush a single table in a specific schema
+statement ok
+CALL ducklake_flush_inlined_data('ducklake', schema_name => 's2', table_name => 'test')
+
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_flush_schema_data/**')
+----
+4
+
+# verify all data is in its place
+
+query I
+FROM ducklake.test
+----
+42
+
+query I
+FROM ducklake.s1.test
+----
+hello world
+
+query I
+FROM ducklake.s1.test2
+----
+1992-01-01
+
+query II
+FROM ducklake.s2.test
+----
+42	84
+
+# flush non-existent tables/schemas
+statement error
+CALL ducklake_flush_inlined_data('ducklake', table_name => 'non_existent_table')
+----
+does not exist
+
+statement error
+CALL ducklake_flush_inlined_data('ducklake', schema_name => 'non_existent_schema')
+----
+not found

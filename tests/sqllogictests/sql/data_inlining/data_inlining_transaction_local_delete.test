@@ -1,0 +1,110 @@
+# name: test/sql/data_inlining/data_inlining_transaction_local_delete.test
+# description: test ducklake extension
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_delete_local_files', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER, j INTEGER)
+
+# delete data from transaction-local inlined insertions
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test VALUES (42, 84), (100, 200), (200, 300), (300, 400), (400, 500);
+
+query II
+SELECT * FROM ducklake.test
+----
+42	84
+100	200
+200	300
+300	400
+400	500
+
+query I
+DELETE FROM ducklake.test WHERE i=100
+----
+1
+
+query II
+SELECT * FROM ducklake.test
+----
+42	84
+200	300
+300	400
+400	500
+
+statement ok
+COMMIT
+
+query II
+SELECT * FROM ducklake.test
+----
+42	84
+200	300
+300	400
+400	500
+
+statement ok
+DROP TABLE ducklake.test
+
+# multiple deletes in the same transaction from a fresh table
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.test AS FROM (VALUES (42, 84), (200, 300), (300, 400), (400, 500)) t(i, j)
+
+query I
+DELETE FROM ducklake.test WHERE i=300;
+----
+1
+
+query II
+SELECT * FROM ducklake.test
+----
+42	84
+200	300
+400	500
+
+query I
+DELETE FROM ducklake.test WHERE i=200;
+----
+1
+
+query II
+SELECT * FROM ducklake.test
+----
+42	84
+400	500
+
+query II
+SELECT * FROM ducklake.test WHERE i=400
+----
+400	500
+
+statement ok
+COMMIT
+
+query II
+SELECT * FROM ducklake.test
+----
+42	84
+400	500
+
+query II
+SELECT * FROM ducklake.test WHERE i=400
+----
+400	500

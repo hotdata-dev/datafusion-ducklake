@@ -1,0 +1,151 @@
+# name: test/sql/compaction/compaction_partitioned_non_adjacent.test
+# description: test compaction of partitioned tables
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_partitioned_compact_non_adjacent_files', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+CREATE TABLE ducklake.partitioned(part_key INTEGER, value INTEGER);
+
+statement ok
+ALTER TABLE ducklake.partitioned SET PARTITIONED BY (part_key);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (1, 10);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (2, 100);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (1, 20);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (2, 200);
+
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_non_adjacent_files/**/*.parquet')
+----
+4
+
+query IIII
+SELECT snapshot_id, rowid, * FROM ducklake.partitioned ORDER BY ALL
+----
+3	0	1	10
+4	1	2	100
+5	2	1	20
+6	3	2	200
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+# we gain two files here
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_non_adjacent_files/**/*.parquet')
+----
+6
+
+# cleanup
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# two files left
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_non_adjacent_files/**/*.parquet')
+----
+2
+
+# verify we have written partition info correctly
+query II
+SELECT partition_id, partition_value
+FROM ducklake_metadata.ducklake_data_file
+JOIN ducklake_metadata.ducklake_file_partition_value USING (data_file_id)
+ORDER BY ALL
+----
+2	1
+2	2
+
+query II
+SELECT * FROM ducklake.partitioned AT (VERSION => 3)
+----
+1	10
+
+query II rowsort
+SELECT * FROM ducklake.partitioned AT (VERSION => 4)
+----
+1	10
+2	100
+
+query IIII
+SELECT snapshot_id, rowid, * FROM ducklake.partitioned ORDER BY ALL
+----
+3	0	1	10
+4	1	2	100
+5	2	1	20
+6	3	2	200
+
+# insert and compact again
+statement ok
+INSERT INTO ducklake.partitioned VALUES (1, 30);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (2, 300);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (1, 40);
+
+statement ok
+INSERT INTO ducklake.partitioned VALUES (2, 400);
+
+query IIII
+SELECT snapshot_id, rowid, * FROM ducklake.partitioned ORDER BY ALL
+----
+3	0	1	10
+4	1	2	100
+5	2	1	20
+6	3	2	200
+8	4	1	30
+9	5	2	300
+10	6	1	40
+11	7	2	400
+
+# we're back up to 6 files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_non_adjacent_files/**/*.parquet')
+----
+6
+
+# compact + cleanup
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+# cleanup
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# back down to 2 files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_partitioned_compact_non_adjacent_files/**/*.parquet')
+----
+2
+
+query IIII
+SELECT snapshot_id, rowid, * FROM ducklake.partitioned ORDER BY ALL
+----
+3	0	1	10
+4	1	2	100
+5	2	1	20
+6	3	2	200
+8	4	1	30
+9	5	2	300
+10	6	1	40
+11	7	2	400

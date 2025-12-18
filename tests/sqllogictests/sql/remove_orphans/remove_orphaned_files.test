@@ -1,0 +1,89 @@
+# name: test/sql/remove_orphans/remove_orphaned_files.test
+# description: Test the removal of orphaned files
+# group: [remove_orphans]
+
+require ducklake
+
+require parquet
+
+require icu
+
+# partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/remove_orphaned_files', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE test (a integer)
+
+statement ok
+insert into test values (1);
+
+statement ok
+insert into test values (2);
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+# Add orphaned file
+statement ok
+COPY test to '${DATA_PATH}/remove_orphaned_files/main/test/bla.parquet';
+
+# We should have 3 files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/remove_orphaned_files/main/test/*')
+----
+4
+
+statement ok
+CALL ducklake.set_option('delete_older_than', '1 week')
+
+# Check preference of manually set option
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, dry_run => true);
+----
+1
+
+
+statement ok
+CALL ducklake.set_option('delete_older_than', '1 millisecond')
+
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', dry_run => true);
+----
+1
+
+# Test invalid
+statement error
+CALL ducklake.set_option('delete_older_than', 'pedro')
+----
+delete_older_than is not a valid interval value.
+
+statement ok
+CALL ducklake.set_option('delete_older_than', '')
+
+query I
+SELECT ends_with(path,'bla.parquet') FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, dry_run => true);
+----
+True
+
+# Check older_than filter
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', older_than => NOW() - INTERVAL '1 week', dry_run => true);
+----
+0
+
+statement ok
+CALL ducklake_delete_orphaned_files('ducklake', cleanup_all => true);
+
+# Check file is removed
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, dry_run => true);
+----
+0

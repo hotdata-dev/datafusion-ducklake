@@ -1,0 +1,48 @@
+# name: test/sql/types/json.test
+# description: test storing json in ducklake
+# group: [types]
+
+require ducklake
+
+require parquet
+
+require json
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_json.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_json_files')
+
+statement ok
+CREATE TABLE ducklake.test(l JSON);
+
+query I
+SELECT * FROM ducklake.test
+----
+
+statement ok
+INSERT INTO ducklake.test VALUES ('{"key": "value"}');
+
+query I
+SELECT * FROM ducklake.test
+----
+{"key": "value"}
+
+query I
+SELECT typeof(l) FROM ducklake.test
+----
+JSON
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/ducklake_json.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_json_files')
+
+query I
+SELECT * FROM ducklake.test
+----
+{"key": "value"}
+
+query I
+SELECT typeof(l) FROM ducklake.test
+----
+JSON

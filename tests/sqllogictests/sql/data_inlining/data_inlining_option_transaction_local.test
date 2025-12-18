@@ -1,0 +1,69 @@
+# name: test/sql/data_inlining/data_inlining_option_transaction_local.test
+# description: test setting data inlining as an option when we have transaction local changes
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_setting_tl_files', METADATA_CATALOG 'ducklake_metadata')
+
+# transaction local ctable
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+
+statement ok
+INSERT INTO ducklake.test VALUES (42);
+
+statement ok
+COMMIT
+
+query I
+SELECT * FROM ducklake.test
+----
+42
+
+# disable inlining again
+statement ok
+CALL ducklake.set_option('data_inlining_row_limit', 0);
+
+# now perform a transaction local alter
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN j INTEGER
+
+statement ok
+CALL ducklake.set_option('data_inlining_row_limit', 10);
+
+statement ok
+INSERT INTO ducklake.test VALUES (1, 2), (NULL, 3);
+
+statement ok
+COMMIT
+
+query II
+SELECT * FROM ducklake.test
+----
+42	NULL
+1	2
+NULL	3
+
+# all data is inlined - so we have no files
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_setting_files/**')
+----
+0

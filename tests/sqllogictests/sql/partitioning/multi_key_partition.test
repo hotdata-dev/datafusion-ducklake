@@ -1,0 +1,61 @@
+# name: test/sql/partitioning/multi_key_partition.test
+# description: Test multi-key partitioning
+# group: [partitioning]
+
+require ducklake
+
+require parquet
+
+# partitioning based on a column
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_mk_partitioning', METADATA_CATALOG 'ducklake_metadata')
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE partitioned_tbl(a INTEGER, b INTEGER, c INTEGER, values VARCHAR);
+
+statement ok
+ALTER TABLE partitioned_tbl SET PARTITIONED BY (a,b,c);
+
+statement ok
+INSERT INTO partitioned_tbl VALUES (10, 100, 1000, 'data 1'), (20,200,2000, 'data 2')
+
+query IIIII
+SELECT data_file_id, partition_id, regexp_extract(path, '.*(a=[0-9]+)[/\\].*', 1), regexp_extract(path, '.*(b=[0-9]+)[/\\].*', 1), regexp_extract(path, '.*(c=[0-9]+)[/\\].*', 1) FROM ducklake_metadata.ducklake_data_file
+ORDER BY ALL
+----
+0	2	a=10	b=100	c=1000
+1	2	a=20	b=200	c=2000
+
+# verify files are pruned when querying the partitions
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM partitioned_tbl WHERE a=10
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM partitioned_tbl WHERE b=100
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+query II
+EXPLAIN ANALYZE SELECT COUNT(*) FROM partitioned_tbl WHERE c=1000
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+query IIII
+SELECT * FROM ducklake_metadata.ducklake_file_partition_value ORDER BY ALL
+----
+0	1	0	10
+0	1	1	100
+0	1	2	1000
+1	1	0	20
+1	1	1	200
+1	1	2	2000

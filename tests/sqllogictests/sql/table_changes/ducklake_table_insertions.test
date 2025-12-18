@@ -1,0 +1,95 @@
+# name: test/sql/table_changes/ducklake_table_insertions.test
+# description: test ducklake_table_insertions function
+# group: [table_changes]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_table_insertions_files');
+
+# snapshot 1
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+# snapshot 2
+statement ok
+INSERT INTO ducklake.test VALUES (1);
+
+# snapshot 3
+statement ok
+INSERT INTO ducklake.test VALUES (2);
+
+# snapshot 4
+statement ok
+INSERT INTO ducklake.test VALUES (3);
+
+# snapshot 5
+statement ok
+INSERT INTO ducklake.test VALUES (NULL);
+
+# snapshot 6
+statement ok
+INSERT INTO ducklake.test FROM range(10, 12);
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 2);
+----
+0	1
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 3);
+----
+0	1
+1	2
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 4);
+----
+0	1
+1	2
+2	3
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 4, 5);
+----
+2	3
+3	NULL
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 5, 5);
+----
+3	NULL
+
+# snapshot 7: update a subset of the rows
+statement ok
+UPDATE ducklake.test SET i=i+100 WHERE i < 11;
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 7, 7) ORDER BY rowid
+----
+0	101
+1	102
+2	103
+4	110
+
+# the change feed has both the original rows and the updated rows
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 7) ORDER BY ALL
+----
+0	1
+0	101
+1	2
+1	102
+2	3
+2	103
+3	NULL
+4	10
+4	110
+5	11

@@ -1,0 +1,51 @@
+# name: test/sql/geo/ducklake_geometry_add_files.test
+# group: [geo]
+
+require ducklake
+
+require parquet
+
+require spatial
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (
+	DATA_PATH '${DATA_PATH}/ducklake_files',
+	METADATA_CATALOG 'ducklake_meta'
+)
+
+# Copy over a test parquet file with geometry column
+statement ok
+COPY (select st_point(5, 5) as g) TO '${DATA_PATH}/points_geoparquet.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (select st_point(5, 5) as g) TO '${DATA_PATH}/points.parquet' (FORMAT PARQUET, GEOPARQUET_VERSION NONE);
+
+statement ok
+USE ducklake;
+
+statement ok
+create table t1 (g GEOMETRY);
+
+# Now add the file
+statement ok
+CALL ducklake_add_data_files('ducklake', 't1', '${DATA_PATH}/points.parquet');
+
+statement error
+CALL ducklake_add_data_files('ducklake', 't1', '${DATA_PATH}/points_geoparquet.parquet');
+----
+* Expected type "GEOMETRY" but found type "BLOB". Is this a GeoParquet v1.*.* file? DuckLake only supports GEOMETRY types stored in native Parquet(V3) format, not GeoParquet(v1.*.*)
+
+
+query I
+select * from t1;
+----
+POINT (5 5)
+
+query I
+select extra_stats from ducklake_meta.ducklake_file_column_stats order by all;
+----
+{"bbox": {"xmin": 5.000000, "xmax": 5.000000, "ymin": 5.000000, "ymax": 5.000000, "zmin": null, "zmax": null, "mmin": null, "mmax": null}, "types": ["point"]}

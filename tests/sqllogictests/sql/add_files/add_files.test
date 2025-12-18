@@ -1,0 +1,184 @@
+# name: test/sql/add_files/add_files.test
+# description: test ducklake adding files directly
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_add_files/', METADATA_CATALOG 'metadata');
+
+statement ok
+CREATE TABLE ducklake.test(col1 INTEGER, col2 VARCHAR);
+
+statement ok
+INSERT INTO ducklake.test VALUES (100, 'hello');
+
+# write a parquet file outside of DuckLake
+statement ok
+COPY (SELECT 200 col1, 'world' col2) TO '${DATA_PATH}/ducklake_add_files/main/test/my_file.parquet';
+
+statement ok
+BEGIN
+
+# make its existence known to DuckLake
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/ducklake_add_files/main/test/my_file.parquet')
+
+query II
+FROM ducklake.test
+----
+100	hello
+200	world
+
+statement ok
+COMMIT
+
+query II rowsort
+FROM ducklake.test
+----
+100	hello
+200	world
+
+# reverse the order
+statement ok
+COPY (SELECT 'abcd' col2, 300 col1) TO '${DATA_PATH}/ducklake_add_files/main/test/my_file2.parquet';
+
+statement ok
+BEGIN
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/ducklake_add_files/main/test/my_file2.parquet')
+
+query II
+FROM ducklake.test
+----
+100	hello
+200	world
+300	abcd
+
+statement ok
+COMMIT
+
+query II
+FROM ducklake.test
+----
+100	hello
+200	world
+300	abcd
+
+# ensure the column mappings are duplicate-eliminated
+query I
+SELECT COUNT(*) FROM metadata.ducklake_column_mapping
+----
+1
+
+# let's alter the table
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN col3 TINYINT
+
+# we can still query from the existing files
+query III
+FROM ducklake.test
+----
+100	hello	NULL
+200	world	NULL
+300	abcd	NULL
+
+# we can add a new file
+statement ok
+COPY (SELECT 'efgh' col2, 400 col1, 50::TINYINT col3) TO '${DATA_PATH}/ducklake_add_files/main/test/my_file3.parquet';
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/ducklake_add_files/main/test/my_file3.parquet')
+
+query III
+FROM ducklake.test
+----
+100	hello	NULL
+200	world	NULL
+300	abcd	NULL
+400	efgh	50
+
+# we now have two name mappings
+query I
+SELECT COUNT(*) FROM metadata.ducklake_column_mapping
+----
+2
+
+# drop a column
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col2
+
+query II
+FROM ducklake.test
+----
+100	NULL
+200	NULL
+300	NULL
+400	50
+
+# schema-level time travel works, also on files we added here
+query III
+FROM ducklake.test AT (VERSION => 6)
+----
+100	hello	NULL
+200	world	NULL
+300	abcd	NULL
+400	efgh	50
+
+# we can re-add the column and write a new file
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN col2 VARCHAR
+
+statement ok
+COPY (SELECT 'ijkl' col2, 500 col1, 100::TINYINT col3) TO '${DATA_PATH}/ducklake_add_files/main/test/my_file4.parquet';
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/ducklake_add_files/main/test/my_file4.parquet')
+
+# col2 is NULL for the old columns, even though they have a column called col2
+query III
+SELECT col1, col2, col3 FROM ducklake.test
+----
+100	NULL	NULL
+200	NULL	NULL
+300	NULL	NULL
+400	NULL	50
+500	ijkl	100
+
+statement ok
+COMMIT
+
+query III
+SELECT col1, col2, col3 FROM ducklake.test
+----
+100	NULL	NULL
+200	NULL	NULL
+300	NULL	NULL
+400	NULL	50
+500	ijkl	100
+
+# time travel still works
+query III
+FROM ducklake.test AT (VERSION => 6)
+----
+100	hello	NULL
+200	world	NULL
+300	abcd	NULL
+400	efgh	50
+
+# file does not exist
+statement error
+CALL ducklake_add_data_files('ducklake', 'test', '${DATA_PATH}/abcd.parquet')
+----
+Failed to add data files

@@ -1,0 +1,123 @@
+# name: test/sql/transaction/transaction_conflicts_delete.test
+# description: Test transaction conflicts in DuckLake
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_conflicts_deletes_files')
+
+statement ok
+SET immediate_transaction_mode=true
+
+statement ok
+CREATE TABLE ducklake.test AS FROM range(1000) t(i)
+
+# two transactions try to delete the same data: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+query I con1
+DELETE FROM ducklake.test WHERE i<200
+----
+200
+
+query I con2
+DELETE FROM ducklake.test WHERE i<100
+----
+100
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+conflict
+
+# two transactions try to delete all data of the same table: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+query I con1
+DELETE FROM ducklake.test
+----
+800
+
+query I con2
+DELETE FROM ducklake.test
+----
+800
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+
+statement ok
+INSERT INTO ducklake.test FROM range(1000)
+
+# transaction tries to delete from a table that was dropped
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+query I con1
+DROP TABLE ducklake.test
+
+query I con2
+DELETE FROM ducklake.test
+----
+1000
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+another transaction has dropped it
+
+statement ok
+CREATE TABLE ducklake.test AS FROM range(1000) t(i)
+
+# transaction tries to delete from a table that was altered
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+query I con1
+ALTER TABLE ducklake.test ADD COLUMN j INTEGER
+
+query I con2
+DELETE FROM ducklake.test
+----
+1000
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+another transaction has altered it

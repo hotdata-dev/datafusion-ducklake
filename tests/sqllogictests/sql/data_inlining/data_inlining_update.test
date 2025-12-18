@@ -1,0 +1,75 @@
+# name: test/sql/data_inlining/data_inlining_update.test
+# description: test ducklake updating
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_update_files', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.test AS SELECT 1 i, 2 j UNION ALL SELECT NULL, 3 UNION ALL SELECT 10, 20
+
+statement ok
+BEGIN
+
+# we can update inlined data
+query I
+UPDATE ducklake.test SET i=i+100 WHERE i=1
+----
+1
+
+query IIII
+SELECT rowid, snapshot_id, * FROM ducklake.test ORDER BY rowid
+----
+0	NULL	101	2
+1	1	NULL	3
+2	1	10	20
+
+statement ok
+COMMIT
+
+query I
+SELECT stats(i) FROM ducklake.test LIMIT 1
+----
+[Min: 1, Max: 101][Has Null: true, Has No Null: true]
+
+query IIII
+SELECT rowid, snapshot_id, * FROM ducklake.test ORDER BY rowid
+----
+0	2	101	2
+1	1	NULL	3
+2	1	10	20
+
+# update the other row
+statement ok
+BEGIN
+
+query I
+UPDATE ducklake.test SET i=i+1000 WHERE i=10
+----
+1
+
+query IIII
+SELECT rowid, snapshot_id, * FROM ducklake.test ORDER BY rowid
+----
+0	2	101	2
+1	1	NULL	3
+2	NULL	1010	20
+
+statement ok
+COMMIT
+
+query IIII
+SELECT rowid, snapshot_id, * FROM ducklake.test ORDER BY rowid
+----
+0	2	101	2
+1	1	NULL	3
+2	3	1010	20

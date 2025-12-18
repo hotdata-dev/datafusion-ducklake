@@ -1,0 +1,302 @@
+# name: test/sql/transaction/transaction_conflicts.test
+# description: Test transaction conflicts in DuckLake
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_conflicts_files', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+SET immediate_transaction_mode=true
+
+# two transactions try to create a table with different names: no conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE TABLE ducklake.test2(i INTEGER);
+
+statement ok con2
+CREATE TABLE ducklake.test3(s VARCHAR);
+
+statement ok con1
+COMMIT
+
+statement ok con2
+COMMIT
+
+# two transactions try to create a table with the same name: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok con2
+CREATE TABLE ducklake.test(s VARCHAR);
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+Transaction conflict
+
+# two transactions try to insert into the same table: no conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+INSERT INTO ducklake.test VALUES (1);
+
+statement ok con2
+INSERT INTO ducklake.test VALUES (100);
+
+statement ok con1
+COMMIT
+
+statement ok con2
+COMMIT
+
+# two transactions try to drop the same table: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+DROP TABLE ducklake.test
+
+statement ok con2
+DROP TABLE ducklake.test
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+
+# two transactions try to create a schema with the same name: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE SCHEMA ducklake.s1
+
+statement ok con2
+CREATE SCHEMA ducklake.s1
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+Transaction conflict
+
+statement ok
+CREATE SCHEMA ducklake.s2
+
+# two transactions try to create a table with the same name in a different schema: no conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE TABLE ducklake.s1.same_name_tbl(i INTEGER);
+
+statement ok con2
+CREATE TABLE ducklake.s2.same_name_tbl(i INTEGER);
+
+statement ok con1
+COMMIT
+
+statement ok con2
+COMMIT
+
+statement ok
+DROP TABLE ducklake.s1.same_name_tbl
+
+statement ok
+DROP TABLE ducklake.s2.same_name_tbl
+
+# two transactions try to drop the same schema: conflict
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+DROP SCHEMA ducklake.s1
+
+statement ok con2
+DROP SCHEMA ducklake.s1
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+
+# one transaction tries to create a table in a dropped schema: conflict
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+DROP SCHEMA ducklake.s1
+
+statement ok con2
+CREATE TABLE ducklake.s1.tbl(i INT);
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+
+# one transaction tries to insert data in a dropped table: conflict
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+DROP TABLE ducklake.test
+
+statement ok con2
+INSERT INTO ducklake.test VALUES (42);
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+# one transaction tries to drop a schema that another transaction created a table in: conflict
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE TABLE ducklake.s1.test(i INTEGER);
+
+statement ok con2
+DROP SCHEMA ducklake.s1
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+statement ok
+CREATE TABLE ducklake.test(part_key INT, val INT);
+
+# two transaction try to set a partition key on the same table
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+ALTER TABLE ducklake.test SET PARTITIONED BY (part_key);
+
+statement ok con2
+ALTER TABLE ducklake.test SET PARTITIONED BY (val);
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+# try to insert into a table that has had its partition key changed
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+ALTER TABLE ducklake.test SET PARTITIONED BY (val);
+
+statement ok con2
+INSERT INTO ducklake.test VALUES (1, 1)
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+
+# try to set partition key on a dropped table
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+DROP TABLE ducklake.test
+
+statement ok con2
+ALTER TABLE ducklake.test SET PARTITIONED BY (part_key);
+
+statement ok con1
+COMMIT
+
+statement error con2
+COMMIT
+----
+

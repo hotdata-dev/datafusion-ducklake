@@ -1,0 +1,177 @@
+# name: test/sql/alter/struct_evolution_list_alter.test
+# description: test ducklake struct field evolution within a list via alter
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_struct_evolution_alter_list_files')
+
+statement ok
+CREATE TABLE ducklake.test(col1 STRUCT(i INT, j INT)[]);
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'i': 1, 'j': 2}])
+
+# add k INTEGER
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN col1.element.k INTEGER
+
+query I
+FROM ducklake.test
+----
+[{'i': 1, 'j': 2, 'k': NULL}]
+
+statement ok
+COMMIT
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN col1.element.K INT
+----
+already exists
+
+statement ok
+ALTER TABLE ducklake.test ADD COLUMN IF NOT EXISTS col1.element.k INT
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN col1.s INT
+----
+can only be added to structs
+
+statement error
+ALTER TABLE ducklake.test ADD COLUMN col1.el.s INT
+----
+does not exist
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'i': 10, 'j': 20, 'k': 3}]), ([{'i': 11, 'j': 21, 'k': 10}]), ([{'i': 100, 'j': 200, 'k': 1000}])
+
+query I
+FROM ducklake.test
+----
+[{'i': 1, 'j': 2, 'k': NULL}]
+[{'i': 10, 'j': 20, 'k': 3}]
+[{'i': 11, 'j': 21, 'k': 10}]
+[{'i': 100, 'j': 200, 'k': 1000}]
+
+# drop i
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col1.element.I
+
+query I
+FROM ducklake.test
+----
+[{'j': 2, 'k': NULL}]
+[{'j': 20, 'k': 3}]
+[{'j': 21, 'k': 10}]
+[{'j': 200, 'k': 1000}]
+
+statement ok
+COMMIT
+
+statement error
+ALTER TABLE ducklake.test DROP COLUMN col1.element.i
+----
+does not exist
+
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN IF EXISTS col1.element.i
+
+statement error
+ALTER TABLE ducklake.test DROP COLUMN col1.ele.x
+----
+does not exist
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'j': 150, 'k': 1000}]), ([{'j': 151, 'k': 1001}])
+
+query I
+FROM ducklake.test
+----
+[{'j': 2, 'k': NULL}]
+[{'j': 20, 'k': 3}]
+[{'j': 21, 'k': 10}]
+[{'j': 200, 'k': 1000}]
+[{'j': 150, 'k': 1000}]
+[{'j': 151, 'k': 1001}]
+
+# conflict in rename
+statement error
+ALTER TABLE ducklake.test RENAME col1.element.J TO K
+----
+already exists
+
+# drop all original columns
+statement ok
+ALTER TABLE ducklake.test DROP COLUMN col1.element.j
+
+statement ok
+INSERT INTO ducklake.test VALUES ([{'k': 10000}])
+
+query I
+FROM ducklake.test ORDER BY ALL
+----
+[{'k': 3}]
+[{'k': 10}]
+[{'k': 1000}]
+[{'k': 1000}]
+[{'k': 1001}]
+[{'k': 10000}]
+[{'k': NULL}]
+
+statement ok
+ALTER TABLE ducklake.test RENAME col1.element.K TO v1
+
+statement error
+ALTER TABLE ducklake.test RENAME col1.element.z TO v2
+----
+does not exist
+
+statement error
+ALTER TABLE ducklake.test RENAME col2.element.v1 TO v2
+----
+does not exist
+
+query I
+FROM ducklake.test ORDER BY ALL
+----
+[{'v1': 3}]
+[{'v1': 10}]
+[{'v1': 1000}]
+[{'v1': 1000}]
+[{'v1': 1001}]
+[{'v1': 10000}]
+[{'v1': NULL}]
+
+query I
+SELECT col1[1].v1 FROM ducklake.test WHERE col1[1].v1=1000
+----
+1000
+1000
+
+query I
+SELECT col1[1].v1 FROM ducklake.test WHERE col1[1].v1>3 ORDER BY ALL
+----
+10
+1000
+1000
+1001
+10000
+
+query I
+SELECT col1[1].v1 FROM ducklake.test WHERE col1[1].v1 IS NULL
+----
+NULL

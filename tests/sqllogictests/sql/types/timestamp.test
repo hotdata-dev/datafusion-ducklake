@@ -1,0 +1,40 @@
+# name: test/sql/types/timestamp.test
+# description: test ducklake timestamps
+# group: [types]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_ts_files')
+
+statement ok
+CREATE OR REPLACE TABLE ducklake.test(ts TIMESTAMP);
+
+statement ok
+INSERT INTO ducklake.test VALUES (TIMESTAMP '1992-01-01'), (TIMESTAMP '2020-01-01');
+
+statement ok
+INSERT INTO ducklake.test VALUES ('infinity'), (TIMESTAMP '2022-01-01');
+
+# predicate on infinity
+query I
+SELECT COUNT(*) FROM ducklake.test WHERE ts='infinity'
+----
+1
+
+query I
+SELECT COUNT(*) FROM ducklake.test WHERE ts<='infinity'
+----
+4
+
+query I
+SELECT COUNT(*) FROM ducklake.test WHERE ts>'-infinity'
+----
+4

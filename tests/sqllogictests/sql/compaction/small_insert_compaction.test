@@ -1,0 +1,155 @@
+# name: test/sql/compaction/small_insert_compaction.test
+# description: test ducklake compaction of consecutive small inserts
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+statement ok
+SET preserve_insertion_order=false;
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_compaction_files', METADATA_CATALOG 'xx')
+
+# snapshot 1
+statement ok
+CREATE TABLE ducklake.test(i INTEGER);
+
+# snapshot 2
+statement ok
+CREATE TABLE ducklake.test2(i INTEGER);
+
+# snapshot 3
+statement ok
+INSERT INTO ducklake.test VALUES (1);
+
+# snapshot 4: random change that does not modify the "test" table
+statement ok
+INSERT INTO ducklake.test2 VALUES (42);
+
+# snapshot 5
+statement ok
+INSERT INTO ducklake.test VALUES (2);
+
+# snapshot 6
+statement ok
+INSERT INTO ducklake.test VALUES (3);
+
+# snapshot 7
+statement ok
+INSERT INTO ducklake.test VALUES (4);
+
+# snapshot 8
+statement ok
+INSERT INTO ducklake.test VALUES (5);
+
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_files/**/*')
+----
+6
+
+query III
+SELECT snapshot_id, rowid, * FROM ducklake.test ORDER BY ALL
+----
+3	0	1
+5	1	2
+6	2	3
+7	3	4
+8	4	5
+
+statement ok
+CALL ducklake.merge_adjacent_files();
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake');
+
+# files are not immediately deleted - but are added to the deletion queue
+# we actually gain a file here
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_files/**/*')
+----
+7
+
+# force clean-up of the files
+# test dry run - this just lists the files to be cleaned up
+query I
+SELECT COUNT(*) FROM ducklake_cleanup_old_files('ducklake', cleanup_all => true, dry_run => true);
+----
+5
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true);
+
+# no more files to be deleted
+query I
+SELECT COUNT(*) FROM ducklake_cleanup_old_files('ducklake', cleanup_all => true, dry_run => true);
+----
+0
+
+# now the files are gone
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_compaction_files/**/*')
+----
+2
+
+# verify correct behavior when operating on the compacted file
+# time travel
+query I
+SELECT * FROM ducklake.test AT (VERSION => 3)
+----
+1
+
+query I
+SELECT * FROM ducklake.test AT (VERSION => 4)
+----
+1
+
+
+query I
+SELECT * FROM ducklake.test AT (VERSION => 5) ORDER BY ALL
+----
+1
+2
+
+# reading snapshot id and row id
+query III
+SELECT snapshot_id, rowid, * FROM ducklake.test ORDER BY ALL
+----
+3	0	1
+5	1	2
+6	2	3
+7	3	4
+8	4	5
+
+# table insertions function
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 3) ORDER BY ALL
+----
+0	1
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 4) ORDER BY ALL
+----
+0	1
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 6) ORDER BY ALL
+----
+0	1
+1	2
+2	3
+
+query II
+SELECT rowid, * FROM ducklake_table_insertions('ducklake', 'main', 'test', 0, 9) ORDER BY ALL
+----
+0	1
+1	2
+2	3
+3	4
+4	5

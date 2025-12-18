@@ -1,0 +1,28 @@
+# name: test/sql/functions/ducklake_table_info.test
+# group: [functions]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_table_info_files')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER)
+
+statement ok
+INSERT INTO ducklake.test FROM range(1000)
+
+statement ok
+DELETE FROM ducklake.test WHERE i%2=0
+
+query IIIIIII
+SELECT table_name, schema_id, table_id, file_count, file_size_bytes > 0, delete_file_count, delete_file_size_bytes > 0 FROM ducklake.table_info();
+----
+test	0	1	1	true	1	true

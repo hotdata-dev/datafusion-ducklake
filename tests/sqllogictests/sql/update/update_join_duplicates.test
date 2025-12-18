@@ -1,0 +1,61 @@
+# name: test/sql/update/update_join_duplicates.test
+# description: Test ducklake update using a join with duplicates
+# group: [update]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_update_join_files')
+
+statement ok
+CREATE TABLE ducklake.test AS SELECT i id FROM range(5) t(i);
+
+statement ok
+CREATE TEMPORARY TABLE updated_rows AS FROM range(0, 10, 2) t(update_id) UNION ALL FROM range(0, 10, 2);
+
+# duplicate row-id updates are not yet supported
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test FROM range(5, 10)
+
+statement error
+UPDATE ducklake.test SET id=id+1000 FROM updated_rows WHERE id=updated_rows.update_id
+----
+The same row was updated multiple times
+
+statement ok
+ROLLBACK
+
+# we can update through a join if we filter out the duplciate row ids
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.test FROM range(5, 10)
+
+statement ok
+UPDATE ducklake.test SET id=id+1000 FROM (SELECT DISTINCT update_id FROM updated_rows) updated_rows WHERE id=updated_rows.update_id
+
+query III
+SELECT COUNT(*), SUM(id), AVG(id) FROM ducklake.test
+----
+10	5045	504.5
+
+statement ok
+COMMIT
+
+query III
+SELECT COUNT(*), SUM(id), AVG(id) FROM ducklake.test
+----
+10	5045	504.5
+
+

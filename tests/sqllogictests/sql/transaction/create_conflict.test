@@ -1,0 +1,107 @@
+# name: test/sql/transaction/create_conflict.test
+# description: test conflict handling on CREATE
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_conflict_files', METADATA_CATALOG 'ducklake_meta')
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER, j INTEGER);
+
+# default behavior: table already exists (error)
+statement error
+CREATE TABLE ducklake.test(i VARCHAR);
+----
+already exists
+
+# ignore if exists
+statement ok
+CREATE TABLE IF NOT EXISTS ducklake.test(i VARCHAR);
+
+query II
+FROM ducklake.test
+----
+
+# replace table
+statement ok
+CREATE OR REPLACE TABLE ducklake.test(i VARCHAR);
+
+query I
+FROM ducklake.test
+----
+
+# views also conflict with tables
+statement error
+CREATE VIEW ducklake.test AS SELECT 42
+----
+already exists
+
+statement ok
+CREATE VIEW ducklake.v1 AS SELECT 42
+
+# if not exists is ignored
+statement ok
+CREATE VIEW IF NOT EXISTS ducklake.v1 AS SELECT 84
+
+query I
+FROM ducklake.v1
+----
+42
+
+# or replace replaces the view
+statement ok
+CREATE OR REPLACE VIEW ducklake.v1 AS SELECT 84
+
+query I
+FROM ducklake.v1
+----
+84
+
+# tables also conflict with views
+statement error
+CREATE TABLE ducklake.v1(i INT)
+----
+already exists
+
+statement ok
+DROP VIEW ducklake.v1
+
+# transaction-local view conflicts
+# conflict creating a view with the same name
+statement ok
+BEGIN
+
+statement ok
+CREATE VIEW ducklake.v1 AS SELECT 42
+
+statement error
+CREATE VIEW ducklake.v1 AS SELECT 84
+----
+already exists
+
+statement ok
+ROLLBACK
+
+# conflict creating a view with the same name as a table
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.t1 AS SELECT 42
+
+statement error
+CREATE VIEW ducklake.t1 AS SELECT 84
+----
+already exists
+
+statement ok
+ROLLBACK

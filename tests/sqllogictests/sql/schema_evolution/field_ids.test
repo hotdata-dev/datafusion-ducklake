@@ -1,0 +1,79 @@
+# name: test/sql/schema_evolution/field_ids.test
+# description: Verify that field ids are correctly written
+# group: [schema_evolution]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_field_ids_files')
+
+# insert into
+statement ok
+CREATE TABLE ducklake.t1(t1_c1 INT, t1_c2 VARCHAR, t1_c3 TIMESTAMP);
+
+statement ok
+INSERT INTO ducklake.t1 VALUES (42, 'hello', TIMESTAMP '1992-01-01');
+
+# CTAS
+statement ok
+CREATE TABLE ducklake.t2 AS SELECT 84 t2_c1, 'world' t2_c2
+
+query III
+SELECT name, type, field_id FROM parquet_schema('${DATA_PATH}/ducklake_field_ids_files/main/t1/*.parquet')
+WHERE name <> 'duckdb_schema'
+ORDER BY name
+----
+t1_c1	INT32	1
+t1_c2	BYTE_ARRAY	2
+t1_c3	INT64	3
+
+
+query III
+SELECT name, type, field_id FROM parquet_schema('${DATA_PATH}/ducklake_field_ids_files/main/t2/*.parquet')
+WHERE name <> 'duckdb_schema'
+ORDER BY name
+----
+t2_c1	INT32	1
+t2_c2	BYTE_ARRAY	2
+
+# deeply_nested
+statement ok
+CREATE TABLE ducklake.t3 AS
+SELECT {'c1': 42, 'c2': {'n1': 84, 'n2': 32}} struct_col,
+       [42, 48] l,
+       [{'x': 42, 'y': 84}] as list_of_structs,
+       {'l': [1,2,3], 'l2': 42, 'l3': {'x': 42, 'y': 84}} as struct_of_lists
+
+query II
+SELECT name, field_id FROM parquet_schema('${DATA_PATH}/ducklake_field_ids_files/main/t3/*.parquet')
+WHERE name <> 'duckdb_schema'
+ORDER BY name
+----
+c1	2
+c2	3
+element	7
+element	9
+element	14
+l	6
+l	13
+l2	15
+l3	16
+list	NULL
+list	NULL
+list	NULL
+list_of_structs	8
+n1	4
+n2	5
+struct_col	1
+struct_of_lists	12
+x	10
+x	17
+y	11
+y	18

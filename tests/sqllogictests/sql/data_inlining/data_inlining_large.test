@@ -1,0 +1,37 @@
+# name: test/sql/data_inlining/data_inlining_large.test
+# description: test data inlining with many rows
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_inlining_large_files', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 999999)
+
+statement ok
+CREATE TABLE bigtbl AS FROM range(1000000) t(i);
+
+statement ok
+CREATE TABLE ducklake.test(i INTEGER)
+
+query I
+INSERT INTO ducklake.test FROM bigtbl
+----
+1000000
+
+query IIII
+SELECT COUNT(*), SUM(i), MIN(i), MAX(i) FROM bigtbl
+----
+1000000	499999500000	0	999999
+
+# this exceeds the inline limit so we have a file
+query I
+SELECT COUNT(*) FROM GLOB('${DATA_PATH}/ducklake_inlining_large_files/**')
+----
+1

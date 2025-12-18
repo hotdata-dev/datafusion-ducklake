@@ -1,0 +1,68 @@
+# name: test/sql/migration/migration.test
+# description: test migration from previous releases to the latest ducklake version.
+# group: [migration]
+
+require ducklake
+
+require parquet
+
+unzip data/old_ducklake/v01.db.gz __TEST_DIR__/v01.db
+
+unzip data/old_ducklake/v02.db.gz __TEST_DIR__/v02.db
+
+unzip data/old_ducklake/v03-dev1.db.gz __TEST_DIR__/v03-dev1.db
+
+foreach version v01 v02 v03-dev1
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/${version}.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_migrate_${version}', OVERRIDE_DATA_PATH TRUE)
+
+statement ok
+INSERT INTO ducklake.test VALUES (42);
+
+query I
+FROM ducklake.test
+----
+42
+
+query I
+SELECT COUNT(*) FROM glob('__TEST_DIR__/ducklake_migrate_${version}/**/*.parquet')
+----
+1
+
+# test add files
+statement ok
+COPY (SELECT 84 i) TO '__TEST_DIR__/ducklake_migrate_${version}/my_file.parquet'
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'test', '__TEST_DIR__/ducklake_migrate_${version}/my_file.parquet')
+
+query I
+FROM ducklake.test
+----
+42
+84
+
+# re-attach after migration
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:__TEST_DIR__/${version}.db' AS ducklake (DATA_PATH '__TEST_DIR__/ducklake_migrate_${version}', OVERRIDE_DATA_PATH TRUE)
+
+query I
+FROM ducklake.test
+----
+42
+84
+
+query II
+FROM __ducklake_metadata_ducklake.ducklake_schema_versions;
+----
+0	0
+1	1
+
+statement ok
+DETACH ducklake;
+
+endloop

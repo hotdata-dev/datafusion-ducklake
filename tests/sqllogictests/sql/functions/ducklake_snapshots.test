@@ -1,0 +1,160 @@
+# name: test/sql/functions/ducklake_snapshots.test
+# description: View DuckLake Snapshots
+# group: [functions]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_snapshots_files')
+
+# initial snapshot
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots()
+----
+0	0	{schemas_created=[main]}
+
+# perform some operations in separate snapshots
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok
+CREATE TABLE ducklake.s1.tbl(i INT);
+
+statement ok
+INSERT INTO ducklake.s1.tbl VALUES (42);
+
+statement ok
+DROP TABLE ducklake.s1.tbl
+
+statement ok
+DROP SCHEMA ducklake.s1
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots()
+----
+0	0	{schemas_created=[main]}
+1	1	{schemas_created=[s1]}
+2	2	{tables_created=[s1.tbl]}
+3	2	{tables_inserted_into=[2]}
+4	3	{tables_dropped=[2]}
+5	4	{schemas_dropped=[1]}
+
+# this transaction does nothing in a round-about way
+# no snapshot is created here
+statement ok
+BEGIN
+
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok
+CREATE TABLE ducklake.s1.tbl(i INT);
+
+statement ok
+INSERT INTO ducklake.s1.tbl VALUES (42);
+
+statement ok
+DROP TABLE ducklake.s1.tbl
+
+statement ok
+DROP SCHEMA ducklake.s1
+
+statement ok
+COMMIT
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots() WHERE snapshot_id=6
+----
+
+# this transaction actually makes some changes
+statement ok
+BEGIN
+
+statement ok
+CREATE SCHEMA ducklake.s1
+
+statement ok
+CREATE TABLE ducklake.s1.tbl(i INT);
+
+statement ok
+INSERT INTO ducklake.s1.tbl VALUES (42);
+
+statement ok
+COMMIT
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots() WHERE snapshot_id=6
+----
+6	5	{schemas_created=[s1], tables_created=[s1.tbl], tables_inserted_into=[4]}
+
+# alter table
+statement ok
+ALTER TABLE ducklake.s1.tbl SET PARTITIONED BY (i)
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots() WHERE snapshot_id=7
+----
+7	6	{tables_altered=[4]}
+
+# create a table and alter it
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.s1.tbl2(i INT);
+
+statement ok
+ALTER TABLE ducklake.s1.tbl2 SET PARTITIONED BY (i)
+
+statement ok
+COMMIT
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots() WHERE snapshot_id=8
+----
+8	7	{tables_created=[s1.tbl2], tables_altered=[6]}
+
+# create a view
+statement ok
+CREATE VIEW ducklake.v1 AS SELECT 42
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots() WHERE snapshot_id=9
+----
+9	8	{views_created=[main.v1]}
+
+statement ok
+DROP VIEW ducklake.v1
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots() WHERE snapshot_id=10
+----
+10	9	{views_dropped=[8]}
+
+# comments
+statement ok
+CREATE VIEW ducklake.comment_view AS SELECT 42;
+
+statement ok con1
+COMMENT ON VIEW ducklake.comment_view IS 'con1'
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake.snapshots() WHERE snapshot_id=12
+----
+12	11	{views_altered=[9]}
+
+# deletes
+statement ok
+DELETE FROM ducklake.s1.tbl
+
+query III
+SELECT snapshot_id, schema_version, changes FROM ducklake_snapshots('ducklake') WHERE snapshot_id=13
+----
+13	11	{tables_deleted_from=[4]}

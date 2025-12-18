@@ -1,0 +1,45 @@
+# name: test/sql/alter/mixed_alter2.test
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/mixed_alter2_files');
+
+statement ok
+USE ducklake;
+
+statement ok
+CREATE TABLE tbl(col1 INTEGER);
+
+statement ok
+INSERT INTO tbl VALUES (42);
+
+statement ok
+ALTER TABLE tbl ADD COLUMN col2 VARCHAR;
+
+statement ok
+ALTER TABLE tbl ADD COLUMN new_column VARCHAR DEFAULT 'my_default';
+
+statement ok
+ALTER TABLE tbl ADD COLUMN nested_column STRUCT(i INTEGER);
+
+query IIII
+FROM tbl
+----
+42	NULL	my_default	NULL
+
+statement ok
+ALTER TABLE tbl DROP COLUMN new_column;
+
+query III
+FROM tbl
+----
+42	NULL	NULL

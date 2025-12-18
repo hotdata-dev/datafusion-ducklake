@@ -1,0 +1,54 @@
+# name: test/sql/transaction/transaction_conflict_cleanup.test
+# description: Verify files are cleaned up after a transaction conflict
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION __TEST_DIR__/{UUID}.db
+
+test-env DATA_PATH __TEST_DIR__
+
+
+statement ok
+ATTACH 'ducklake:${DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '${DATA_PATH}/ducklake_files_conflict_cleanup')
+
+statement ok
+SET immediate_transaction_mode=true
+
+# con2 creates a conflicting table (with data)
+statement ok con1
+BEGIN
+
+statement ok con2
+BEGIN
+
+statement ok con1
+CREATE TABLE ducklake.test(i INTEGER);
+
+statement ok con2
+CREATE TABLE ducklake.test(s VARCHAR);
+
+statement ok con2
+INSERT INTO ducklake.test VALUES ('hello'), ('world');
+
+statement ok con1
+COMMIT
+
+# con2 has the transaction-local files written in the directory
+query I
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_files_conflict_cleanup/**/*.parquet')
+----
+1
+
+statement error con2
+COMMIT
+----
+conflict
+
+# they are cleaned up after the conflict
+query I
+SELECT COUNT(*) FROM glob('${DATA_PATH}/ducklake_files_conflict_cleanup/**/*.parquet')
+----
+0
