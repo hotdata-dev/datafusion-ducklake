@@ -4,8 +4,8 @@
 //! It handles ATTACH/CREATE/INSERT by forwarding to DuckDB, then queries via DataFusion.
 
 use datafusion::prelude::*;
-use datafusion_ducklake::catalog::DuckLakeCatalog;
 use datafusion_ducklake::DuckdbMetadataProvider;
+use datafusion_ducklake::catalog::DuckLakeCatalog;
 use duckdb::Connection;
 use sqllogictest::AsyncDB;
 use std::path::PathBuf;
@@ -48,14 +48,16 @@ impl_from_error!(
 fn extract_quoted_value(sql: &str, prefix: &str) -> Option<String> {
     sql.find(prefix).and_then(|start| {
         let path_start = start + prefix.len();
-        sql[path_start..].find('\'').map(|end| {
-            sql[path_start..path_start + end].to_string()
-        })
+        sql[path_start..]
+            .find('\'')
+            .map(|end| sql[path_start..path_start + end].to_string())
     })
 }
 
 /// Extract rows from RecordBatches with proper NULL handling
-fn extract_rows(batches: &[arrow::record_batch::RecordBatch]) -> Result<Vec<Vec<String>>, TestError> {
+fn extract_rows(
+    batches: &[arrow::record_batch::RecordBatch],
+) -> Result<Vec<Vec<String>>, TestError> {
     let mut rows = vec![];
     for batch in batches {
         for row_idx in 0..batch.num_rows() {
@@ -84,6 +86,7 @@ fn extract_rows(batches: &[arrow::record_batch::RecordBatch]) -> Result<Vec<Vec<
 struct DuckLakeDB {
     ctx: SessionContext,
     duckdb_conn: Connection,
+    #[allow(dead_code)] // Kept to ensure TempDir lives for duration of test
     temp_dir: Arc<TempDir>,
     current_catalog: Option<String>,
 }
@@ -143,7 +146,7 @@ impl DuckLakeDB {
     fn sync_catalog(&mut self) -> Result<(), TestError> {
         if let Some(catalog_name) = &self.current_catalog {
             let mut stmt = self.duckdb_conn.prepare(
-                "SELECT database_name, path FROM duckdb_databases() WHERE path IS NOT NULL"
+                "SELECT database_name, path FROM duckdb_databases() WHERE path IS NOT NULL",
             )?;
             let mut rows = stmt.query([])?;
 
@@ -225,7 +228,10 @@ impl AsyncDB for DuckLakeDB {
     type Error = TestError;
     type ColumnType = sqllogictest::DefaultColumnType;
 
-    async fn run(&mut self, sql: &str) -> Result<sqllogictest::DBOutput<Self::ColumnType>, Self::Error> {
+    async fn run(
+        &mut self,
+        sql: &str,
+    ) -> Result<sqllogictest::DBOutput<Self::ColumnType>, Self::Error> {
         let sql_lower = sql.trim().to_lowercase();
 
         // Handle ATTACH
@@ -258,10 +264,8 @@ impl AsyncDB for DuckLakeDB {
                     // Get the 'main' schema (default schema for DuckLake)
                     if let Some(schema) = catalog.schema("main") {
                         let table_names = schema.table_names();
-                        let rows: Vec<Vec<String>> = table_names
-                            .into_iter()
-                            .map(|name| vec![name])
-                            .collect();
+                        let rows: Vec<Vec<String>> =
+                            table_names.into_iter().map(|name| vec![name]).collect();
 
                         return Ok(sqllogictest::DBOutput::Rows {
                             types: vec![sqllogictest::DefaultColumnType::Text],
@@ -321,7 +325,10 @@ impl AsyncDB for DuckLakeDB {
 
             let rows = extract_rows(&batches)?;
 
-            Ok(sqllogictest::DBOutput::Rows { types, rows })
+            Ok(sqllogictest::DBOutput::Rows {
+                types,
+                rows,
+            })
         } else {
             // Unknown statement type - return statement complete
             Ok(sqllogictest::DBOutput::StatementComplete(0))
@@ -428,7 +435,10 @@ async fn run_test_file(test_name: &str) -> Result<(), Box<dyn std::error::Error>
 // ============================================================================
 
 /// Helper to run tests from subdirectories
-async fn run_test_from_folder(folder: &str, test_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_test_from_folder(
+    folder: &str,
+    test_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let test_path = format!("{}/{}", folder, test_name);
     run_test_file(&test_path).await
 }
