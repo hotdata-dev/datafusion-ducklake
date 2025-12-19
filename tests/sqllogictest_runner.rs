@@ -79,10 +79,6 @@ fn extract_rows(
 }
 
 /// DuckLake database adapter for sqllogictest
-///
-/// This adapter maintains both:
-/// - DuckDB connection for write operations (CREATE, INSERT, etc.)
-/// - DataFusion context for read operations via datafusion-ducklake
 struct DuckLakeDB {
     ctx: SessionContext,
     duckdb_conn: Connection,
@@ -113,10 +109,8 @@ impl DuckLakeDB {
         })
     }
 
-    /// Process ATTACH statement and store catalog info (defer registration)
+    /// Process ATTACH statement and store catalog info
     fn handle_attach(&mut self, sql: &str) -> Result<(), TestError> {
-        // Note: __TEST_DIR__ and env vars are already replaced in preprocessor
-
         // Create data directory (either explicit or default)
         if let Some(data_path) = extract_quoted_value(sql, "DATA_PATH '") {
             std::fs::create_dir_all(data_path).map_err(|e| TestError(e.to_string()))?;
@@ -188,12 +182,7 @@ impl DuckLakeDB {
     /// Rewrite table references to add 'main' schema when missing
     /// E.g., "catalog.table" -> "catalog.main.table"
     fn rewrite_table_references(&self, sql: &str, catalog_name: &str) -> String {
-        // Simple regex-based rewriting: look for catalog.table_name patterns
-        // and replace with catalog.main.table_name
-        // This is a simple heuristic - for production use a proper SQL parser
-
-        // Find all occurrences of "catalog.table"
-        // Replace with "catalog.main.table" if not already "catalog.something.table"
+        // Simple heuristic - for production use a proper SQL parser
         let parts: Vec<&str> = sql.split_whitespace().collect();
         let mut new_parts = Vec::new();
 
@@ -249,7 +238,6 @@ impl AsyncDB for DuckLakeDB {
 
         // Handle USE
         if sql_lower.starts_with("use ") {
-            // Just track the current catalog, don't execute in DuckDB
             if let Some(catalog_name) = sql.split_whitespace().nth(1) {
                 self.current_catalog = Some(catalog_name.to_string());
             }
@@ -259,9 +247,7 @@ impl AsyncDB for DuckLakeDB {
         // Handle SHOW TABLES
         if sql_lower == "show tables" {
             if let Some(catalog_name) = &self.current_catalog {
-                // Use DataFusion's catalog API directly
                 if let Some(catalog) = self.ctx.catalog(catalog_name) {
-                    // Get the 'main' schema (default schema for DuckLake)
                     if let Some(schema) = catalog.schema("main") {
                         let table_names = schema.table_names();
                         let rows: Vec<Vec<String>> =
@@ -288,17 +274,13 @@ impl AsyncDB for DuckLakeDB {
         // Handle write operations via DuckDB
         if self.is_write_operation(sql) {
             self.duckdb_conn.execute(sql, [])?;
-            // Sync catalog after writes to pick up new tables
             self.sync_catalog()?;
             return Ok(sqllogictest::DBOutput::StatementComplete(0));
         }
 
-        // Handle query operations via DataFusion + datafusion-ducklake
+        // Handle query operations via DataFusion
         if self.is_query_operation(sql) {
-            // Ensure catalog is synced before queries
             self.sync_catalog()?;
-            // Rewrite queries to add 'main' schema if missing
-            // E.g., "SELECT * FROM ducklake.test" -> "SELECT * FROM ducklake.main.test"
             let rewritten_sql = if let Some(catalog_name) = &self.current_catalog {
                 self.rewrite_table_references(sql, catalog_name)
             } else {
@@ -434,7 +416,6 @@ async fn run_test_file(test_name: &str) -> Result<(), Box<dyn std::error::Error>
 // Test Cases
 // ============================================================================
 
-/// Helper to run tests from subdirectories
 async fn run_test_from_folder(
     folder: &str,
     test_name: &str,
@@ -443,32 +424,62 @@ async fn run_test_from_folder(
     run_test_file(&test_path).await
 }
 
-// ----------------------------------------------------------------------------
 // Top-level tests
-// ----------------------------------------------------------------------------
 
 #[tokio::test]
 async fn test_ducklake_basic() -> Result<(), Box<dyn std::error::Error>> {
     run_test_file("ducklake_basic.test").await
 }
 
-// ----------------------------------------------------------------------------
-// Insert folder tests - Testing SELECT queries after INSERT
-// ----------------------------------------------------------------------------
+// Insert tests
 
 #[tokio::test]
 async fn test_insert_column_list() -> Result<(), Box<dyn std::error::Error>> {
     run_test_from_folder("insert", "insert_column_list.test").await
 }
 
-// Skipped: Tests DuckDB INSERT row counts, not datafusion-ducklake reads
-// #[tokio::test]
-// async fn test_insert_into_self() -> Result<(), Box<dyn std::error::Error>> {
-//     run_test_from_folder("insert", "insert_into_self.test").await
-// }
+#[tokio::test]
+async fn test_insert_into_self() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("insert", "insert_into_self.test").await
+}
 
-// Skipped: Uses DuckDB glob() function and tests INSERT row counts
-// #[tokio::test]
-// async fn test_insert_file_size() -> Result<(), Box<dyn std::error::Error>> {
-//     run_test_from_folder("insert", "insert_file_size.test").await
-// }
+#[tokio::test]
+async fn test_insert_file_size() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("insert", "insert_file_size.test").await
+}
+
+// Delete tests
+
+#[tokio::test]
+async fn test_empty_delete() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("delete", "empty_delete.test").await
+}
+
+#[tokio::test]
+async fn test_basic_delete() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("delete", "basic_delete.test").await
+}
+
+#[tokio::test]
+async fn test_multi_deletes() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("delete", "multi_deletes.test").await
+}
+
+// General tests
+
+#[tokio::test]
+async fn test_ducklake_read_only() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("general", "ducklake_read_only.test").await
+}
+
+// Type tests
+
+#[tokio::test]
+async fn test_floats() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("types", "floats.test").await
+}
+
+#[tokio::test]
+async fn test_timestamp() -> Result<(), Box<dyn std::error::Error>> {
+    run_test_from_folder("types", "timestamp.test").await
+}
