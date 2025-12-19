@@ -33,6 +33,16 @@ tempfile = "3.14"
 anyhow = "1.0"
 aws-sdk-s3 = "1.75"
 aws-credential-types = "1.2"
+sqllogictest = "0.28"
+regex = "1"
+async-trait = "0.1"
+env_logger = "0.11"
+glob = "0.3"
+
+[[test]]
+name = "sqllogictests"
+path = "tests/sqllogictests/runner.rs"
+harness = false
 
 [features]
 # Allow skipping tests that use docker (in CI, macos doesn't support docker).
