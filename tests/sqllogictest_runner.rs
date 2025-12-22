@@ -41,32 +41,32 @@ fn preprocess_test_file(content: &str) -> String {
         }
 
         // Skip ATTACH/DETACH statements (we handle connection in Rust)
-        if trimmed == "statement ok" {
-            if let Some(next_line) = lines.peek() {
-                let next_upper = next_line.trim().to_uppercase();
-                if next_upper.starts_with("ATTACH ") || next_upper.starts_with("DETACH ") {
-                    lines.next(); // Skip the ATTACH/DETACH statement
-                    continue;
-                }
+        if trimmed == "statement ok"
+            && let Some(next_line) = lines.peek()
+        {
+            let next_upper = next_line.trim().to_uppercase();
+            if next_upper.starts_with("ATTACH ") || next_upper.starts_with("DETACH ") {
+                lines.next(); // Skip the ATTACH/DETACH statement
+                continue;
+            }
 
-                // Skip EXPLAIN statements (not testable - no consistent output format)
-                if next_upper.starts_with("EXPLAIN ") {
-                    lines.next(); // Skip the EXPLAIN statement
-                    continue;
-                }
+            // Skip EXPLAIN statements (not testable - no consistent output format)
+            if next_upper.starts_with("EXPLAIN ") {
+                lines.next(); // Skip the EXPLAIN statement
+                continue;
             }
         }
 
         // Skip query blocks with EXPLAIN
-        if trimmed.starts_with("query") {
-            if let Some(next_line) = lines.peek() {
-                let next_upper = next_line.trim().to_uppercase();
-                if next_upper.starts_with("EXPLAIN ") {
-                    // Skip the query directive, SQL, separator, and results
-                    lines.next(); // Skip SQL line
-                    skip_query_results(&mut lines);
-                    continue;
-                }
+        if trimmed.starts_with("query")
+            && let Some(next_line) = lines.peek()
+        {
+            let next_upper = next_line.trim().to_uppercase();
+            if next_upper.starts_with("EXPLAIN ") {
+                // Skip the query directive, SQL, separator, and results
+                lines.next(); // Skip SQL line
+                skip_query_results(&mut lines);
+                continue;
             }
         }
 
