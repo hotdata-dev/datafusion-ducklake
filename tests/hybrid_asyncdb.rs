@@ -328,11 +328,15 @@ mod tests {
         // Catalog management - routed to DuckDB
         assert!(HybridDuckLakeDB::is_write_statement("USE ducklake"));
         assert!(HybridDuckLakeDB::is_write_statement("SHOW TABLES"));
-        assert!(HybridDuckLakeDB::is_write_statement("CALL some_procedure()"));
+        assert!(HybridDuckLakeDB::is_write_statement(
+            "CALL some_procedure()"
+        ));
 
         // Read operations - routed to DataFusion
         assert!(!HybridDuckLakeDB::is_write_statement("SELECT * FROM foo"));
-        assert!(!HybridDuckLakeDB::is_write_statement("WITH cte AS (...) SELECT ..."));
+        assert!(!HybridDuckLakeDB::is_write_statement(
+            "WITH cte AS (...) SELECT ..."
+        ));
     }
 
     #[test]
