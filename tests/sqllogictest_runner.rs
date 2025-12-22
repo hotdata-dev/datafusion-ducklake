@@ -36,13 +36,14 @@ fn preprocess_test_file(content: &str) -> String {
 
         // Skip ATTACH/DETACH statements (we handle connection in Rust)
         if trimmed == "statement ok"
-            && let Some(next_line) = lines.peek() {
-                let next_upper = next_line.trim().to_uppercase();
-                if next_upper.starts_with("ATTACH ") || next_upper.starts_with("DETACH ") {
-                    lines.next(); // Skip the ATTACH/DETACH statement
-                    continue;
-                }
+            && let Some(next_line) = lines.peek()
+        {
+            let next_upper = next_line.trim().to_uppercase();
+            if next_upper.starts_with("ATTACH ") || next_upper.starts_with("DETACH ") {
+                lines.next(); // Skip the ATTACH/DETACH statement
+                continue;
             }
+        }
 
         // Add line as-is (let tests fail naturally on unsupported features)
         output.push_str(line);
