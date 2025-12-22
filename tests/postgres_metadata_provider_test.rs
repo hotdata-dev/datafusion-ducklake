@@ -23,8 +23,8 @@ mod common;
 
 use datafusion::prelude::*;
 use datafusion_ducklake::{
-    metadata_provider::MetadataProvider, DuckLakeCatalog, DuckdbMetadataProvider,
-    PostgresMetadataProvider,
+    DuckLakeCatalog, DuckdbMetadataProvider, PostgresMetadataProvider,
+    metadata_provider::MetadataProvider,
 };
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -32,18 +32,17 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
 /// Helper to create a PostgreSQL provider with initialized schema
-async fn create_postgres_provider(
-) -> anyhow::Result<(PostgresMetadataProvider, testcontainers::ContainerAsync<Postgres>)> {
+async fn create_postgres_provider() -> anyhow::Result<(
+    PostgresMetadataProvider,
+    testcontainers::ContainerAsync<Postgres>,
+)> {
     // Start PostgreSQL container
     let container = Postgres::default().start().await?;
 
     // Get connection string
     let host = "127.0.0.1";
     let port = container.get_host_port_ipv4(5432).await?;
-    let conn_str = format!(
-        "postgresql://postgres:postgres@{}:{}/postgres",
-        host, port
-    );
+    let conn_str = format!("postgresql://postgres:postgres@{}:{}/postgres", host, port);
 
     // Create provider (schema is initialized automatically in new())
     let provider = PostgresMetadataProvider::new(&conn_str)
@@ -138,7 +137,7 @@ async fn populate_test_data(provider: &PostgresMetadataProvider) -> anyhow::Resu
     // Insert columns for users table
     sqlx::query(
         "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES ($1, $2, $3, $4, $5)"
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(1i64)
     .bind(1i64)
@@ -150,7 +149,7 @@ async fn populate_test_data(provider: &PostgresMetadataProvider) -> anyhow::Resu
 
     sqlx::query(
         "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES ($1, $2, $3, $4, $5)"
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(2i64)
     .bind(1i64)
@@ -162,7 +161,7 @@ async fn populate_test_data(provider: &PostgresMetadataProvider) -> anyhow::Resu
 
     sqlx::query(
         "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES ($1, $2, $3, $4, $5)"
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(3i64)
     .bind(1i64)
@@ -238,8 +237,7 @@ async fn populate_from_duckdb_catalog(
     common::create_catalog_no_deletes(&catalog_path)?;
 
     // Step 2: Read metadata from DuckDB catalog
-    let duckdb_provider =
-        DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())?;
+    let duckdb_provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())?;
 
     let data_path = duckdb_provider.get_data_path()?;
     let snapshots = duckdb_provider.list_snapshots()?;
@@ -256,24 +254,17 @@ async fn populate_from_duckdb_catalog(
     // Insert snapshots
     for snapshot in &snapshots {
         // Parse timestamp string to NaiveDateTime if present
-        let timestamp_value: Option<sqlx::types::chrono::NaiveDateTime> = snapshot
-            .timestamp
-            .as_ref()
-            .and_then(|ts_str| {
-                sqlx::types::chrono::NaiveDateTime::parse_from_str(
-                    ts_str,
-                    "%Y-%m-%d %H:%M:%S%.6f",
-                )
-                .ok()
+        let timestamp_value: Option<sqlx::types::chrono::NaiveDateTime> =
+            snapshot.timestamp.as_ref().and_then(|ts_str| {
+                sqlx::types::chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.6f")
+                    .ok()
             });
 
-        sqlx::query(
-            "INSERT INTO ducklake_snapshot (snapshot_id, snapshot_time) VALUES ($1, $2)",
-        )
-        .bind(snapshot.snapshot_id)
-        .bind(timestamp_value)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("INSERT INTO ducklake_snapshot (snapshot_id, snapshot_time) VALUES ($1, $2)")
+            .bind(snapshot.snapshot_id)
+            .bind(timestamp_value)
+            .execute(&mut *tx)
+            .await?;
     }
 
     // Insert data_path metadata
@@ -338,7 +329,8 @@ async fn populate_from_duckdb_catalog(
             }
 
             // Get data files for this table
-            let files = duckdb_provider.get_table_files_for_select(table.table_id, current_snapshot.snapshot_id)?;
+            let files = duckdb_provider
+                .get_table_files_for_select(table.table_id, current_snapshot.snapshot_id)?;
 
             for (file_idx, file) in files.iter().enumerate() {
                 let data_file_id = (table.table_id * 1000 + file_idx as i64 + 1) as i64;
@@ -391,10 +383,7 @@ async fn populate_from_duckdb_catalog(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_schema_initialization_idempotent() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -410,10 +399,7 @@ async fn test_schema_initialization_idempotent() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_get_current_snapshot() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -436,10 +422,7 @@ async fn test_get_current_snapshot() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_get_data_path() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -447,18 +430,13 @@ async fn test_get_data_path() {
         .await
         .expect("Failed to populate test data");
 
-    let data_path = provider
-        .get_data_path()
-        .expect("Should get data path");
+    let data_path = provider.get_data_path().expect("Should get data path");
 
     assert_eq!(data_path, "file:///tmp/ducklake_data/");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_list_snapshots() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -466,9 +444,7 @@ async fn test_list_snapshots() {
         .await
         .expect("Failed to populate test data");
 
-    let snapshots = provider
-        .list_snapshots()
-        .expect("Should list snapshots");
+    let snapshots = provider.list_snapshots().expect("Should list snapshots");
 
     assert_eq!(snapshots.len(), 2, "Should have 2 snapshots");
     assert_eq!(snapshots[0].snapshot_id, 1);
@@ -476,10 +452,7 @@ async fn test_list_snapshots() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_list_schemas_snapshot_isolation() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -508,10 +481,7 @@ async fn test_list_schemas_snapshot_isolation() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_get_schema_by_name() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -541,7 +511,10 @@ async fn test_get_schema_by_name() {
         .get_schema_by_name("schema2", 1)
         .expect("Should handle schema not in snapshot");
 
-    assert!(schema.is_none(), "schema2 should not be visible in snapshot 1");
+    assert!(
+        schema.is_none(),
+        "schema2 should not be visible in snapshot 1"
+    );
 
     // schema2 should be visible in snapshot 2
     let schema = provider
@@ -552,10 +525,7 @@ async fn test_get_schema_by_name() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_list_tables() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -564,17 +534,13 @@ async fn test_list_tables() {
         .expect("Failed to populate test data");
 
     // Snapshot 1 should only see users table
-    let tables = provider
-        .list_tables(1, 1)
-        .expect("Should list tables");
+    let tables = provider.list_tables(1, 1).expect("Should list tables");
 
     assert_eq!(tables.len(), 1, "Snapshot 1 should have 1 table");
     assert_eq!(tables[0].table_name, "users");
 
     // Snapshot 2 should see both tables
-    let tables = provider
-        .list_tables(1, 2)
-        .expect("Should list tables");
+    let tables = provider.list_tables(1, 2).expect("Should list tables");
 
     assert_eq!(tables.len(), 2, "Snapshot 2 should have 2 tables");
 
@@ -584,10 +550,7 @@ async fn test_list_tables() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_get_table_by_name() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -614,10 +577,7 @@ async fn test_get_table_by_name() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_table_exists() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -655,10 +615,7 @@ async fn test_table_exists() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_get_table_structure() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -683,10 +640,7 @@ async fn test_get_table_structure() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_get_table_files_for_select() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -704,7 +658,10 @@ async fn test_get_table_files_for_select() {
     assert_eq!(files[0].file.path, "data_001.parquet");
     assert_eq!(files[0].file.file_size_bytes, 1024);
     assert_eq!(files[0].file.footer_size, Some(128));
-    assert!(files[0].delete_file.is_some(), "First file should have delete file");
+    assert!(
+        files[0].delete_file.is_some(),
+        "First file should have delete file"
+    );
 
     let delete_file = files[0].delete_file.as_ref().unwrap();
     assert_eq!(delete_file.path, "data_001.delete.parquet");
@@ -714,14 +671,14 @@ async fn test_get_table_files_for_select() {
     assert_eq!(files[1].file.path, "data_002.parquet");
     assert_eq!(files[1].file.file_size_bytes, 2048);
     assert_eq!(files[1].file.footer_size, Some(256));
-    assert!(files[1].delete_file.is_none(), "Second file should not have delete file");
+    assert!(
+        files[1].delete_file.is_none(),
+        "Second file should not have delete file"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_list_all_tables() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -730,27 +687,20 @@ async fn test_list_all_tables() {
         .expect("Failed to populate test data");
 
     // Snapshot 1 should only see 1 table
-    let tables = provider
-        .list_all_tables(1)
-        .expect("Should list all tables");
+    let tables = provider.list_all_tables(1).expect("Should list all tables");
 
     assert_eq!(tables.len(), 1, "Snapshot 1 should have 1 table");
     assert_eq!(tables[0].schema_name, "test_schema");
     assert_eq!(tables[0].table.table_name, "users");
 
     // Snapshot 2 should see 2 tables
-    let tables = provider
-        .list_all_tables(2)
-        .expect("Should list all tables");
+    let tables = provider.list_all_tables(2).expect("Should list all tables");
 
     assert_eq!(tables.len(), 2, "Snapshot 2 should have 2 tables");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_list_all_columns() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -773,10 +723,7 @@ async fn test_list_all_columns() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_list_all_files() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -784,9 +731,7 @@ async fn test_list_all_files() {
         .await
         .expect("Failed to populate test data");
 
-    let files = provider
-        .list_all_files(1)
-        .expect("Should list all files");
+    let files = provider.list_all_files(1).expect("Should list all files");
 
     assert_eq!(files.len(), 2, "Should have 2 files");
 
@@ -800,10 +745,7 @@ async fn test_list_all_files() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_concurrent_access() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -820,10 +762,14 @@ async fn test_concurrent_access() {
         let provider = provider.clone();
         let task = tokio::spawn(async move {
             // Each task performs multiple operations
-            let _snapshot = provider.get_current_snapshot().expect("Should get snapshot");
+            let _snapshot = provider
+                .get_current_snapshot()
+                .expect("Should get snapshot");
             let _schemas = provider.list_schemas(1).expect("Should list schemas");
             let _tables = provider.list_tables(1, 1).expect("Should list tables");
-            let _columns = provider.get_table_structure(1).expect("Should get structure");
+            let _columns = provider
+                .get_table_structure(1)
+                .expect("Should get structure");
         });
         tasks.push(task);
     }
@@ -835,10 +781,7 @@ async fn test_concurrent_access() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_datafusion_integration() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -847,8 +790,7 @@ async fn test_datafusion_integration() {
         .expect("Failed to populate test data");
 
     // Create DuckLake catalog with PostgreSQL provider
-    let catalog = DuckLakeCatalog::new(provider)
-        .expect("Should create catalog");
+    let catalog = DuckLakeCatalog::new(provider).expect("Should create catalog");
 
     // Register with DataFusion
     let ctx = SessionContext::new();
@@ -865,30 +807,25 @@ async fn test_datafusion_integration() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_error_invalid_connection_string() {
     let result = PostgresMetadataProvider::new("invalid://connection:string").await;
-    assert!(result.is_err(), "Should fail with invalid connection string");
+    assert!(
+        result.is_err(),
+        "Should fail with invalid connection string"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_error_connection_refused() {
-    let result = PostgresMetadataProvider::new("postgresql://postgres:postgres@localhost:9999/db").await;
+    let result =
+        PostgresMetadataProvider::new("postgresql://postgres:postgres@localhost:9999/db").await;
     assert!(result.is_err(), "Should fail when connection is refused");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_query_real_parquet_files() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
@@ -952,10 +889,7 @@ async fn test_query_real_parquet_files() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg_attr(
-    all(feature = "skip-tests-with-docker", target_os = "macos"),
-    ignore
-)]
+#[cfg_attr(all(feature = "skip-tests-with-docker", target_os = "macos"), ignore)]
 async fn test_query_with_filter() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 

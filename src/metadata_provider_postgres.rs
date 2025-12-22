@@ -22,15 +22,14 @@
 
 #![cfg(feature = "metadata-postgres")]
 
-use crate::metadata_provider::{
-    block_on, ColumnWithTable, DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile,
-    FileWithTable, MetadataProvider, SchemaMetadata, SnapshotMetadata, TableMetadata,
-    TableWithSchema,
-};
 use crate::Result;
+use crate::metadata_provider::{
+    ColumnWithTable, DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, FileWithTable,
+    MetadataProvider, SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema, block_on,
+};
+use sqlx::Row;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::types::chrono::NaiveDateTime;
-use sqlx::Row;
 
 /// Helper macro to bind the same value multiple times
 ///
@@ -57,8 +56,13 @@ macro_rules! bind_repeat {
         $query.bind($value).bind($value).bind($value).bind($value)
     };
     ($query:expr, $value:expr, 6) => {
-        $query.bind($value).bind($value).bind($value)
-              .bind($value).bind($value).bind($value)
+        $query
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
     };
 }
 
@@ -89,7 +93,9 @@ impl PostgresMetadataProvider {
             .connect(connection_string)
             .await?;
 
-        let provider = Self { pool };
+        let provider = Self {
+            pool,
+        };
 
         // Automatically initialize schema - this is idempotent and safe
         provider.init_schema().await?;
@@ -208,11 +214,9 @@ impl PostgresMetadataProvider {
 
         // Index for table lookup by schema (WHERE schema_id = ?)
         // Improves: list_tables, get_table_by_name, table_exists
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_table_schema ON ducklake_table(schema_id)",
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_table_schema ON ducklake_table(schema_id)")
+            .execute(&self.pool)
+            .await?;
 
         // Index for snapshot-based table queries (WHERE snapshot >= begin AND snapshot < end)
         // Improves: list_tables, get_table_by_name, table_exists, list_all_tables
@@ -227,7 +231,7 @@ impl PostgresMetadataProvider {
         // Prevents ambiguous get_schema_by_name() results
         sqlx::query(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_name_active
-             ON ducklake_schema(schema_name) WHERE end_snapshot IS NULL"
+             ON ducklake_schema(schema_name) WHERE end_snapshot IS NULL",
         )
         .execute(&self.pool)
         .await?;
@@ -236,7 +240,7 @@ impl PostgresMetadataProvider {
         // Prevents ambiguous get_table_by_name() results
         sqlx::query(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_table_name_active
-             ON ducklake_table(schema_id, table_name) WHERE end_snapshot IS NULL"
+             ON ducklake_table(schema_id, table_name) WHERE end_snapshot IS NULL",
         )
         .execute(&self.pool)
         .await?;
@@ -245,7 +249,7 @@ impl PostgresMetadataProvider {
         // Columns are not temporal (no end_snapshot), so enforce globally per table
         sqlx::query(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_column_name_unique
-             ON ducklake_column(table_id, column_name)"
+             ON ducklake_column(table_id, column_name)",
         )
         .execute(&self.pool)
         .await?;
@@ -257,30 +261,29 @@ impl PostgresMetadataProvider {
 impl MetadataProvider for PostgresMetadataProvider {
     fn get_current_snapshot(&self) -> Result<i64> {
         block_on(async {
-            let row =
-                sqlx::query("SELECT COALESCE(MAX(snapshot_id), 0) FROM ducklake_snapshot")
-                    .fetch_one(&self.pool)
-                    .await?;
+            let row = sqlx::query("SELECT COALESCE(MAX(snapshot_id), 0) FROM ducklake_snapshot")
+                .fetch_one(&self.pool)
+                .await?;
             Ok(row.try_get(0)?)
         })
     }
 
     fn get_data_path(&self) -> Result<String> {
         block_on(async {
-            let row = sqlx::query(
-                "SELECT value FROM ducklake_metadata WHERE key = $1 AND scope = $2",
-            )
-            .bind("data_path")
-            .bind("")
-            .fetch_optional(&self.pool)
-            .await?;
+            let row =
+                sqlx::query("SELECT value FROM ducklake_metadata WHERE key = $1 AND scope = $2")
+                    .bind("data_path")
+                    .bind("")
+                    .fetch_optional(&self.pool)
+                    .await?;
 
             match row {
                 Some(r) => Ok(r.try_get(0)?),
                 None => Err(crate::error::DuckLakeError::InvalidConfig(
                     "Missing required catalog metadata: 'data_path' not configured. \
-                     The catalog may be uninitialized or corrupted.".to_string()
-                ))
+                     The catalog may be uninitialized or corrupted."
+                        .to_string(),
+                )),
             }
         })
     }
@@ -299,9 +302,8 @@ impl MetadataProvider for PostgresMetadataProvider {
                     let snapshot_id: i64 = row.try_get(0)?;
                     // Format timestamp in Rust for determinism (not SQL CAST)
                     let timestamp: Option<NaiveDateTime> = row.try_get(1)?;
-                    let timestamp_str = timestamp.map(|ts: NaiveDateTime| {
-                        ts.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
-                    });
+                    let timestamp_str = timestamp
+                        .map(|ts: NaiveDateTime| ts.format("%Y-%m-%d %H:%M:%S%.6f").to_string());
 
                     Ok(SnapshotMetadata {
                         snapshot_id,
