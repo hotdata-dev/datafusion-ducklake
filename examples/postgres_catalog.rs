@@ -13,14 +13,13 @@
 //!   cargo run --example postgres_catalog --features metadata-postgres
 //! ```
 
-use datafusion::prelude::*;
-use datafusion_ducklake::{DuckLakeCatalog, PostgresMetadataProvider};
-use std::sync::Arc;
-
 #[cfg(feature = "metadata-postgres")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use datafusion::prelude::*;
+    use datafusion_ducklake::{DuckLakeCatalog, PostgresMetadataProvider};
     use std::env;
+    use std::sync::Arc;
 
     println!("==> PostgreSQL catalog example\n");
 
