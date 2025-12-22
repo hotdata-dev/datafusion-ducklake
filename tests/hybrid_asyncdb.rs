@@ -372,8 +372,7 @@ mod tests {
         );
 
         // Avoid double-rewrite
-        let result =
-            HybridDuckLakeDB::rewrite_table_references("SELECT * FROM ducklake.main.test");
+        let result = HybridDuckLakeDB::rewrite_table_references("SELECT * FROM ducklake.main.test");
         assert_eq!(result, "SELECT * FROM ducklake.main.test");
     }
 }
