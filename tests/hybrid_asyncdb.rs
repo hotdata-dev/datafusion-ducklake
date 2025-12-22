@@ -304,6 +304,7 @@ mod tests {
 
     #[test]
     fn test_write_detection() {
+        // Write operations - routed to DuckDB
         assert!(HybridDuckLakeDB::is_write_statement(
             "CREATE TABLE foo (id INT)"
         ));
@@ -318,11 +319,20 @@ mod tests {
         assert!(HybridDuckLakeDB::is_write_statement(
             "ALTER TABLE foo ADD COLUMN bar INT"
         ));
+
+        // Transaction control - routed to DuckDB
         assert!(HybridDuckLakeDB::is_write_statement("BEGIN"));
         assert!(HybridDuckLakeDB::is_write_statement("COMMIT"));
+        assert!(HybridDuckLakeDB::is_write_statement("ROLLBACK"));
 
+        // Catalog management - routed to DuckDB
+        assert!(HybridDuckLakeDB::is_write_statement("USE ducklake"));
+        assert!(HybridDuckLakeDB::is_write_statement("SHOW TABLES"));
+        assert!(HybridDuckLakeDB::is_write_statement("CALL some_procedure()"));
+
+        // Read operations - routed to DataFusion
         assert!(!HybridDuckLakeDB::is_write_statement("SELECT * FROM foo"));
-        assert!(!HybridDuckLakeDB::is_write_statement("SHOW TABLES"));
+        assert!(!HybridDuckLakeDB::is_write_statement("WITH cte AS (...) SELECT ..."));
     }
 
     #[test]
