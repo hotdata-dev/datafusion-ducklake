@@ -34,7 +34,6 @@ anyhow = "1.0"
 aws-sdk-s3 = "1.75"
 aws-credential-types = "1.2"
 sqllogictest = "0.23"
-uuid = { version = "1.0", features = ["v4"] }
 
 [features]
 # Allow skipping tests that use docker (in CI, macos doesn't support docker).

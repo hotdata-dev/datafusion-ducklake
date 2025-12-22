@@ -199,6 +199,77 @@ pub fn create_catalog_filter_pushdown(catalog_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Creates a catalog with an empty table (no data)
+///
+/// Table schema:
+/// - tbl (i INT)
+/// - 0 rows (after inserting and deleting)
+pub fn create_catalog_empty_table(catalog_path: &Path) -> Result<()> {
+    let conn = duckdb::Connection::open_in_memory()?;
+
+    conn.execute("INSTALL ducklake;", [])?;
+    conn.execute("LOAD ducklake;", [])?;
+
+    let ducklake_path = format!("ducklake:{}", catalog_path.display());
+    conn.execute(&format!("ATTACH '{}' AS test_catalog;", ducklake_path), [])?;
+
+    conn.execute(
+        "CREATE TABLE test_catalog.tbl (
+            i INTEGER
+        );",
+        [],
+    )?;
+
+    // Insert a dummy row to create the file structure
+    conn.execute("INSERT INTO test_catalog.tbl VALUES (1);", [])?;
+
+    // Delete it to make the table effectively empty
+    conn.execute("DELETE FROM test_catalog.tbl WHERE i = 1;", [])?;
+
+    Ok(())
+}
+
+/// Creates a catalog matching ducklake_basic.test scenario
+///
+/// Tables:
+/// - test (i INT, j INT) with 4 rows: (1,2), (NULL,3), (4,5), (6,7)
+/// - test2 (j VARCHAR, date DATE) with 1 row: ('hello world', '1992-01-01')
+pub fn create_catalog_basic_test(catalog_path: &Path) -> Result<()> {
+    let conn = duckdb::Connection::open_in_memory()?;
+
+    conn.execute("INSTALL ducklake;", [])?;
+    conn.execute("LOAD ducklake;", [])?;
+
+    let ducklake_path = format!("ducklake:{}", catalog_path.display());
+    conn.execute(&format!("ATTACH '{}' AS test_catalog;", ducklake_path), [])?;
+
+    // Create first table: test(i INTEGER, j INTEGER)
+    conn.execute(
+        "CREATE TABLE test_catalog.test (
+            i INTEGER,
+            j INTEGER
+        );",
+        [],
+    )?;
+
+    // Insert data in two batches (as in original test)
+    conn.execute(
+        "INSERT INTO test_catalog.test VALUES (1, 2), (NULL, 3);",
+        [],
+    )?;
+
+    conn.execute("INSERT INTO test_catalog.test VALUES (4, 5), (6, 7);", [])?;
+
+    // Create second table: test2 with VARCHAR and DATE
+    conn.execute(
+        "CREATE TABLE test_catalog.test2 AS
+         SELECT 'hello world' AS j, DATE '1992-01-01' AS date;",
+        [],
+    )?;
+
+    Ok(())
+}
+
 /// Helper to convert anyhow errors to DataFusion errors
 ///
 /// This is useful for converting anyhow::Error to DataFusionError in test code.
