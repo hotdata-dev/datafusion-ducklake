@@ -20,8 +20,6 @@
 //! It REQUIRES being called from within a **Tokio multi-threaded runtime**.
 //! Calling from a non-Tokio context or single-threaded runtime will panic.
 
-#![cfg(feature = "metadata-postgres")]
-
 use crate::Result;
 use crate::metadata_provider::{
     ColumnWithTable, DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, FileWithTable,
