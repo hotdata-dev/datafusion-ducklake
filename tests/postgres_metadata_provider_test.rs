@@ -333,7 +333,7 @@ async fn populate_from_duckdb_catalog(
                 .get_table_files_for_select(table.table_id, current_snapshot.snapshot_id)?;
 
             for (file_idx, file) in files.iter().enumerate() {
-                let data_file_id = (table.table_id * 1000 + file_idx as i64 + 1) as i64;
+                let data_file_id = table.table_id * 1000 + file_idx as i64 + 1;
 
                 sqlx::query(
                     "INSERT INTO ducklake_data_file (data_file_id, table_id, path, path_is_relative, file_size_bytes, footer_size)
