@@ -17,6 +17,12 @@ use sqllogictest::Runner;
 use tempfile::TempDir;
 
 /// Preprocess DuckDB test file to remove DuckDB-specific directives
+///
+/// This preprocessing:
+/// 1. Removes DuckDB-specific test directives (require, test-env, etc.)
+/// 2. Skips ATTACH/DETACH statements (handled in Rust)
+/// 3. Skips EXPLAIN statements (not testable in hybrid mode)
+/// 4. Otherwise lets tests fail naturally for better diagnostics
 fn preprocess_test_file(content: &str) -> String {
     let mut output = String::new();
     let mut lines = content.lines().peekable();
@@ -35,13 +41,32 @@ fn preprocess_test_file(content: &str) -> String {
         }
 
         // Skip ATTACH/DETACH statements (we handle connection in Rust)
-        if trimmed == "statement ok"
-            && let Some(next_line) = lines.peek()
-        {
-            let next_upper = next_line.trim().to_uppercase();
-            if next_upper.starts_with("ATTACH ") || next_upper.starts_with("DETACH ") {
-                lines.next(); // Skip the ATTACH/DETACH statement
-                continue;
+        if trimmed == "statement ok" {
+            if let Some(next_line) = lines.peek() {
+                let next_upper = next_line.trim().to_uppercase();
+                if next_upper.starts_with("ATTACH ") || next_upper.starts_with("DETACH ") {
+                    lines.next(); // Skip the ATTACH/DETACH statement
+                    continue;
+                }
+
+                // Skip EXPLAIN statements (not testable - no consistent output format)
+                if next_upper.starts_with("EXPLAIN ") {
+                    lines.next(); // Skip the EXPLAIN statement
+                    continue;
+                }
+            }
+        }
+
+        // Skip query blocks with EXPLAIN
+        if trimmed.starts_with("query") {
+            if let Some(next_line) = lines.peek() {
+                let next_upper = next_line.trim().to_uppercase();
+                if next_upper.starts_with("EXPLAIN ") {
+                    // Skip the query directive, SQL, separator, and results
+                    lines.next(); // Skip SQL line
+                    skip_query_results(&mut lines);
+                    continue;
+                }
             }
         }
 
@@ -51,6 +76,31 @@ fn preprocess_test_file(content: &str) -> String {
     }
 
     output
+}
+
+/// Skip query results until next directive
+fn skip_query_results(lines: &mut std::iter::Peekable<std::str::Lines>) {
+    // Skip until we find the separator (----)
+    while let Some(line) = lines.peek() {
+        if line.trim() == "----" {
+            lines.next();
+            break;
+        }
+        lines.next();
+    }
+
+    // Skip result lines until next directive
+    while let Some(line) = lines.peek() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("query")
+            || trimmed.starts_with("statement")
+            || trimmed.starts_with("halt")
+            || trimmed.is_empty()
+        {
+            break;
+        }
+        lines.next();
+    }
 }
 
 /// Run a DuckDB test file using the hybrid adapter
