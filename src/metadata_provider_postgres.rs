@@ -1,24 +1,4 @@
 //! PostgreSQL metadata provider for DuckLake catalogs.
-//!
-//! This module provides a MetadataProvider implementation backed by PostgreSQL,
-//! enabling DuckLake catalog metadata to be stored in PostgreSQL databases
-//! (including managed services like Amazon RDS, Google Cloud SQL, Azure Database).
-//!
-//! ## Snapshot Semantics
-//!
-//! This provider implements temporal queries using snapshot IDs with the following model:
-//! - `begin_snapshot`: **INCLUSIVE** - row becomes visible at this snapshot (>=)
-//! - `end_snapshot`: **EXCLUSIVE** - row becomes invisible at this snapshot (<)
-//! - `end_snapshot IS NULL`: row is currently active (no end)
-//!
-//! Example: A row with begin_snapshot=5, end_snapshot=10 is visible for snapshots 5,6,7,8,9
-//! but NOT for snapshot 10.
-//!
-//! ## Runtime Requirements
-//!
-//! ⚠️ This provider uses async sqlx bridged to sync MetadataProvider trait via `block_on`.
-//! It REQUIRES being called from within a **Tokio multi-threaded runtime**.
-//! Calling from a non-Tokio context or single-threaded runtime will panic.
 
 use crate::Result;
 use crate::metadata_provider::{
@@ -29,17 +9,6 @@ use sqlx::Row;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::types::chrono::NaiveDateTime;
 
-/// Helper macro to bind the same value multiple times
-///
-/// Reduces repetition when binding snapshot_id to multiple parameters.
-/// Only use when all parameters are identical - don't hide differences!
-///
-/// Example:
-/// ```rust
-/// bind_repeat!(query, snapshot_id, 4)
-/// // Equivalent to:
-/// query.bind(snapshot_id).bind(snapshot_id).bind(snapshot_id).bind(snapshot_id)
-/// ```
 macro_rules! bind_repeat {
     ($query:expr, $value:expr, 1) => {
         $query.bind($value)
@@ -64,195 +33,23 @@ macro_rules! bind_repeat {
     };
 }
 
-/// PostgreSQL-based metadata provider for DuckLake catalogs
+/// PostgreSQL-based metadata provider for DuckLake catalogs.
 #[derive(Debug, Clone)]
 pub struct PostgresMetadataProvider {
-    /// Connection pool for PostgreSQL database
-    ///
-    /// This is public to allow test access, but should not be used directly
-    /// in normal usage. Use the MetadataProvider trait methods instead.
     pub pool: PgPool,
 }
 
 impl PostgresMetadataProvider {
-    /// Create a new PostgreSQL metadata provider
-    ///
-    /// This automatically initializes the DuckLake catalog schema if it doesn't exist.
-    /// The initialization is idempotent and safe to call multiple times or concurrently.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Connection to PostgreSQL fails
-    /// - Schema initialization fails (rare, typically permissions issue)
+    /// Creates a new provider for an existing DuckLake catalog.
     pub async fn new(connection_string: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .connect(connection_string)
             .await?;
 
-        let provider = Self {
+        Ok(Self {
             pool,
-        };
-
-        // Automatically initialize schema - this is idempotent and safe
-        provider.init_schema().await?;
-
-        Ok(provider)
-    }
-
-    /// Initialize the DuckLake catalog schema in PostgreSQL
-    ///
-    /// This method is called automatically by `new()` but can also be called explicitly.
-    /// It is idempotent (safe to call multiple times) and uses `CREATE TABLE IF NOT EXISTS`.
-    pub async fn init_schema(&self) -> Result<()> {
-        // Create all tables
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ducklake_snapshot (
-                snapshot_id BIGINT PRIMARY KEY,
-                snapshot_time TIMESTAMP
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ducklake_schema (
-                schema_id BIGINT PRIMARY KEY,
-                schema_name VARCHAR NOT NULL,
-                path VARCHAR NOT NULL,
-                path_is_relative BOOLEAN NOT NULL,
-                begin_snapshot BIGINT NOT NULL,
-                end_snapshot BIGINT
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ducklake_table (
-                table_id BIGINT PRIMARY KEY,
-                schema_id BIGINT NOT NULL,
-                table_name VARCHAR NOT NULL,
-                path VARCHAR NOT NULL,
-                path_is_relative BOOLEAN NOT NULL,
-                begin_snapshot BIGINT NOT NULL,
-                end_snapshot BIGINT,
-                FOREIGN KEY (schema_id) REFERENCES ducklake_schema(schema_id)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ducklake_column (
-                column_id BIGINT PRIMARY KEY,
-                table_id BIGINT NOT NULL,
-                column_name VARCHAR NOT NULL,
-                column_type VARCHAR NOT NULL,
-                column_order INTEGER NOT NULL,
-                FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ducklake_data_file (
-                data_file_id BIGINT PRIMARY KEY,
-                table_id BIGINT NOT NULL,
-                path VARCHAR NOT NULL,
-                path_is_relative BOOLEAN NOT NULL,
-                file_size_bytes BIGINT NOT NULL,
-                footer_size BIGINT,
-                FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ducklake_delete_file (
-                delete_file_id BIGINT PRIMARY KEY,
-                data_file_id BIGINT NOT NULL,
-                table_id BIGINT NOT NULL,
-                path VARCHAR NOT NULL,
-                path_is_relative BOOLEAN NOT NULL,
-                file_size_bytes BIGINT NOT NULL,
-                footer_size BIGINT,
-                delete_count BIGINT,
-                begin_snapshot BIGINT NOT NULL,
-                end_snapshot BIGINT,
-                FOREIGN KEY (data_file_id) REFERENCES ducklake_data_file(data_file_id),
-                FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS ducklake_metadata (
-                key VARCHAR NOT NULL,
-                value VARCHAR NOT NULL,
-                scope VARCHAR NOT NULL DEFAULT '',
-                PRIMARY KEY (key, scope)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Create indexes for query performance
-        // All use IF NOT EXISTS for idempotency
-
-        // Index for snapshot-based schema queries (WHERE snapshot >= begin AND snapshot < end)
-        // Improves: list_schemas, get_schema_by_name, list_all_tables
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_schema_snapshot ON ducklake_schema(begin_snapshot, end_snapshot)")
-            .execute(&self.pool)
-            .await?;
-
-        // Index for table lookup by schema (WHERE schema_id = ?)
-        // Improves: list_tables, get_table_by_name, table_exists
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_table_schema ON ducklake_table(schema_id)")
-            .execute(&self.pool)
-            .await?;
-
-        // Index for snapshot-based table queries (WHERE snapshot >= begin AND snapshot < end)
-        // Improves: list_tables, get_table_by_name, table_exists, list_all_tables
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_table_snapshot ON ducklake_table(begin_snapshot, end_snapshot)")
-            .execute(&self.pool)
-            .await?;
-
-        // Partial unique indexes to prevent duplicate active metadata
-        // These enforce uniqueness only for rows with end_snapshot IS NULL (currently active)
-
-        // Ensure only one active schema with a given name
-        // Prevents ambiguous get_schema_by_name() results
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_name_active
-             ON ducklake_schema(schema_name) WHERE end_snapshot IS NULL",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Ensure only one active table with a given name per schema
-        // Prevents ambiguous get_table_by_name() results
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_table_name_active
-             ON ducklake_table(schema_id, table_name) WHERE end_snapshot IS NULL",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Ensure column names are unique within a table
-        // Columns are not temporal (no end_snapshot), so enforce globally per table
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_column_name_unique
-             ON ducklake_column(table_id, column_name)",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+        })
     }
 }
 
@@ -298,7 +95,6 @@ impl MetadataProvider for PostgresMetadataProvider {
             rows.into_iter()
                 .map(|row| {
                     let snapshot_id: i64 = row.try_get(0)?;
-                    // Format timestamp in Rust for determinism (not SQL CAST)
                     let timestamp: Option<NaiveDateTime> = row.try_get(1)?;
                     let timestamp_str = timestamp
                         .map(|ts: NaiveDateTime| ts.format("%Y-%m-%d %H:%M:%S%.6f").to_string());
@@ -393,13 +189,6 @@ impl MetadataProvider for PostgresMetadataProvider {
         snapshot_id: i64,
     ) -> Result<Vec<DuckLakeTableFile>> {
         block_on(async {
-            // NOTE: ducklake_data_file does NOT have begin_snapshot/end_snapshot columns.
-            // Data files are implicitly snapshot-scoped through their parent table.
-            // Since this method receives table_id (already filtered by snapshot at table level),
-            // we don't need additional snapshot filtering on data_file rows.
-            //
-            // However, ducklake_delete_file IS explicitly snapshot-scoped (has begin/end).
-            // We apply snapshot filtering to the LEFT JOIN to get correct delete files.
             let rows = sqlx::query(
                 "SELECT
                     data.data_file_id,
@@ -621,9 +410,6 @@ impl MetadataProvider for PostgresMetadataProvider {
 
     fn list_all_files(&self, snapshot_id: i64) -> Result<Vec<FileWithTable>> {
         block_on(async {
-            // NOTE: ducklake_data_file is NOT snapshot-scoped (no begin/end columns).
-            // Snapshot filtering happens via schema+table JOINs (both are snapshot-scoped).
-            // Only ducklake_delete_file needs explicit snapshot filtering in LEFT JOIN.
             let rows = sqlx::query(
                 "SELECT
                     s.schema_name,
@@ -692,7 +478,6 @@ impl MetadataProvider for PostgresMetadataProvider {
                             delete_file,
                             row_id_start: None,
                             snapshot_id: None,
-                            // Propagate errors instead of silently swallowing with .ok().flatten()
                             max_row_count: row.try_get(12)?,
                         },
                     })

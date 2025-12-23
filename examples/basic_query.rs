@@ -26,7 +26,7 @@
 //! With PostgreSQL catalog (requires --features metadata-postgres):
 //! ```bash
 //! cargo run --example basic_query --features metadata-postgres \
-//!   "postgresql://postgres:postgres@localhost:5432/postgres" \
+//!   "postgresql://user:password@localhost:5432/postgres" \
 //!   "SELECT * FROM main.users"
 //! ```
 

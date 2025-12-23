@@ -26,28 +26,159 @@ use datafusion_ducklake::{
     DuckLakeCatalog, DuckdbMetadataProvider, PostgresMetadataProvider,
     metadata_provider::MetadataProvider,
 };
+use sqlx::PgPool;
 use std::sync::Arc;
 use tempfile::TempDir;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
+
+/// Initialize DuckLake catalog schema in PostgreSQL (for tests only)
+async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ducklake_snapshot (
+            snapshot_id BIGINT PRIMARY KEY,
+            snapshot_time TIMESTAMP
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ducklake_schema (
+            schema_id BIGINT PRIMARY KEY,
+            schema_name VARCHAR NOT NULL,
+            path VARCHAR NOT NULL,
+            path_is_relative BOOLEAN NOT NULL,
+            begin_snapshot BIGINT NOT NULL,
+            end_snapshot BIGINT
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ducklake_table (
+            table_id BIGINT PRIMARY KEY,
+            schema_id BIGINT NOT NULL,
+            table_name VARCHAR NOT NULL,
+            path VARCHAR NOT NULL,
+            path_is_relative BOOLEAN NOT NULL,
+            begin_snapshot BIGINT NOT NULL,
+            end_snapshot BIGINT,
+            FOREIGN KEY (schema_id) REFERENCES ducklake_schema(schema_id)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ducklake_column (
+            column_id BIGINT PRIMARY KEY,
+            table_id BIGINT NOT NULL,
+            column_name VARCHAR NOT NULL,
+            column_type VARCHAR NOT NULL,
+            column_order INTEGER NOT NULL,
+            FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ducklake_data_file (
+            data_file_id BIGINT PRIMARY KEY,
+            table_id BIGINT NOT NULL,
+            path VARCHAR NOT NULL,
+            path_is_relative BOOLEAN NOT NULL,
+            file_size_bytes BIGINT NOT NULL,
+            footer_size BIGINT,
+            FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ducklake_delete_file (
+            delete_file_id BIGINT PRIMARY KEY,
+            data_file_id BIGINT NOT NULL,
+            table_id BIGINT NOT NULL,
+            path VARCHAR NOT NULL,
+            path_is_relative BOOLEAN NOT NULL,
+            file_size_bytes BIGINT NOT NULL,
+            footer_size BIGINT,
+            delete_count BIGINT,
+            begin_snapshot BIGINT NOT NULL,
+            end_snapshot BIGINT,
+            FOREIGN KEY (data_file_id) REFERENCES ducklake_data_file(data_file_id),
+            FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ducklake_metadata (
+            key VARCHAR NOT NULL,
+            value VARCHAR NOT NULL,
+            scope VARCHAR NOT NULL DEFAULT '',
+            PRIMARY KEY (key, scope)
+        )",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_schema_snapshot ON ducklake_schema(begin_snapshot, end_snapshot)")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_table_schema ON ducklake_table(schema_id)")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_table_snapshot ON ducklake_table(begin_snapshot, end_snapshot)")
+        .execute(pool)
+        .await?;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_name_active
+         ON ducklake_schema(schema_name) WHERE end_snapshot IS NULL",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_table_name_active
+         ON ducklake_table(schema_id, table_name) WHERE end_snapshot IS NULL",
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_column_name_unique
+         ON ducklake_column(table_id, column_name)",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
 
 /// Helper to create a PostgreSQL provider with initialized schema
 async fn create_postgres_provider() -> anyhow::Result<(
     PostgresMetadataProvider,
     testcontainers::ContainerAsync<Postgres>,
 )> {
-    // Start PostgreSQL container
     let container = Postgres::default().start().await?;
 
-    // Get connection string
     let host = "127.0.0.1";
     let port = container.get_host_port_ipv4(5432).await?;
     let conn_str = format!("postgresql://postgres:postgres@{}:{}/postgres", host, port);
 
-    // Create provider (schema is initialized automatically in new())
     let provider = PostgresMetadataProvider::new(&conn_str)
         .await
         .expect("Failed to create provider");
+    init_schema(&provider.pool).await?;
 
     Ok((provider, container))
 }
@@ -388,8 +519,7 @@ async fn test_schema_initialization_idempotent() {
     let (provider, _container) = create_postgres_provider().await.unwrap();
 
     // Initialize schema again - should be idempotent
-    provider
-        .init_schema()
+    init_schema(&provider.pool)
         .await
         .expect("Schema initialization should be idempotent");
 
