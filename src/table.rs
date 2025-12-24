@@ -320,24 +320,32 @@ impl TableProvider for DuckLakeTable {
             execs.push(exec);
         }
 
+        // Handle empty tables (no data files)
+        if execs.is_empty() {
+            use datafusion::physical_plan::empty::EmptyExec;
+            let projected_schema = match projection {
+                Some(proj) => {
+                    let fields: Vec<_> =
+                        proj.iter().map(|&i| self.schema.field(i).clone()).collect();
+                    Arc::new(Schema::new(fields))
+                },
+                None => self.schema.clone(),
+            };
+            return Ok(Arc::new(EmptyExec::new(projected_schema)));
+        }
+
         // Combine execution plans
         combine_execution_plans(execs)
     }
 }
 
 /// Combines multiple execution plans into a single plan
-///
-/// Returns an error if no plans are provided, a single plan if only one exists,
-/// or a UnionExec if multiple plans need to be combined.
 fn combine_execution_plans(
     execs: Vec<Arc<dyn ExecutionPlan>>,
 ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-    if execs.is_empty() {
-        Err(DataFusionError::Internal("No data files found".into()))
-    } else if execs.len() == 1 {
+    if execs.len() == 1 {
         Ok(execs.into_iter().next().unwrap())
     } else {
-        // Use UnionExec to combine multiple file scans
         use datafusion::physical_plan::union::UnionExec;
         Ok(Arc::new(UnionExec::new(execs)))
     }
