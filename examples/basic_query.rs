@@ -1,7 +1,7 @@
 //! Basic DuckLake query example with snapshot isolation
 //!
 //! This example demonstrates how to:
-//! 1. Create a DuckLake catalog from a DuckDB catalog file
+//! 1. Create a DuckLake catalog from DuckDB or PostgreSQL
 //! 2. Bind the catalog to a specific snapshot for query consistency
 //! 3. Register it with DataFusion
 //! 4. Execute a simple SELECT query
@@ -16,14 +16,24 @@
 //! To query data at different points in time, create separate catalogs bound to
 //! different snapshot IDs.
 //!
-//! To run this example, you need:
-//! - A DuckDB database file with DuckLake tables
-//! - Parquet data files referenced by the catalog
+//! ## Usage
 //!
-//! Usage: cargo run --example basic_query <catalog.db> <sql>
+//! With DuckDB catalog:
+//! ```bash
+//! cargo run --example basic_query catalog.db "SELECT * FROM main.users"
+//! ```
+//!
+//! With PostgreSQL catalog (requires --features metadata-postgres):
+//! ```bash
+//! cargo run --example basic_query --features metadata-postgres \
+//!   "postgresql://user:password@localhost:5432/postgres" \
+//!   "SELECT * FROM main.users"
+//! ```
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
+#[cfg(feature = "metadata-postgres")]
+use datafusion_ducklake::PostgresMetadataProvider;
 use datafusion_ducklake::{
     DuckLakeCatalog, DuckdbMetadataProvider, MetadataProvider, register_ducklake_functions,
 };
@@ -38,25 +48,51 @@ use url::Url;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: cargo run --example basic_query catalog.db sql");
+        eprintln!("Usage:");
+        eprintln!("  DuckDB:     cargo run --example basic_query catalog.db \"SQL\"");
+        eprintln!(
+            "  PostgreSQL: cargo run --example basic_query --features metadata-postgres \"postgresql://...\" \"SQL\""
+        );
         exit(1);
     }
-    let catalog_path = &args[1];
+    let catalog_source = &args[1];
     let sql = &args[2];
 
-    // // Path to your DuckLake catalog database
-    // let catalog_path = "test_catalog.db";
+    // Detect provider type based on input
+    let is_postgres = catalog_source.starts_with("postgresql://");
 
-    println!("Connecting to DuckLake catalog: {}", catalog_path);
+    if is_postgres {
+        #[cfg(not(feature = "metadata-postgres"))]
+        {
+            eprintln!("Error: PostgreSQL support requires the 'metadata-postgres' feature");
+            eprintln!("Run with: cargo run --example basic_query --features metadata-postgres");
+            exit(1);
+        }
 
-    // Create the metadata provider
-    let provider = Arc::new(DuckdbMetadataProvider::new(catalog_path)?);
+        #[cfg(feature = "metadata-postgres")]
+        {
+            println!("Connecting to PostgreSQL catalog: {}", catalog_source);
+            let provider = Arc::new(PostgresMetadataProvider::new(catalog_source).await?);
+            let snapshot_id = provider.get_current_snapshot()?;
+            println!("Current snapshot ID: {}", snapshot_id);
+            run_query(provider, snapshot_id, sql).await?;
+        }
+    } else {
+        println!("Connecting to DuckDB catalog: {}", catalog_source);
+        let provider = Arc::new(DuckdbMetadataProvider::new(catalog_source)?);
+        let snapshot_id = provider.get_current_snapshot()?;
+        println!("Current snapshot ID: {}", snapshot_id);
+        run_query(provider, snapshot_id, sql).await?;
+    }
 
-    // Get the current snapshot ID
-    // This ensures query consistency - all metadata lookups will use this snapshot
-    let snapshot_id = provider.get_current_snapshot()?;
-    println!("Current snapshot ID: {}", snapshot_id);
+    Ok(())
+}
 
+async fn run_query(
+    provider: Arc<dyn MetadataProvider>,
+    snapshot_id: i64,
+    sql: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Create runtime and register object stores
     // For MinIO or S3, register the object store with the runtime
     let runtime = Arc::new(RuntimeEnv::default());
@@ -77,11 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the DuckLake catalog bound to the snapshot
     // This ensures all queries through this catalog see consistent data
     // from this specific snapshot, even if the underlying data changes
-    let ducklake_catalog = DuckLakeCatalog::with_snapshot(provider, snapshot_id)?;
-
-    // Alternative: Use the backward-compatible constructor that automatically
-    // binds to the current snapshot:
-    // let ducklake_catalog = DuckLakeCatalog::new(DuckdbMetadataProvider::new(catalog_path)?)?;
+    let ducklake_catalog = DuckLakeCatalog::with_snapshot(provider.clone(), snapshot_id)?;
 
     println!("✓ Connected to DuckLake catalog");
 
@@ -89,9 +121,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create DataFusion session context
     let ctx = SessionContext::new_with_config_rt(config, runtime.clone());
-
-    // Get the provider before moving the catalog
-    let provider = ducklake_catalog.provider();
 
     // Register the DuckLake catalog (standard DataFusion pattern)
     ctx.register_catalog("ducklake", Arc::new(ducklake_catalog));
@@ -121,9 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Example query (adjust schema and table names to match your data)
-    // Uncomment and modify this once you have actual DuckLake data:
-
+    // Execute the query
     println!("\nExecuting query...");
     let df = ctx.sql(sql).await?;
 
@@ -131,7 +158,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     df.show().await?;
 
     println!("\n✓ Example completed successfully!");
-    println!("\nTo run a query, create a DuckLake database and uncomment the query section.");
 
     Ok(())
 }

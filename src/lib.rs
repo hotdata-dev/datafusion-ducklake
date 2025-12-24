@@ -47,6 +47,10 @@ pub mod table;
 pub mod table_functions;
 pub mod types;
 
+// Multi-database metadata providers (optional, feature-gated)
+#[cfg(feature = "metadata-postgres")]
+pub mod metadata_provider_postgres;
+
 // Result type for DuckLake operations
 pub type Result<T> = std::result::Result<T, DuckLakeError>;
 
@@ -58,3 +62,7 @@ pub use metadata_provider_duckdb::DuckdbMetadataProvider;
 pub use schema::DuckLakeSchema;
 pub use table::DuckLakeTable;
 pub use table_functions::register_ducklake_functions;
+
+// Re-export multi-database metadata providers (feature-gated)
+#[cfg(feature = "metadata-postgres")]
+pub use metadata_provider_postgres::PostgresMetadataProvider;

@@ -17,6 +17,11 @@ pub enum DuckLakeError {
     #[error("DuckDB error: {0}")]
     DuckDb(#[from] duckdb::Error),
 
+    /// sqlx database error (for PostgreSQL metadata provider)
+    #[cfg(feature = "metadata-postgres")]
+    #[error("Database error: {0}")]
+    Sqlx(#[from] sqlx::Error),
+
     /// Catalog not found
     #[error("Catalog not found: {0}")]
     CatalogNotFound(String),

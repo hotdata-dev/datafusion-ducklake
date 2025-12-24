@@ -26,9 +26,12 @@ futures = "0.3"
 tracing = "0.1"
 thiserror = "2.0"
 
+# Multi-database metadata providers (optional)
+sqlx = { version = "0.8", features = ["runtime-tokio"], optional = true }
+
 [dev-dependencies]
 testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["minio"] }
+testcontainers-modules = { version = "0.11", features = ["minio", "postgres", "mysql"] }
 tempfile = "3.14"
 anyhow = "1.0"
 aws-sdk-s3 = "1.75"
@@ -37,3 +40,8 @@ aws-credential-types = "1.2"
 [features]
 # Allow skipping tests that use docker (in CI, macos doesn't support docker).
 skip-tests-with-docker = []
+
+# Metadata provider backends
+metadata-postgres = ["sqlx", "sqlx/postgres", "sqlx/chrono"]
+# Future: metadata-sqlite = ["sqlx", "sqlx/sqlite", "sqlx/chrono"]
+# Future: metadata-mysql = ["sqlx", "sqlx/mysql", "sqlx/chrono"]

@@ -324,3 +324,12 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     /// List all files across all tables for a snapshot
     fn list_all_files(&self, snapshot_id: i64) -> Result<Vec<FileWithTable>>;
 }
+
+#[cfg(feature = "metadata-postgres")]
+/// Helper function to bridge async sqlx operations to sync MetadataProvider trait
+pub(crate) fn block_on<F, T>(f: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(f))
+}
