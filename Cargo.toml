@@ -36,6 +36,7 @@ tempfile = "3.14"
 anyhow = "1.0"
 aws-sdk-s3 = "1.75"
 aws-credential-types = "1.2"
+sqllogictest = "0.23"
 
 [features]
 # Allow skipping tests that use docker (in CI, macos doesn't support docker).
