@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use arrow::array::Int64Array;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
@@ -135,12 +136,23 @@ async fn test_empty_table_with_filter() -> DataFusionResult<()> {
 async fn test_empty_table_aggregate() -> DataFusionResult<()> {
     let ctx = setup_empty_table_context("agg").await?;
 
-    let df = ctx.sql("SELECT COUNT(*) FROM ducklake.main.tbl").await?;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM ducklake.main.tbl")
+        .await?;
     let batches = df.collect().await?;
 
     // COUNT on empty table should return 1 row with value 0
-    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-    assert_eq!(total_rows, 1);
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    assert_eq!(batch.num_rows(), 1);
+
+    let cnt = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("COUNT should return Int64")
+        .value(0);
+    assert_eq!(cnt, 0, "COUNT(*) on empty table should be 0");
 
     Ok(())
 }
