@@ -320,21 +320,6 @@ impl TableProvider for DuckLakeTable {
             execs.push(exec);
         }
 
-        // Handle empty tables (no data files)
-        if execs.is_empty() {
-            // Return an EmptyExec for empty tables
-            use datafusion::physical_plan::empty::EmptyExec;
-            let projected_schema = match projection {
-                Some(proj) => {
-                    let fields: Vec<_> =
-                        proj.iter().map(|&i| self.schema.field(i).clone()).collect();
-                    Arc::new(Schema::new(fields))
-                },
-                None => self.schema.clone(),
-            };
-            return Ok(Arc::new(EmptyExec::new(projected_schema)));
-        }
-
         // Combine execution plans
         combine_execution_plans(execs)
     }
