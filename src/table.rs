@@ -324,11 +324,7 @@ impl TableProvider for DuckLakeTable {
         if execs.is_empty() {
             use datafusion::physical_plan::empty::EmptyExec;
             let projected_schema = match projection {
-                Some(proj) => {
-                    let fields: Vec<_> =
-                        proj.iter().map(|&i| self.schema.field(i).clone()).collect();
-                    Arc::new(Schema::new(fields))
-                },
+                Some(indices) => Arc::new(self.schema.project(indices)?),
                 None => self.schema.clone(),
             };
             return Ok(Arc::new(EmptyExec::new(projected_schema)));
