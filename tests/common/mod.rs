@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! Common test utilities for integration tests
 //!
 //! This module provides helper functions to generate DuckLake catalogs

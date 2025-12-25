@@ -14,6 +14,7 @@ pub enum DuckLakeError {
     Arrow(#[from] arrow::error::ArrowError),
 
     /// DuckDB error
+    #[cfg(feature = "metadata-duckdb")]
     #[error("DuckDB error: {0}")]
     DuckDb(#[from] duckdb::Error),
 

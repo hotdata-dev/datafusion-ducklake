@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! Concurrent query safety tests
 //!
 //! This test suite verifies that DataFusion-DuckLake is thread-safe and can handle

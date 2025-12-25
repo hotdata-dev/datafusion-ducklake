@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! Table provider tests
 //!
 //! Tests for DuckLakeTable functionality.

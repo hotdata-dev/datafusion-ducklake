@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-postgres")]
 //! PostgreSQL metadata provider tests
 //!
 //! This test suite verifies the PostgreSQL metadata provider implementation,
@@ -16,8 +17,6 @@
 //! - Snapshot isolation and temporal queries
 //! - Concurrent access and thread safety
 //! - Error handling and edge cases
-
-#![cfg(feature = "metadata-postgres")]
 
 mod common;
 
