@@ -18,8 +18,6 @@
 //! - Concurrent access and thread safety
 //! - Error handling and edge cases
 
-#![cfg(feature = "metadata-postgres")]
-
 mod common;
 
 use datafusion::prelude::*;
