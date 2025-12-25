@@ -32,7 +32,6 @@
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
-#[cfg(feature = "metadata-duckdb")]
 use datafusion_ducklake::DuckdbMetadataProvider;
 #[cfg(feature = "metadata-postgres")]
 use datafusion_ducklake::PostgresMetadataProvider;
@@ -78,21 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_query(provider, snapshot_id, sql).await?;
         }
     } else {
-        #[cfg(not(feature = "metadata-duckdb"))]
-        {
-            eprintln!("Error: DuckDB support requires the 'metadata-duckdb' feature");
-            eprintln!("Run with: cargo run --example basic_query --features metadata-duckdb");
-            exit(1);
-        }
-
-        #[cfg(feature = "metadata-duckdb")]
-        {
-            println!("Connecting to DuckDB catalog: {}", catalog_source);
-            let provider = Arc::new(DuckdbMetadataProvider::new(catalog_source)?);
-            let snapshot_id = provider.get_current_snapshot()?;
-            println!("Current snapshot ID: {}", snapshot_id);
-            run_query(provider, snapshot_id, sql).await?;
-        }
+        println!("Connecting to DuckDB catalog: {}", catalog_source);
+        let provider = Arc::new(DuckdbMetadataProvider::new(catalog_source)?);
+        let snapshot_id = provider.get_current_snapshot()?;
+        println!("Current snapshot ID: {}", snapshot_id);
+        run_query(provider, snapshot_id, sql).await?;
     }
 
     Ok(())
