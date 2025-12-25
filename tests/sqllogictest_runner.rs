@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! SQL Logic Test Runner using Hybrid DuckDB+DataFusion Adapter
 //!
 //! This runner executes DuckDB DuckLake tests using a hybrid approach:

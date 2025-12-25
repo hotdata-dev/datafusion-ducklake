@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! Integration tests for delete file filtering
 //!
 //! These tests verify that the delete file implementation correctly filters out

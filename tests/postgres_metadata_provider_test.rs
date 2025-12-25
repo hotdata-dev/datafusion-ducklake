@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-postgres")]
 //! PostgreSQL metadata provider tests
 //!
 //! This test suite verifies the PostgreSQL metadata provider implementation,

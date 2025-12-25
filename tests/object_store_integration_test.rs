@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! Integration test for object store support (S3/MinIO)
 //!
 //! This test verifies that DataFusion-DuckLake works correctly with object stores

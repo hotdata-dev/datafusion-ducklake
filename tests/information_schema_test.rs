@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! Integration tests for information_schema virtual tables and table functions
 
 use datafusion::prelude::*;

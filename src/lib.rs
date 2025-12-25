@@ -40,14 +40,15 @@ pub mod delete_filter;
 pub mod error;
 pub mod information_schema;
 pub mod metadata_provider;
-pub mod metadata_provider_duckdb;
 pub mod path_resolver;
 pub mod schema;
 pub mod table;
 pub mod table_functions;
 pub mod types;
 
-// Multi-database metadata providers (optional, feature-gated)
+// Metadata providers (feature-gated)
+#[cfg(feature = "metadata-duckdb")]
+pub mod metadata_provider_duckdb;
 #[cfg(feature = "metadata-postgres")]
 pub mod metadata_provider_postgres;
 
@@ -58,11 +59,12 @@ pub type Result<T> = std::result::Result<T, DuckLakeError>;
 pub use catalog::DuckLakeCatalog;
 pub use error::DuckLakeError;
 pub use metadata_provider::MetadataProvider;
-pub use metadata_provider_duckdb::DuckdbMetadataProvider;
 pub use schema::DuckLakeSchema;
 pub use table::DuckLakeTable;
 pub use table_functions::register_ducklake_functions;
 
-// Re-export multi-database metadata providers (feature-gated)
+// Re-export metadata providers (feature-gated)
+#[cfg(feature = "metadata-duckdb")]
+pub use metadata_provider_duckdb::DuckdbMetadataProvider;
 #[cfg(feature = "metadata-postgres")]
 pub use metadata_provider_postgres::PostgresMetadataProvider;

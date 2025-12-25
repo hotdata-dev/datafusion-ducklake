@@ -1,3 +1,4 @@
+#![cfg(feature = "metadata-duckdb")]
 //! Hybrid AsyncDB adapter for running DuckDB DuckLake tests
 //!
 //! This adapter uses a hybrid approach:
