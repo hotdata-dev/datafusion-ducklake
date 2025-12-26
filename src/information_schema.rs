@@ -705,6 +705,127 @@ impl TableProvider for FilesTable {
     }
 }
 
+/// Live table provider for table changes (CDC) - queries metadata for files added between snapshots
+#[derive(Debug)]
+pub struct TableChangesTable {
+    provider: Arc<dyn MetadataProvider>,
+    table_id: i64,
+    start_snapshot: i64,
+    end_snapshot: i64,
+    schema: SchemaRef,
+}
+
+impl TableChangesTable {
+    pub fn new(
+        provider: Arc<dyn MetadataProvider>,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> Self {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("snapshot_id", DataType::Int64, false),
+            Field::new("change_type", DataType::Utf8, false),
+            Field::new("file_path", DataType::Utf8, false),
+            Field::new("file_size_bytes", DataType::Int64, false),
+            Field::new("row_count", DataType::Int64, true),
+        ]));
+        Self {
+            provider,
+            table_id,
+            start_snapshot,
+            end_snapshot,
+            schema,
+        }
+    }
+
+    fn query_changes(&self) -> DataFusionResult<RecordBatch> {
+        // Get data files added (INSERT changes)
+        let data_files = self
+            .provider
+            .get_data_files_added_between_snapshots(
+                self.table_id,
+                self.start_snapshot,
+                self.end_snapshot,
+            )
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+
+        // Get delete files added (DELETE changes)
+        let delete_files = self
+            .provider
+            .get_delete_files_added_between_snapshots(
+                self.table_id,
+                self.start_snapshot,
+                self.end_snapshot,
+            )
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+
+        // Build arrays for all changes
+        let total_changes = data_files.len() + delete_files.len();
+        let mut snapshot_ids = Vec::with_capacity(total_changes);
+        let mut change_types = Vec::with_capacity(total_changes);
+        let mut file_paths = Vec::with_capacity(total_changes);
+        let mut file_sizes = Vec::with_capacity(total_changes);
+        let mut row_counts: Vec<Option<i64>> = Vec::with_capacity(total_changes);
+
+        // Add INSERT changes (data files added)
+        for data_file in &data_files {
+            snapshot_ids.push(data_file.begin_snapshot);
+            change_types.push("insert");
+            file_paths.push(data_file.file.path.as_str());
+            file_sizes.push(data_file.file.file_size_bytes);
+            row_counts.push(None); // Row count not available at metadata level
+        }
+
+        // Add DELETE changes (delete files added)
+        for delete_file in &delete_files {
+            snapshot_ids.push(delete_file.begin_snapshot);
+            change_types.push("delete");
+            file_paths.push(delete_file.delete_file.path.as_str());
+            file_sizes.push(delete_file.delete_file.file_size_bytes);
+            row_counts.push(delete_file.delete_count);
+        }
+
+        let snapshot_ids: ArrayRef = Arc::new(Int64Array::from(snapshot_ids));
+        let change_types: ArrayRef = Arc::new(StringArray::from(change_types));
+        let file_paths: ArrayRef = Arc::new(StringArray::from(file_paths));
+        let file_sizes: ArrayRef = Arc::new(Int64Array::from(file_sizes));
+        let row_counts: ArrayRef = Arc::new(Int64Array::from(row_counts));
+
+        RecordBatch::try_new(
+            self.schema.clone(),
+            vec![snapshot_ids, change_types, file_paths, file_sizes, row_counts],
+        )
+        .map_err(|e| datafusion::error::DataFusionError::ArrowError(Box::new(e), None))
+    }
+}
+
+#[async_trait::async_trait]
+impl TableProvider for TableChangesTable {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::View
+    }
+
+    async fn scan(
+        &self,
+        state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        filters: &[datafusion::prelude::Expr],
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let batch = self.query_changes()?;
+        let mem_table = MemTable::try_new(self.schema.clone(), vec![vec![batch]])?;
+        mem_table.scan(state, projection, filters, limit).await
+    }
+}
+
 /// Schema provider for information_schema
 ///
 /// Provides live metadata tables that query the catalog database on every access.
