@@ -1,10 +1,12 @@
 use crate::DuckLakeError;
 use crate::metadata_provider::{
-    ColumnWithTable, DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, FileWithTable,
-    MetadataProvider, SQL_GET_DATA_FILES, SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT,
-    SQL_GET_SCHEMA_BY_NAME, SQL_GET_TABLE_BY_NAME, SQL_GET_TABLE_COLUMNS, SQL_LIST_ALL_COLUMNS,
-    SQL_LIST_ALL_FILES, SQL_LIST_ALL_TABLES, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES,
-    SQL_TABLE_EXISTS, SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema,
+    ColumnWithTable, DataFileChange, DeleteFileChange, DuckLakeFileData, DuckLakeTableColumn,
+    DuckLakeTableFile, FileWithTable, MetadataProvider, SQL_GET_DATA_FILES,
+    SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS, SQL_GET_DATA_PATH,
+    SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS, SQL_GET_LATEST_SNAPSHOT, SQL_GET_SCHEMA_BY_NAME,
+    SQL_GET_TABLE_BY_NAME, SQL_GET_TABLE_COLUMNS, SQL_LIST_ALL_COLUMNS, SQL_LIST_ALL_FILES,
+    SQL_LIST_ALL_TABLES, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES, SQL_TABLE_EXISTS,
+    SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema,
 };
 use duckdb::AccessMode::ReadOnly;
 use duckdb::{Config, Connection, params};
@@ -374,6 +376,82 @@ impl MetadataProvider for DuckdbMetadataProvider {
                     })
                 },
             )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(files)
+    }
+
+    fn get_data_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> crate::Result<Vec<DataFileChange>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS)?;
+
+        let files = stmt
+            .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
+                let data_file_id: i64 = row.get(0)?;
+                let file = DuckLakeFileData {
+                    path: row.get(1)?,
+                    path_is_relative: row.get(2)?,
+                    file_size_bytes: row.get(3)?,
+                    footer_size: row.get(4)?,
+                    encryption_key: String::new(),
+                };
+                let begin_snapshot: i64 = row.get(5)?;
+
+                Ok(DataFileChange {
+                    data_file_id,
+                    file,
+                    begin_snapshot,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(files)
+    }
+
+    fn get_delete_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> crate::Result<Vec<DeleteFileChange>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS)?;
+
+        let files = stmt
+            .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
+                let delete_file_id: i64 = row.get(0)?;
+                let data_file_id: i64 = row.get(1)?;
+                let delete_file = DuckLakeFileData {
+                    path: row.get(2)?,
+                    path_is_relative: row.get(3)?,
+                    file_size_bytes: row.get(4)?,
+                    footer_size: row.get(5)?,
+                    encryption_key: String::new(),
+                };
+                let delete_count: Option<i64> = row.get(6)?;
+                let begin_snapshot: i64 = row.get(7)?;
+                let data_file = DuckLakeFileData {
+                    path: row.get(8)?,
+                    path_is_relative: row.get(9)?,
+                    file_size_bytes: row.get(10)?,
+                    footer_size: row.get(11)?,
+                    encryption_key: String::new(),
+                };
+
+                Ok(DeleteFileChange {
+                    delete_file_id,
+                    data_file_id,
+                    delete_file,
+                    delete_count,
+                    begin_snapshot,
+                    data_file,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
