@@ -100,7 +100,9 @@ pub struct DucklakeTableChangesFunction {
 
 impl DucklakeTableChangesFunction {
     pub fn new(provider: Arc<dyn MetadataProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+        }
     }
 
     /// Parse table name in format "schema.table" or just "table" (defaults to "main" schema)
@@ -132,7 +134,7 @@ impl TableFunctionImpl for DucklakeTableChangesFunction {
                     "First argument to ducklake_table_changes() must be a string literal \
                      (e.g., 'main.users' or 'users')"
                 );
-            }
+            },
         };
 
         // Parse start_snapshot argument
@@ -143,7 +145,7 @@ impl TableFunctionImpl for DucklakeTableChangesFunction {
                 return plan_err!(
                     "Second argument to ducklake_table_changes() must be an integer (start_snapshot)"
                 );
-            }
+            },
         };
 
         // Parse end_snapshot argument
@@ -154,8 +156,17 @@ impl TableFunctionImpl for DucklakeTableChangesFunction {
                 return plan_err!(
                     "Third argument to ducklake_table_changes() must be an integer (end_snapshot)"
                 );
-            }
+            },
         };
+
+        // Validate snapshot range
+        if start_snapshot > end_snapshot {
+            return plan_err!(
+                "start_snapshot ({}) must be less than or equal to end_snapshot ({})",
+                start_snapshot,
+                end_snapshot
+            );
+        }
 
         // Look up the table to get table_id
         let (schema_name, table_name_only) = Self::parse_table_name(&table_name);

@@ -41,9 +41,8 @@ mod integration_tests {
     /// Helper to create a context with catalog and register functions
     async fn create_context_with_functions(path: &str) -> DataFusionResult<SessionContext> {
         let provider = DuckdbMetadataProvider::new(path)?;
-        let provider_arc: Arc<dyn datafusion_ducklake::MetadataProvider> = Arc::new(
-            DuckdbMetadataProvider::new(path)?,
-        );
+        let provider_arc: Arc<dyn datafusion_ducklake::MetadataProvider> =
+            Arc::new(DuckdbMetadataProvider::new(path)?);
 
         let catalog = DuckLakeCatalog::new(provider)?;
 
@@ -253,6 +252,37 @@ mod integration_tests {
             .await;
 
         assert!(result.is_err(), "Should error for non-existent schema");
+
+        Ok(())
+    }
+
+    /// Test error handling for invalid snapshot range (start > end)
+    #[tokio::test]
+    async fn test_table_changes_invalid_snapshot_range() -> DataFusionResult<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let catalog_path = temp_dir.path().join("multi_snapshot.ducklake");
+
+        common::create_catalog_multiple_snapshots(&catalog_path)
+            .map_err(common::to_datafusion_error)?;
+
+        let ctx = create_context_with_functions(catalog_path.to_str().unwrap()).await?;
+
+        // Query with start_snapshot > end_snapshot
+        let result = ctx
+            .sql("SELECT * FROM ducklake_table_changes('main.events', 10, 5)")
+            .await;
+
+        assert!(
+            result.is_err(),
+            "Should error when start_snapshot > end_snapshot"
+        );
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("start_snapshot") && err_msg.contains("end_snapshot"),
+            "Error message should mention snapshot range, got: {}",
+            err_msg
+        );
 
         Ok(())
     }

@@ -759,37 +759,65 @@ impl TableChangesTable {
             )
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
-        // Build arrays for all changes
-        let total_changes = data_files.len() + delete_files.len();
-        let mut snapshot_ids = Vec::with_capacity(total_changes);
-        let mut change_types = Vec::with_capacity(total_changes);
-        let mut file_paths = Vec::with_capacity(total_changes);
-        let mut file_sizes = Vec::with_capacity(total_changes);
-        let mut row_counts: Vec<Option<i64>> = Vec::with_capacity(total_changes);
+        // Collect all changes into a sortable structure
+        struct ChangeRecord {
+            snapshot_id: i64,
+            change_type: &'static str,
+            file_path: String,
+            file_size_bytes: i64,
+            row_count: Option<i64>,
+        }
+
+        let mut changes: Vec<ChangeRecord> =
+            Vec::with_capacity(data_files.len() + delete_files.len());
 
         // Add INSERT changes (data files added)
         for data_file in &data_files {
-            snapshot_ids.push(data_file.begin_snapshot);
-            change_types.push("insert");
-            file_paths.push(data_file.file.path.as_str());
-            file_sizes.push(data_file.file.file_size_bytes);
-            row_counts.push(None); // Row count not available at metadata level
+            changes.push(ChangeRecord {
+                snapshot_id: data_file.begin_snapshot,
+                change_type: "insert",
+                file_path: data_file.file.path.clone(),
+                file_size_bytes: data_file.file.file_size_bytes,
+                row_count: None,
+            });
         }
 
         // Add DELETE changes (delete files added)
         for delete_file in &delete_files {
-            snapshot_ids.push(delete_file.begin_snapshot);
-            change_types.push("delete");
-            file_paths.push(delete_file.delete_file.path.as_str());
-            file_sizes.push(delete_file.delete_file.file_size_bytes);
-            row_counts.push(delete_file.delete_count);
+            changes.push(ChangeRecord {
+                snapshot_id: delete_file.begin_snapshot,
+                change_type: "delete",
+                file_path: delete_file.delete_file.path.clone(),
+                file_size_bytes: delete_file.delete_file.file_size_bytes,
+                row_count: delete_file.delete_count,
+            });
         }
 
-        let snapshot_ids: ArrayRef = Arc::new(Int64Array::from(snapshot_ids));
-        let change_types: ArrayRef = Arc::new(StringArray::from(change_types));
-        let file_paths: ArrayRef = Arc::new(StringArray::from(file_paths));
-        let file_sizes: ArrayRef = Arc::new(Int64Array::from(file_sizes));
-        let row_counts: ArrayRef = Arc::new(Int64Array::from(row_counts));
+        // Sort by snapshot_id for deterministic output
+        changes.sort_by_key(|c| c.snapshot_id);
+
+        // Build arrays from sorted changes
+        let snapshot_ids: ArrayRef = Arc::new(Int64Array::from(
+            changes.iter().map(|c| c.snapshot_id).collect::<Vec<_>>(),
+        ));
+        let change_types: ArrayRef = Arc::new(StringArray::from(
+            changes.iter().map(|c| c.change_type).collect::<Vec<_>>(),
+        ));
+        let file_paths: ArrayRef = Arc::new(StringArray::from(
+            changes
+                .iter()
+                .map(|c| c.file_path.as_str())
+                .collect::<Vec<_>>(),
+        ));
+        let file_sizes: ArrayRef = Arc::new(Int64Array::from(
+            changes
+                .iter()
+                .map(|c| c.file_size_bytes)
+                .collect::<Vec<_>>(),
+        ));
+        let row_counts: ArrayRef = Arc::new(Int64Array::from(
+            changes.iter().map(|c| c.row_count).collect::<Vec<_>>(),
+        ));
 
         RecordBatch::try_new(
             self.schema.clone(),
