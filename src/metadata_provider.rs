@@ -70,7 +70,12 @@ pub const SQL_TABLE_EXISTS: &str = "SELECT EXISTS(
 // Queries for table_changes (CDC) - files added/removed between snapshots
 
 pub const SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
-    SELECT data.begin_snapshot
+    SELECT
+        data.begin_snapshot,
+        data.path,
+        data.path_is_relative,
+        data.file_size_bytes,
+        data.footer_size
     FROM ducklake_data_file AS data
     WHERE data.table_id = ?
       AND data.begin_snapshot > ?
@@ -293,6 +298,10 @@ impl DuckLakeTableFile {
 #[derive(Debug, Clone)]
 pub struct DataFileChange {
     pub begin_snapshot: i64,
+    pub path: String,
+    pub path_is_relative: bool,
+    pub file_size_bytes: i64,
+    pub footer_size: Option<i64>,
 }
 
 #[derive(Debug, Clone)]

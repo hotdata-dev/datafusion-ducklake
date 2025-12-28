@@ -495,7 +495,12 @@ impl MetadataProvider for PostgresMetadataProvider {
     ) -> Result<Vec<DataFileChange>> {
         block_on(async {
             let rows = sqlx::query(
-                "SELECT data.begin_snapshot
+                "SELECT
+                    data.begin_snapshot,
+                    data.path,
+                    data.path_is_relative,
+                    data.file_size_bytes,
+                    data.footer_size
                 FROM ducklake_data_file AS data
                 WHERE data.table_id = $1
                   AND data.begin_snapshot > $2
@@ -512,6 +517,10 @@ impl MetadataProvider for PostgresMetadataProvider {
                 .map(|row| {
                     Ok(DataFileChange {
                         begin_snapshot: row.try_get(0)?,
+                        path: row.try_get(1)?,
+                        path_is_relative: row.try_get(2)?,
+                        file_size_bytes: row.try_get(3)?,
+                        footer_size: row.try_get(4)?,
                     })
                 })
                 .collect()

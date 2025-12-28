@@ -8,12 +8,31 @@ mod common;
 
 use std::sync::Arc;
 
-use arrow::array::{Array, StringArray};
+use arrow::array::{Array, Int32Array, StringArray};
 use arrow::record_batch::RecordBatch;
 use datafusion::error::Result as DataFusionResult;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider, register_ducklake_functions};
 use tempfile::TempDir;
+
+/// Helper to get i32 values from a column
+fn get_int32_column(batch: &RecordBatch, col_idx: usize) -> Vec<i32> {
+    let column = batch.column(col_idx);
+    let array = column
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .expect("Expected Int32Array");
+
+    (0..array.len())
+        .filter_map(|i| {
+            if array.is_null(i) {
+                None
+            } else {
+                Some(array.value(i))
+            }
+        })
+        .collect()
+}
 
 /// Helper to get string values from a column
 fn get_string_column(batch: &RecordBatch, col_idx: usize) -> Vec<String> {
@@ -79,7 +98,7 @@ mod integration_tests {
         Ok(())
     }
 
-    /// Test that ducklake_table_changes returns insert changes (data files added)
+    /// Test that ducklake_table_changes returns insert changes with actual row data
     #[tokio::test]
     async fn test_table_changes_inserts() -> DataFusionResult<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -90,35 +109,46 @@ mod integration_tests {
 
         let ctx = create_context_with_functions(catalog_path.to_str().unwrap()).await?;
 
-        // Query changes from snapshot 0 to current (should include all inserts)
+        // Query all columns including table data + CDC metadata
         let df = ctx
             .sql(
-                "SELECT snapshot_id, change_type FROM ducklake_table_changes('main.events', 0, 10)",
+                "SELECT id, event_type, value, snapshot_id, change_type FROM ducklake_table_changes('main.events', 0, 10) ORDER BY id",
             )
             .await?;
 
         let batches: Vec<RecordBatch> = df.collect().await?;
 
-        // Should have at least one insert change
+        // Should have rows from both inserts (5 total rows inserted)
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-        assert!(total_rows > 0, "Should have some changes");
+        assert_eq!(total_rows, 5, "Should have 5 inserted rows");
 
-        // Check that we have insert changes (change_type is column 1)
+        // Verify actual row data
+        let mut all_ids: Vec<i32> = Vec::new();
+        let mut all_change_types: Vec<String> = Vec::new();
         for batch in &batches {
-            let change_types = get_string_column(batch, 1);
-            for change_type in change_types {
-                assert!(
-                    change_type == "insert" || change_type == "delete",
-                    "Change type should be 'insert' or 'delete', got '{}'",
-                    change_type
-                );
-            }
+            all_ids.extend(get_int32_column(batch, 0)); // id column
+            all_change_types.extend(get_string_column(batch, 4)); // change_type column
+        }
+
+        // All rows should have ids 1-5
+        assert_eq!(all_ids, vec![1, 2, 3, 4, 5], "Should have ids 1-5");
+
+        // All changes should be inserts (Phase 2 INSERT-only)
+        for change_type in all_change_types {
+            assert_eq!(
+                change_type, "insert",
+                "All changes should be 'insert' in Phase 2"
+            );
         }
 
         Ok(())
     }
 
     /// Test that ducklake_table_changes returns delete changes (delete files added)
+    ///
+    /// NOTE: DELETE changes are NOT supported in Phase 2 INSERT-only.
+    /// This test verifies that no delete changes are returned (expected behavior for this phase).
+    /// Future phases will add DELETE support.
     #[tokio::test]
     async fn test_table_changes_deletes() -> DataFusionResult<()> {
         let temp_dir = TempDir::new().unwrap();
@@ -129,8 +159,7 @@ mod integration_tests {
 
         let ctx = create_context_with_functions(catalog_path.to_str().unwrap()).await?;
 
-        // Query only delete changes (from last snapshot which has the delete)
-        // We need to find the delete files by querying a range that includes the delete operation
+        // Query only delete changes - in Phase 2, there should be none
         let df = ctx
             .sql("SELECT snapshot_id, change_type FROM ducklake_table_changes('main.events', 0, 100) WHERE change_type = 'delete'")
             .await?;
@@ -138,10 +167,10 @@ mod integration_tests {
         let batches: Vec<RecordBatch> = df.collect().await?;
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
 
-        // Should have at least one delete change (we deleted row id=2)
-        assert!(
-            total_rows >= 1,
-            "Should have at least one delete change, got {}",
+        // Phase 2 INSERT-only: no delete changes expected
+        assert_eq!(
+            total_rows, 0,
+            "Phase 2 INSERT-only: no delete changes expected, got {}",
             total_rows
         );
 
@@ -189,16 +218,39 @@ mod integration_tests {
 
         let schema = df.schema();
 
-        // Verify the expected columns are present (Phase 1: only spec columns)
+        // Verify the expected columns are present (Phase 2: table columns + CDC columns)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
 
+        // Table columns (from events table)
+        assert!(
+            field_names.contains(&"id"),
+            "Schema should contain 'id' table column"
+        );
+        assert!(
+            field_names.contains(&"event_type"),
+            "Schema should contain 'event_type' table column"
+        );
+        assert!(
+            field_names.contains(&"value"),
+            "Schema should contain 'value' table column"
+        );
+
+        // CDC metadata columns
         assert!(
             field_names.contains(&"snapshot_id"),
-            "Schema should contain 'snapshot_id'"
+            "Schema should contain 'snapshot_id' CDC column"
         );
         assert!(
             field_names.contains(&"change_type"),
-            "Schema should contain 'change_type'"
+            "Schema should contain 'change_type' CDC column"
+        );
+
+        // Verify column order: table columns first, then CDC columns
+        assert_eq!(field_names.len(), 5, "Should have 5 columns total");
+        assert_eq!(
+            field_names,
+            vec!["id", "event_type", "value", "snapshot_id", "change_type"],
+            "Columns should be in order: table columns, then CDC columns"
         );
 
         Ok(())
