@@ -92,7 +92,9 @@ mod integration_tests {
 
         // Query changes from snapshot 0 to current (should include all inserts)
         let df = ctx
-            .sql("SELECT change_type, file_path FROM ducklake_table_changes('main.events', 0, 10)")
+            .sql(
+                "SELECT snapshot_id, change_type FROM ducklake_table_changes('main.events', 0, 10)",
+            )
             .await?;
 
         let batches: Vec<RecordBatch> = df.collect().await?;
@@ -101,9 +103,9 @@ mod integration_tests {
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert!(total_rows > 0, "Should have some changes");
 
-        // Check that we have insert changes
+        // Check that we have insert changes (change_type is column 1)
         for batch in &batches {
-            let change_types = get_string_column(batch, 0);
+            let change_types = get_string_column(batch, 1);
             for change_type in change_types {
                 assert!(
                     change_type == "insert" || change_type == "delete",
@@ -130,7 +132,7 @@ mod integration_tests {
         // Query only delete changes (from last snapshot which has the delete)
         // We need to find the delete files by querying a range that includes the delete operation
         let df = ctx
-            .sql("SELECT change_type, row_count FROM ducklake_table_changes('main.events', 0, 100) WHERE change_type = 'delete'")
+            .sql("SELECT snapshot_id, change_type FROM ducklake_table_changes('main.events', 0, 100) WHERE change_type = 'delete'")
             .await?;
 
         let batches: Vec<RecordBatch> = df.collect().await?;
@@ -187,7 +189,7 @@ mod integration_tests {
 
         let schema = df.schema();
 
-        // Verify the expected columns are present
+        // Verify the expected columns are present (Phase 1: only spec columns)
         let field_names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
 
         assert!(
@@ -197,18 +199,6 @@ mod integration_tests {
         assert!(
             field_names.contains(&"change_type"),
             "Schema should contain 'change_type'"
-        );
-        assert!(
-            field_names.contains(&"file_path"),
-            "Schema should contain 'file_path'"
-        );
-        assert!(
-            field_names.contains(&"file_size_bytes"),
-            "Schema should contain 'file_size_bytes'"
-        );
-        assert!(
-            field_names.contains(&"row_count"),
-            "Schema should contain 'row_count'"
         );
 
         Ok(())
