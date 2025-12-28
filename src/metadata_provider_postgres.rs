@@ -2,8 +2,9 @@
 
 use crate::Result;
 use crate::metadata_provider::{
-    ColumnWithTable, DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, FileWithTable,
-    MetadataProvider, SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema, block_on,
+    ColumnWithTable, DataFileChange, DeleteFileChange, DuckLakeFileData, DuckLakeTableColumn,
+    DuckLakeTableFile, FileWithTable, MetadataProvider, SchemaMetadata, SnapshotMetadata,
+    TableMetadata, TableWithSchema, block_on,
 };
 use sqlx::Row;
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -480,6 +481,68 @@ impl MetadataProvider for PostgresMetadataProvider {
                             snapshot_id: None,
                             max_row_count: row.try_get(12)?,
                         },
+                    })
+                })
+                .collect()
+        })
+    }
+
+    fn get_data_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> Result<Vec<DataFileChange>> {
+        block_on(async {
+            let rows = sqlx::query(
+                "SELECT data.begin_snapshot
+                FROM ducklake_data_file AS data
+                WHERE data.table_id = $1
+                  AND data.begin_snapshot > $2
+                  AND data.begin_snapshot <= $3
+                ORDER BY data.begin_snapshot",
+            )
+            .bind(table_id)
+            .bind(start_snapshot)
+            .bind(end_snapshot)
+            .fetch_all(&self.pool)
+            .await?;
+
+            rows.into_iter()
+                .map(|row| {
+                    Ok(DataFileChange {
+                        begin_snapshot: row.try_get(0)?,
+                    })
+                })
+                .collect()
+        })
+    }
+
+    fn get_delete_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> Result<Vec<DeleteFileChange>> {
+        block_on(async {
+            let rows = sqlx::query(
+                "SELECT del.begin_snapshot
+                FROM ducklake_delete_file AS del
+                WHERE del.table_id = $1
+                  AND del.begin_snapshot > $2
+                  AND del.begin_snapshot <= $3
+                ORDER BY del.begin_snapshot",
+            )
+            .bind(table_id)
+            .bind(start_snapshot)
+            .bind(end_snapshot)
+            .fetch_all(&self.pool)
+            .await?;
+
+            rows.into_iter()
+                .map(|row| {
+                    Ok(DeleteFileChange {
+                        begin_snapshot: row.try_get(0)?,
                     })
                 })
                 .collect()

@@ -1,10 +1,12 @@
 use crate::DuckLakeError;
 use crate::metadata_provider::{
-    ColumnWithTable, DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, FileWithTable,
-    MetadataProvider, SQL_GET_DATA_FILES, SQL_GET_DATA_PATH, SQL_GET_LATEST_SNAPSHOT,
-    SQL_GET_SCHEMA_BY_NAME, SQL_GET_TABLE_BY_NAME, SQL_GET_TABLE_COLUMNS, SQL_LIST_ALL_COLUMNS,
-    SQL_LIST_ALL_FILES, SQL_LIST_ALL_TABLES, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES,
-    SQL_TABLE_EXISTS, SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema,
+    ColumnWithTable, DataFileChange, DeleteFileChange, DuckLakeFileData, DuckLakeTableColumn,
+    DuckLakeTableFile, FileWithTable, MetadataProvider, SQL_GET_DATA_FILES,
+    SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS, SQL_GET_DATA_PATH,
+    SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS, SQL_GET_LATEST_SNAPSHOT, SQL_GET_SCHEMA_BY_NAME,
+    SQL_GET_TABLE_BY_NAME, SQL_GET_TABLE_COLUMNS, SQL_LIST_ALL_COLUMNS, SQL_LIST_ALL_FILES,
+    SQL_LIST_ALL_TABLES, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES, SQL_TABLE_EXISTS,
+    SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema,
 };
 use duckdb::AccessMode::ReadOnly;
 use duckdb::{Config, Connection, params};
@@ -374,6 +376,46 @@ impl MetadataProvider for DuckdbMetadataProvider {
                     })
                 },
             )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(files)
+    }
+
+    fn get_data_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> crate::Result<Vec<DataFileChange>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS)?;
+
+        let files = stmt
+            .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
+                Ok(DataFileChange {
+                    begin_snapshot: row.get(0)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(files)
+    }
+
+    fn get_delete_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> crate::Result<Vec<DeleteFileChange>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS)?;
+
+        let files = stmt
+            .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
+                Ok(DeleteFileChange {
+                    begin_snapshot: row.get(0)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)

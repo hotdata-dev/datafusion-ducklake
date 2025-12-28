@@ -67,6 +67,24 @@ pub const SQL_TABLE_EXISTS: &str = "SELECT EXISTS(
          AND (? < end_snapshot OR end_snapshot IS NULL)
      )";
 
+// Queries for table_changes (CDC) - files added/removed between snapshots
+
+pub const SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
+    SELECT data.begin_snapshot
+    FROM ducklake_data_file AS data
+    WHERE data.table_id = ?
+      AND data.begin_snapshot > ?
+      AND data.begin_snapshot <= ?
+    ORDER BY data.begin_snapshot";
+
+pub const SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
+    SELECT del.begin_snapshot
+    FROM ducklake_delete_file AS del
+    WHERE del.table_id = ?
+      AND del.begin_snapshot > ?
+      AND del.begin_snapshot <= ?
+    ORDER BY del.begin_snapshot";
+
 // Bulk queries for information_schema (avoids N+1 query problem)
 
 pub const SQL_LIST_ALL_TABLES: &str = "
@@ -270,6 +288,18 @@ impl DuckLakeTableFile {
     }
 }
 
+// Change tracking structures for table_changes (CDC) functionality
+
+#[derive(Debug, Clone)]
+pub struct DataFileChange {
+    pub begin_snapshot: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteFileChange {
+    pub begin_snapshot: i64,
+}
+
 pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     /// Get the current snapshot ID (dynamic, not cached)
     fn get_current_snapshot(&self) -> Result<i64>;
@@ -323,6 +353,28 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
 
     /// List all files across all tables for a snapshot
     fn list_all_files(&self, snapshot_id: i64) -> Result<Vec<FileWithTable>>;
+
+    // Change tracking methods for table_changes (CDC) functionality
+
+    /// Get data files added between two snapshots (exclusive start, inclusive end)
+    /// Returns files where begin_snapshot > start_snapshot AND begin_snapshot <= end_snapshot
+    /// These represent INSERT changes - new rows added to the table
+    fn get_data_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> Result<Vec<DataFileChange>>;
+
+    /// Get delete files added between two snapshots (exclusive start, inclusive end)
+    /// Returns delete files where begin_snapshot > start_snapshot AND begin_snapshot <= end_snapshot
+    /// These represent DELETE changes - rows removed from the table
+    fn get_delete_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> Result<Vec<DeleteFileChange>>;
 }
 
 #[cfg(feature = "metadata-postgres")]

@@ -277,3 +277,55 @@ pub fn create_catalog_basic_test(catalog_path: &Path) -> Result<()> {
 pub fn to_datafusion_error(e: anyhow::Error) -> datafusion::error::DataFusionError {
     datafusion::error::DataFusionError::External(e.into())
 }
+
+/// Creates a catalog with multiple snapshots for testing table_changes
+///
+/// This creates a table and performs operations across multiple snapshots:
+/// - Snapshot 1: Initial table creation + first batch insert (rows 1-3)
+/// - Snapshot 2: Second batch insert (rows 4-5)
+/// - Snapshot 3: Delete row 2
+///
+/// This allows testing ducklake_table_changes() to see:
+/// - Files added between snapshots 0-1 (initial insert)
+/// - Files added between snapshots 1-2 (second insert)
+/// - Files added between snapshots 2-3 (delete file)
+pub fn create_catalog_multiple_snapshots(catalog_path: &Path) -> Result<()> {
+    let conn = duckdb::Connection::open_in_memory()?;
+
+    conn.execute("INSTALL ducklake;", [])?;
+    conn.execute("LOAD ducklake;", [])?;
+
+    let ducklake_path = format!("ducklake:{}", catalog_path.display());
+    conn.execute(&format!("ATTACH '{}' AS test_catalog;", ducklake_path), [])?;
+
+    // Snapshot 1: Create table and insert first batch
+    conn.execute(
+        "CREATE TABLE test_catalog.events (
+            id INT,
+            event_type VARCHAR,
+            value INT
+        );",
+        [],
+    )?;
+
+    conn.execute(
+        "INSERT INTO test_catalog.events VALUES
+            (1, 'click', 100),
+            (2, 'view', 50),
+            (3, 'purchase', 500);",
+        [],
+    )?;
+
+    // Snapshot 2: Insert second batch
+    conn.execute(
+        "INSERT INTO test_catalog.events VALUES
+            (4, 'click', 75),
+            (5, 'view', 25);",
+        [],
+    )?;
+
+    // Snapshot 3: Delete a row
+    conn.execute("DELETE FROM test_catalog.events WHERE id = 2;", [])?;
+
+    Ok(())
+}
