@@ -313,31 +313,20 @@ impl DuckLakeTableFile {
 
 // Change tracking structures for table_changes (CDC) functionality
 
-/// Represents a data file added in a specific snapshot (for INSERT changes)
 #[derive(Debug, Clone)]
 pub struct DataFileChange {
-    /// Unique identifier for this data file
     pub data_file_id: i64,
-    /// File metadata
     pub file: DuckLakeFileData,
-    /// Snapshot when this file was added
     pub begin_snapshot: i64,
 }
 
-/// Represents a delete file added in a specific snapshot (for DELETE changes)
 #[derive(Debug, Clone)]
 pub struct DeleteFileChange {
-    /// Unique identifier for this delete file
     pub delete_file_id: i64,
-    /// The data file this delete file applies to
     pub data_file_id: i64,
-    /// Delete file metadata
     pub delete_file: DuckLakeFileData,
-    /// Number of rows deleted
     pub delete_count: Option<i64>,
-    /// Snapshot when this delete file was added
     pub begin_snapshot: i64,
-    /// Associated data file metadata (for reading the rows being deleted)
     pub data_file: DuckLakeFileData,
 }
 

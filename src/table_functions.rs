@@ -1,10 +1,4 @@
 //! User-Defined Table Functions (UDTFs) for DuckLake catalog metadata
-//!
-//! This module provides DuckDB-style table functions for accessing catalog metadata:
-//! - ducklake_snapshots() - List snapshots
-//! - ducklake_table_info() - Table metadata with file statistics
-//! - ducklake_list_files() - File enumeration
-//! - ducklake_table_changes() - CDC: files added/removed between snapshots
 
 use datafusion::catalog::TableFunctionImpl;
 use datafusion::common::{Result as DataFusionResult, ScalarValue, plan_err};
@@ -15,7 +9,6 @@ use std::sync::Arc;
 use crate::information_schema::{FilesTable, SnapshotsTable, TableChangesTable, TableInfoTable};
 use crate::metadata_provider::MetadataProvider;
 
-/// Table function for querying snapshots: `SELECT * FROM ducklake_snapshots()`
 #[derive(Debug)]
 pub struct DucklakeSnapshotsFunction {
     provider: Arc<dyn MetadataProvider>,
@@ -39,7 +32,6 @@ impl TableFunctionImpl for DucklakeSnapshotsFunction {
     }
 }
 
-/// Table function for querying table info: `SELECT * FROM ducklake_table_info()`
 #[derive(Debug)]
 pub struct DucklakeTableInfoFunction {
     provider: Arc<dyn MetadataProvider>,
@@ -63,7 +55,6 @@ impl TableFunctionImpl for DucklakeTableInfoFunction {
     }
 }
 
-/// Table function for querying files: `SELECT * FROM ducklake_list_files()`
 #[derive(Debug)]
 pub struct DucklakeListFilesFunction {
     provider: Arc<dyn MetadataProvider>,
@@ -87,12 +78,6 @@ impl TableFunctionImpl for DucklakeListFilesFunction {
     }
 }
 
-/// Table function for querying table changes (CDC):
-/// `SELECT * FROM ducklake_table_changes('schema.table', start_snapshot, end_snapshot)`
-///
-/// Returns files added between two snapshots:
-/// - INSERT changes: data files added (begin_snapshot in range)
-/// - DELETE changes: delete files added (begin_snapshot in range)
 #[derive(Debug)]
 pub struct DucklakeTableChangesFunction {
     provider: Arc<dyn MetadataProvider>,
@@ -105,7 +90,6 @@ impl DucklakeTableChangesFunction {
         }
     }
 
-    /// Parse table name in format "schema.table" or just "table" (defaults to "main" schema)
     fn parse_table_name(table_name: &str) -> (&str, &str) {
         if let Some(dot_pos) = table_name.find('.') {
             let schema = &table_name[..dot_pos];
@@ -207,36 +191,7 @@ impl TableFunctionImpl for DucklakeTableChangesFunction {
     }
 }
 
-/// Helper function to register all DuckLake table functions with a SessionContext
-///
-/// Registers four table functions:
-/// - `ducklake_snapshots()` - List all snapshots
-/// - `ducklake_table_info()` - Table metadata with file statistics
-/// - `ducklake_list_files()` - File enumeration
-/// - `ducklake_table_changes('table', start, end)` - CDC: files added between snapshots
-///
-/// # Example
-///
-/// ```no_run
-/// use datafusion::prelude::*;
-/// use datafusion_ducklake::{DuckdbMetadataProvider, register_ducklake_functions};
-/// use std::sync::Arc;
-///
-/// # async fn example() -> datafusion_ducklake::Result<()> {
-/// let ctx = SessionContext::new();
-/// let provider = DuckdbMetadataProvider::new("catalog.db")?;
-///
-/// // Register all ducklake_*() functions
-/// register_ducklake_functions(&ctx, Arc::new(provider));
-///
-/// // Now you can use them
-/// let df = ctx.sql("SELECT * FROM ducklake_snapshots()").await?;
-/// let df = ctx.sql("SELECT * FROM ducklake_table_info()").await?;
-/// let df = ctx.sql("SELECT * FROM ducklake_list_files()").await?;
-/// let df = ctx.sql("SELECT * FROM ducklake_table_changes('main.users', 0, 5)").await?;
-/// # Ok(())
-/// # }
-/// ```
+/// Registers all ducklake_*() table functions with a SessionContext.
 pub fn register_ducklake_functions(
     ctx: &datafusion::execution::context::SessionContext,
     provider: Arc<dyn MetadataProvider>,
