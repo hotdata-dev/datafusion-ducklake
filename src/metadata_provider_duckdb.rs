@@ -392,20 +392,8 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
         let files = stmt
             .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
-                let data_file_id: i64 = row.get(0)?;
-                let file = DuckLakeFileData {
-                    path: row.get(1)?,
-                    path_is_relative: row.get(2)?,
-                    file_size_bytes: row.get(3)?,
-                    footer_size: row.get(4)?,
-                    encryption_key: String::new(),
-                };
-                let begin_snapshot: i64 = row.get(5)?;
-
                 Ok(DataFileChange {
-                    data_file_id,
-                    file,
-                    begin_snapshot,
+                    begin_snapshot: row.get(0)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -424,32 +412,8 @@ impl MetadataProvider for DuckdbMetadataProvider {
 
         let files = stmt
             .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
-                let delete_file_id: i64 = row.get(0)?;
-                let data_file_id: i64 = row.get(1)?;
-                let delete_file = DuckLakeFileData {
-                    path: row.get(2)?,
-                    path_is_relative: row.get(3)?,
-                    file_size_bytes: row.get(4)?,
-                    footer_size: row.get(5)?,
-                    encryption_key: String::new(),
-                };
-                let delete_count: Option<i64> = row.get(6)?;
-                let begin_snapshot: i64 = row.get(7)?;
-                let data_file = DuckLakeFileData {
-                    path: row.get(8)?,
-                    path_is_relative: row.get(9)?,
-                    file_size_bytes: row.get(10)?,
-                    footer_size: row.get(11)?,
-                    encryption_key: String::new(),
-                };
-
                 Ok(DeleteFileChange {
-                    delete_file_id,
-                    data_file_id,
-                    delete_file,
-                    delete_count,
-                    begin_snapshot,
-                    data_file,
+                    begin_snapshot: row.get(0)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

@@ -69,44 +69,21 @@ pub const SQL_TABLE_EXISTS: &str = "SELECT EXISTS(
 
 // Queries for table_changes (CDC) - files added/removed between snapshots
 
-/// Get data files added between two snapshots (for INSERT changes)
-/// Returns files where begin_snapshot > start_snapshot AND begin_snapshot <= end_snapshot
 pub const SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
-    SELECT
-        data.data_file_id,
-        data.path,
-        data.path_is_relative,
-        data.file_size_bytes,
-        data.footer_size,
-        data.begin_snapshot
+    SELECT data.begin_snapshot
     FROM ducklake_data_file AS data
     WHERE data.table_id = ?
       AND data.begin_snapshot > ?
       AND data.begin_snapshot <= ?
-    ORDER BY data.begin_snapshot, data.data_file_id";
+    ORDER BY data.begin_snapshot";
 
-/// Get delete files added between two snapshots (for DELETE changes)
-/// Returns delete files where begin_snapshot > start_snapshot AND begin_snapshot <= end_snapshot
 pub const SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
-    SELECT
-        del.delete_file_id,
-        del.data_file_id,
-        del.path,
-        del.path_is_relative,
-        del.file_size_bytes,
-        del.footer_size,
-        del.delete_count,
-        del.begin_snapshot,
-        data.path AS data_file_path,
-        data.path_is_relative AS data_path_is_relative,
-        data.file_size_bytes AS data_file_size,
-        data.footer_size AS data_footer_size
+    SELECT del.begin_snapshot
     FROM ducklake_delete_file AS del
-    JOIN ducklake_data_file AS data ON del.data_file_id = data.data_file_id
     WHERE del.table_id = ?
       AND del.begin_snapshot > ?
       AND del.begin_snapshot <= ?
-    ORDER BY del.begin_snapshot, del.delete_file_id";
+    ORDER BY del.begin_snapshot";
 
 // Bulk queries for information_schema (avoids N+1 query problem)
 
@@ -315,19 +292,12 @@ impl DuckLakeTableFile {
 
 #[derive(Debug, Clone)]
 pub struct DataFileChange {
-    pub data_file_id: i64,
-    pub file: DuckLakeFileData,
     pub begin_snapshot: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct DeleteFileChange {
-    pub delete_file_id: i64,
-    pub data_file_id: i64,
-    pub delete_file: DuckLakeFileData,
-    pub delete_count: Option<i64>,
     pub begin_snapshot: i64,
-    pub data_file: DuckLakeFileData,
 }
 
 pub trait MetadataProvider: Send + Sync + std::fmt::Debug {

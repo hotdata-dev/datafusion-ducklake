@@ -495,18 +495,12 @@ impl MetadataProvider for PostgresMetadataProvider {
     ) -> Result<Vec<DataFileChange>> {
         block_on(async {
             let rows = sqlx::query(
-                "SELECT
-                    data.data_file_id,
-                    data.path,
-                    data.path_is_relative,
-                    data.file_size_bytes,
-                    data.footer_size,
-                    data.begin_snapshot
+                "SELECT data.begin_snapshot
                 FROM ducklake_data_file AS data
                 WHERE data.table_id = $1
                   AND data.begin_snapshot > $2
                   AND data.begin_snapshot <= $3
-                ORDER BY data.begin_snapshot, data.data_file_id",
+                ORDER BY data.begin_snapshot",
             )
             .bind(table_id)
             .bind(start_snapshot)
@@ -516,20 +510,8 @@ impl MetadataProvider for PostgresMetadataProvider {
 
             rows.into_iter()
                 .map(|row| {
-                    let data_file_id: i64 = row.try_get(0)?;
-                    let file = DuckLakeFileData {
-                        path: row.try_get(1)?,
-                        path_is_relative: row.try_get(2)?,
-                        file_size_bytes: row.try_get(3)?,
-                        footer_size: row.try_get(4)?,
-                        encryption_key: String::new(),
-                    };
-                    let begin_snapshot: i64 = row.try_get(5)?;
-
                     Ok(DataFileChange {
-                        data_file_id,
-                        file,
-                        begin_snapshot,
+                        begin_snapshot: row.try_get(0)?,
                     })
                 })
                 .collect()
@@ -544,25 +526,12 @@ impl MetadataProvider for PostgresMetadataProvider {
     ) -> Result<Vec<DeleteFileChange>> {
         block_on(async {
             let rows = sqlx::query(
-                "SELECT
-                    del.delete_file_id,
-                    del.data_file_id,
-                    del.path,
-                    del.path_is_relative,
-                    del.file_size_bytes,
-                    del.footer_size,
-                    del.delete_count,
-                    del.begin_snapshot,
-                    data.path AS data_file_path,
-                    data.path_is_relative AS data_path_is_relative,
-                    data.file_size_bytes AS data_file_size,
-                    data.footer_size AS data_footer_size
+                "SELECT del.begin_snapshot
                 FROM ducklake_delete_file AS del
-                JOIN ducklake_data_file AS data ON del.data_file_id = data.data_file_id
                 WHERE del.table_id = $1
                   AND del.begin_snapshot > $2
                   AND del.begin_snapshot <= $3
-                ORDER BY del.begin_snapshot, del.delete_file_id",
+                ORDER BY del.begin_snapshot",
             )
             .bind(table_id)
             .bind(start_snapshot)
@@ -572,32 +541,8 @@ impl MetadataProvider for PostgresMetadataProvider {
 
             rows.into_iter()
                 .map(|row| {
-                    let delete_file_id: i64 = row.try_get(0)?;
-                    let data_file_id: i64 = row.try_get(1)?;
-                    let delete_file = DuckLakeFileData {
-                        path: row.try_get(2)?,
-                        path_is_relative: row.try_get(3)?,
-                        file_size_bytes: row.try_get(4)?,
-                        footer_size: row.try_get(5)?,
-                        encryption_key: String::new(),
-                    };
-                    let delete_count: Option<i64> = row.try_get(6)?;
-                    let begin_snapshot: i64 = row.try_get(7)?;
-                    let data_file = DuckLakeFileData {
-                        path: row.try_get(8)?,
-                        path_is_relative: row.try_get(9)?,
-                        file_size_bytes: row.try_get(10)?,
-                        footer_size: row.try_get(11)?,
-                        encryption_key: String::new(),
-                    };
-
                     Ok(DeleteFileChange {
-                        delete_file_id,
-                        data_file_id,
-                        delete_file,
-                        delete_count,
-                        begin_snapshot,
-                        data_file,
+                        begin_snapshot: row.try_get(0)?,
                     })
                 })
                 .collect()
