@@ -6,8 +6,9 @@ use datafusion::datasource::TableProvider;
 use datafusion::logical_expr::Expr;
 use std::sync::Arc;
 
-use crate::information_schema::{FilesTable, SnapshotsTable, TableChangesTable, TableInfoTable};
+use crate::information_schema::{FilesTable, SnapshotsTable, TableInfoTable};
 use crate::metadata_provider::MetadataProvider;
+use crate::table_changes::TableChangesTable;
 
 #[derive(Debug)]
 pub struct DucklakeSnapshotsFunction {
