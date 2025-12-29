@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::information_schema::{FilesTable, SnapshotsTable, TableInfoTable};
 use crate::metadata_provider::MetadataProvider;
+use crate::path_resolver::{parse_object_store_url, resolve_path};
 use crate::table_changes::TableChangesTable;
+use crate::types::build_arrow_schema;
 
 #[derive(Debug)]
 pub struct DucklakeSnapshotsFunction {
@@ -183,11 +185,38 @@ impl TableFunctionImpl for DucklakeTableChangesFunction {
                 ))
             })?;
 
+        // Get data_path and parse ObjectStoreUrl
+        let data_path = self
+            .provider
+            .get_data_path()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+
+        let (object_store_url, catalog_path) = parse_object_store_url(&data_path)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+
+        // Resolve full table path: catalog_path -> schema.path -> table.path
+        let schema_path = resolve_path(&catalog_path, &schema.path, schema.path_is_relative);
+        let table_path = resolve_path(&schema_path, &table.path, table.path_is_relative);
+
+        // Get table structure and build Arrow schema
+        let columns = self
+            .provider
+            .get_table_structure(table.table_id)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+
+        let table_schema = Arc::new(
+            build_arrow_schema(&columns)
+                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
+        );
+
         Ok(Arc::new(TableChangesTable::new(
             self.provider.clone(),
             table.table_id,
             start_snapshot,
             end_snapshot,
+            Arc::new(object_store_url),
+            table_path,
+            table_schema,
         )))
     }
 }

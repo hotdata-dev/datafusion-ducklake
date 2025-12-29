@@ -394,6 +394,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
             .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
                 Ok(DataFileChange {
                     begin_snapshot: row.get(0)?,
+                    path: row.get(1)?,
+                    path_is_relative: row.get(2)?,
+                    file_size_bytes: row.get(3)?,
+                    footer_size: row.get(4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
