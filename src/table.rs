@@ -14,6 +14,7 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
+use datafusion::common::DFSchema;
 use datafusion::datasource::file_format::FileFormat;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::PartitionedFile;
@@ -21,6 +22,7 @@ use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, Pa
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
+use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::ExecutionPlan;
 use futures::StreamExt;
 
@@ -92,6 +94,35 @@ impl DuckLakeTable {
         resolve_path(&self.table_path, &file.path, file.path_is_relative)
     }
 
+    /// Convert logical filter expressions to a physical predicate for Parquet pushdown
+    ///
+    /// Combines multiple filters with AND and converts to a physical expression.
+    /// Returns None if no filters are provided.
+    fn create_physical_predicate(
+        &self,
+        state: &dyn Session,
+        filters: &[Expr],
+    ) -> DataFusionResult<Option<Arc<dyn PhysicalExpr>>> {
+        if filters.is_empty() {
+            return Ok(None);
+        }
+
+        // Combine filters with AND
+        let combined = filters
+            .iter()
+            .cloned()
+            .reduce(|a, b| a.and(b))
+            .expect("filters is non-empty");
+
+        // Create DFSchema from Arrow schema for expression conversion
+        let df_schema = DFSchema::try_from(self.schema.as_ref().clone())?;
+
+        // Convert logical expression to physical expression
+        let physical_expr = state.create_physical_expr(combined, &df_schema)?;
+
+        Ok(Some(physical_expr))
+    }
+
     /// Read a delete file and extract all deleted row positions
     ///
     /// The delete file is already associated with a specific data file via metadata.
@@ -157,6 +188,7 @@ impl DuckLakeTable {
         files: &[&crate::metadata_provider::DuckLakeTableFile],
         projection: Option<&Vec<usize>>,
         limit: Option<usize>,
+        predicate: Option<Arc<dyn PhysicalExpr>>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let partitioned_files: Vec<PartitionedFile> = files
             .iter()
@@ -175,10 +207,16 @@ impl DuckLakeTable {
             })
             .collect();
 
+        // Create ParquetSource with predicate for filter pushdown
+        let parquet_source = match predicate {
+            Some(pred) => ParquetSource::default().with_predicate(pred),
+            None => ParquetSource::default(),
+        };
+
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             self.schema.clone(),
-            Arc::new(ParquetSource::default()),
+            Arc::new(parquet_source),
         )
         .with_limit(limit)
         .with_file_group(FileGroup::new(partitioned_files));
@@ -202,6 +240,7 @@ impl DuckLakeTable {
         table_file: &crate::metadata_provider::DuckLakeTableFile,
         projection: Option<&Vec<usize>>,
         limit: Option<usize>,
+        predicate: Option<Arc<dyn PhysicalExpr>>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Resolve the data file path for scanning
         let resolved_path = self.resolve_file_path(&table_file.file);
@@ -212,10 +251,16 @@ impl DuckLakeTable {
             pf = pf.with_metadata_size_hint(footer_size as usize);
         }
 
+        // Create ParquetSource with predicate for filter pushdown
+        let parquet_source = match predicate {
+            Some(pred) => ParquetSource::default().with_predicate(pred),
+            None => ParquetSource::default(),
+        };
+
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             self.schema.clone(),
-            Arc::new(ParquetSource::default()),
+            Arc::new(parquet_source),
         )
         .with_limit(limit)
         .with_file_group(FileGroup::new(vec![pf]));
@@ -283,13 +328,13 @@ impl TableProvider for DuckLakeTable {
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
-        // Filters are received here for informational purposes. DataFusion's optimizer
-        // automatically pushes them down to the Parquet scanner for row group pruning and
-        // page-level filtering since we declared support via supports_filters_pushdown().
-        // We mark them as Inexact, so DataFusion will reapply them after our scan.
-        _filters: &[Expr],
+        filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        // Convert logical filters to physical expression for predicate pushdown
+        // This enables row group pruning, page-level filtering, and bloom filter lookups
+        let predicate = self.create_physical_predicate(state, filters)?;
+
         // Separate files into two groups: with deletes and without deletes
         // This allows us to create a single efficient exec for files without deletes
         let (files_with_deletes, files_without_deletes): (Vec<_>, Vec<_>) = self
@@ -307,6 +352,7 @@ impl TableProvider for DuckLakeTable {
                     &files_without_deletes,
                     projection,
                     limit,
+                    predicate.clone(),
                 )
                 .await?;
             execs.push(exec);
@@ -315,7 +361,13 @@ impl TableProvider for DuckLakeTable {
         // Only create separate execs for files with deletes
         for table_file in files_with_deletes {
             let exec = self
-                .build_exec_for_file_with_deletes(state, table_file, projection, limit)
+                .build_exec_for_file_with_deletes(
+                    state,
+                    table_file,
+                    projection,
+                    limit,
+                    predicate.clone(),
+                )
                 .await?;
             execs.push(exec);
         }

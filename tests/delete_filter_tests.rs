@@ -412,4 +412,203 @@ mod integration_tests {
 
         Ok(())
     }
+
+    /// Test that filter pushdown is visible in EXPLAIN output
+    ///
+    /// This test verifies that filters passed to the TableProvider::scan()
+    /// are forwarded to ParquetExec, enabling row group pruning and
+    /// page-level filtering.
+    #[tokio::test]
+    async fn test_filter_pushdown_visible_in_explain() -> DataFusionResult<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("pushdown.ducklake");
+
+        // Generate test data
+        common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+
+        let ctx = SessionContext::new();
+        ctx.register_catalog("pushdown", catalog);
+
+        // Run EXPLAIN on a filtered query
+        let df = ctx
+            .sql("EXPLAIN SELECT * FROM pushdown.main.users WHERE id = 1")
+            .await?;
+        let results = df.collect().await?;
+
+        // Collect the explain output as a string
+        let mut explain_output = String::new();
+        for batch in &results {
+            // The explain output is typically in the second column (plan_type, plan)
+            if let Some(array) = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+            {
+                for i in 0..array.len() {
+                    if !array.is_null(i) {
+                        explain_output.push_str(array.value(i));
+                        explain_output.push('\n');
+                    }
+                }
+            }
+        }
+
+        // Verify that the predicate is pushed down to ParquetExec
+        // The explain output should show the filter predicate in the ParquetExec node
+        assert!(
+            explain_output.contains("predicate=id@0 = 1")
+                || explain_output.contains("predicate=CAST(id@0 AS Int64) = 1"),
+            "EXPLAIN should show pushed filter predicate. Got:\n{}",
+            explain_output
+        );
+
+        Ok(())
+    }
+
+    /// Test filter pushdown with combined projection and filter
+    ///
+    /// This verifies that both projection and filter pushdown work together correctly.
+    #[tokio::test]
+    async fn test_filter_and_projection_pushdown() -> DataFusionResult<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("proj_filter.ducklake");
+
+        // Generate test data
+        common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+
+        let ctx = SessionContext::new();
+        ctx.register_catalog("proj_filter", catalog);
+
+        // Query with both projection and filter
+        let df = ctx
+            .sql("SELECT name FROM proj_filter.main.users WHERE id > 2 ORDER BY name")
+            .await?;
+        let results = df.collect().await?;
+
+        // Verify correct results
+        let mut names = Vec::new();
+        for batch in &results {
+            if let Some(array) = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+            {
+                for i in 0..array.len() {
+                    if !array.is_null(i) {
+                        names.push(array.value(i).to_string());
+                    }
+                }
+            }
+        }
+
+        // Should have Charlie (id=3) and Diana (id=4)
+        assert_eq!(names, vec!["Charlie", "Diana"]);
+
+        // Also verify EXPLAIN shows the filter pushdown
+        let df = ctx
+            .sql("EXPLAIN SELECT name FROM proj_filter.main.users WHERE id > 2")
+            .await?;
+        let results = df.collect().await?;
+
+        let mut explain_output = String::new();
+        for batch in &results {
+            if let Some(array) = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+            {
+                for i in 0..array.len() {
+                    if !array.is_null(i) {
+                        explain_output.push_str(array.value(i));
+                        explain_output.push('\n');
+                    }
+                }
+            }
+        }
+
+        // Verify predicate is pushed down
+        assert!(
+            explain_output.contains("predicate=id@0 > 2")
+                || explain_output.contains("predicate=CAST(id@0 AS Int64) > 2"),
+            "EXPLAIN should show pushed filter predicate. Got:\n{}",
+            explain_output
+        );
+
+        Ok(())
+    }
+
+    /// Test filter pushdown with multiple filters (AND)
+    ///
+    /// Verifies that multiple WHERE conditions are combined and pushed down.
+    #[tokio::test]
+    async fn test_multiple_filters_pushdown() -> DataFusionResult<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("multi_filter.ducklake");
+
+        // Generate test data
+        common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+
+        let ctx = SessionContext::new();
+        ctx.register_catalog("multi_filter", catalog);
+
+        // Query with multiple filters
+        let df = ctx
+            .sql("SELECT * FROM multi_filter.main.users WHERE id >= 2 AND id <= 3")
+            .await?;
+        let results = df.collect().await?;
+
+        // Should have Bob (id=2) and Charlie (id=3)
+        let mut ids = Vec::new();
+        for batch in &results {
+            ids.extend(get_int_column(batch, 0));
+        }
+        ids.sort();
+        assert_eq!(ids, vec![2, 3]);
+
+        // Verify EXPLAIN shows the combined predicate
+        let df = ctx
+            .sql("EXPLAIN SELECT * FROM multi_filter.main.users WHERE id >= 2 AND id <= 3")
+            .await?;
+        let results = df.collect().await?;
+
+        let mut explain_output = String::new();
+        for batch in &results {
+            if let Some(array) = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+            {
+                for i in 0..array.len() {
+                    if !array.is_null(i) {
+                        explain_output.push_str(array.value(i));
+                        explain_output.push('\n');
+                    }
+                }
+            }
+        }
+
+        // Verify predicate includes both conditions
+        assert!(
+            explain_output.contains("predicate="),
+            "EXPLAIN should show pushed filter predicate. Got:\n{}",
+            explain_output
+        );
+        // The predicate should mention id comparisons
+        assert!(
+            explain_output.contains("id@0") && explain_output.contains("2"),
+            "EXPLAIN should show id filter conditions. Got:\n{}",
+            explain_output
+        );
+
+        Ok(())
+    }
 }
