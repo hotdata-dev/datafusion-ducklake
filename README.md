@@ -11,7 +11,7 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 ## Currently Supported
 
 - Read-only queries against DuckLake catalogs
-- DuckDB catalog backend
+- DuckDB and PostgreSQL catalog backends
 - Local filesystem and S3-compatible object stores (MinIO, S3)
 - Snapshot-based consistency
 - Basic and decimal types
@@ -21,7 +21,7 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 - Filter pushdown to Parquet for row group pruning and page-level filtering
 - Dynamic metadata lookup (no upfront catalog caching)
 - SQL-queryable `information_schema` for catalog metadata (snapshots, schemas, tables, columns, files)
-- DuckDB-style table functions: `ducklake_snapshots()`, `ducklake_table_info()`, `ducklake_list_files()`
+- DuckDB-style table functions: `ducklake_snapshots()`, `ducklake_table_info()`, `ducklake_list_files()`, `ducklake_table_changes()`
 
 ---
 
@@ -30,7 +30,6 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 - Complex types (nested lists, structs, maps) have minimal support
 - No write operations
 - No partition-based file pruning
-- Single metadata provider implementation (DuckDB only)
 - No time travel support
 
 ---
