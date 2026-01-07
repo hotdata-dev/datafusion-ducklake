@@ -80,6 +80,24 @@ This project is under active development. The roadmap below reflects major areas
 
 ## Usage
 
+### Feature Flags
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `metadata-duckdb` | DuckDB catalog backend | ✅ |
+| `metadata-postgres` | PostgreSQL catalog backend | |
+
+```bash
+# DuckDB only (default)
+cargo build
+
+# PostgreSQL only
+cargo build --no-default-features --features metadata-postgres
+
+# Both backends
+cargo build --features metadata-postgres
+```
+
 ### Example
 
 ```bash
