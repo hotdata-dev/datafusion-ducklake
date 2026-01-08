@@ -113,9 +113,17 @@ impl ExecutionPlan for ColumnRenameExec {
     ) -> DataFusionResult<SendableRecordBatchStream> {
         let input_stream = self.input.execute(partition, context)?;
 
+        // Invert mapping: new_name -> old_name (for looking up input columns)
+        let reverse_mapping: HashMap<String, String> = self
+            .name_mapping
+            .iter()
+            .map(|(old, new)| (new.clone(), old.clone()))
+            .collect();
+
         Ok(Box::pin(ColumnRenameStream {
             input: input_stream,
             output_schema: self.output_schema.clone(),
+            reverse_mapping,
         }))
     }
 }
@@ -124,6 +132,8 @@ impl ExecutionPlan for ColumnRenameExec {
 struct ColumnRenameStream {
     input: SendableRecordBatchStream,
     output_schema: SchemaRef,
+    /// Mapping from output column name -> input column name (for renamed columns only)
+    reverse_mapping: HashMap<String, String>,
 }
 
 impl Stream for ColumnRenameStream {
@@ -138,7 +148,30 @@ impl Stream for ColumnRenameStream {
                     let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
                     RecordBatch::try_new_with_options(self.output_schema.clone(), vec![], &options)
                 } else {
-                    RecordBatch::try_new(self.output_schema.clone(), batch.columns().to_vec())
+                    // Build columns by looking up each output field in the input batch
+                    let input_schema = batch.schema();
+                    let columns: Result<Vec<_>, _> = self
+                        .output_schema
+                        .fields()
+                        .iter()
+                        .map(|output_field| {
+                            // Check if this column was renamed (new_name -> old_name)
+                            let input_name = self
+                                .reverse_mapping
+                                .get(output_field.name())
+                                .map(|s| s.as_str())
+                                .unwrap_or_else(|| output_field.name().as_str());
+
+                            input_schema
+                                .index_of(input_name)
+                                .map(|idx| batch.column(idx).clone())
+                        })
+                        .collect();
+
+                    match columns {
+                        Ok(cols) => RecordBatch::try_new(self.output_schema.clone(), cols),
+                        Err(e) => Err(e),
+                    }
                 };
 
                 match result {
@@ -242,9 +275,13 @@ mod tests {
             false,
         )]));
 
+        let mut reverse_mapping = HashMap::new();
+        reverse_mapping.insert("new_col".to_string(), "old_col".to_string());
+
         let stream = ColumnRenameStream {
             input: Box::pin(EmptyRecordBatchStream::new(input_schema)),
             output_schema: output_schema.clone(),
+            reverse_mapping,
         };
 
         // The stream should report the output schema
