@@ -470,7 +470,8 @@ impl TableChangesTable {
         let file_scan_config = builder.build();
 
         // Use DataSourceExec directly to preserve our ParquetSource with encryption factory
-        let parquet_exec: Arc<dyn ExecutionPlan> = DataSourceExec::from_data_source(file_scan_config);
+        let parquet_exec: Arc<dyn ExecutionPlan> =
+            DataSourceExec::from_data_source(file_scan_config);
 
         // Determine if we should skip input columns (only CDC columns requested)
         let skip_input_columns = proj_info.table_indices.is_empty();

@@ -35,11 +35,13 @@ fn create_encrypted_parquet_file(path: &Path, key: &[u8]) -> anyhow::Result<u64>
     let id_array = Int32Array::from(vec![1, 2, 3]);
     let name_array = StringArray::from(vec!["Alice", "Bob", "Charlie"]);
 
-    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(id_array), Arc::new(name_array)])?;
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(id_array), Arc::new(name_array)],
+    )?;
 
     // Create encryption properties (uniform encryption - same key for footer and all columns)
-    let encryption_properties = FileEncryptionProperties::builder(key.to_vec())
-        .build()?;
+    let encryption_properties = FileEncryptionProperties::builder(key.to_vec()).build()?;
 
     // Create writer properties with encryption
     let props = WriterProperties::builder()
@@ -144,7 +146,12 @@ fn create_catalog_with_encrypted_file(
 
     // Get absolute path for the parquet file
     let parquet_abs_path = parquet_path.canonicalize()?.display().to_string();
-    let data_path = parquet_path.parent().unwrap().canonicalize()?.display().to_string();
+    let data_path = parquet_path
+        .parent()
+        .unwrap()
+        .canonicalize()?
+        .display()
+        .to_string();
 
     // Insert metadata
     conn.execute(
@@ -182,7 +189,10 @@ fn create_catalog_with_encrypted_file(
     )?;
 
     // Insert data file with encryption key (base64 encoded)
-    let key_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, encryption_key.as_bytes());
+    let key_base64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        encryption_key.as_bytes(),
+    );
     conn.execute(
         "INSERT INTO ducklake_data_file (data_file_id, table_id, path, path_is_relative, file_size_bytes, encryption_key, begin_snapshot)
          VALUES (1, 1, ?, false, ?, ?, 1)",
@@ -217,7 +227,9 @@ async fn test_read_pme_encrypted_parquet() -> anyhow::Result<()> {
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
     // Step 4: Query the encrypted table
-    let df = ctx.sql("SELECT * FROM ducklake.main.encrypted_users ORDER BY id").await?;
+    let df = ctx
+        .sql("SELECT * FROM ducklake.main.encrypted_users ORDER BY id")
+        .await?;
     let batches = df.collect().await?;
 
     // Step 5: Verify results
@@ -226,13 +238,21 @@ async fn test_read_pme_encrypted_parquet() -> anyhow::Result<()> {
     assert_eq!(batch.num_rows(), 3);
 
     // Check id column
-    let id_col = batch.column(0).as_any().downcast_ref::<Int32Array>().unwrap();
+    let id_col = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .unwrap();
     assert_eq!(id_col.value(0), 1);
     assert_eq!(id_col.value(1), 2);
     assert_eq!(id_col.value(2), 3);
 
     // Check name column
-    let name_col = batch.column(1).as_any().downcast_ref::<StringArray>().unwrap();
+    let name_col = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
     assert_eq!(name_col.value(0), "Alice");
     assert_eq!(name_col.value(1), "Bob");
     assert_eq!(name_col.value(2), "Charlie");
@@ -268,13 +288,19 @@ async fn test_read_encrypted_parquet_without_key_fails() -> anyhow::Result<()> {
     // The query planning might succeed, but execution should fail
     if let Ok(df) = result {
         let exec_result = df.collect().await;
-        assert!(exec_result.is_err(), "Expected error when reading encrypted file without key");
+        assert!(
+            exec_result.is_err(),
+            "Expected error when reading encrypted file without key"
+        );
         let err_msg = exec_result.unwrap_err().to_string();
         println!("Got expected error: {}", err_msg);
         // Should indicate encryption-related failure
         assert!(
-            err_msg.contains("encrypted") || err_msg.contains("decrypt") || err_msg.contains("Parquet"),
-            "Error should mention encryption: {}", err_msg
+            err_msg.contains("encrypted")
+                || err_msg.contains("decrypt")
+                || err_msg.contains("Parquet"),
+            "Error should mention encryption: {}",
+            err_msg
         );
     }
 
@@ -307,7 +333,10 @@ async fn test_read_encrypted_parquet_with_wrong_key_fails() -> anyhow::Result<()
 
     if let Ok(df) = result {
         let exec_result = df.collect().await;
-        assert!(exec_result.is_err(), "Expected error when reading with wrong key");
+        assert!(
+            exec_result.is_err(),
+            "Expected error when reading with wrong key"
+        );
         println!("Got expected error: {}", exec_result.unwrap_err());
     }
 

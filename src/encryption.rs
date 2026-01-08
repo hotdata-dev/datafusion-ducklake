@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[cfg(feature = "encryption")]
-use async_trait::async_trait;
-#[cfg(feature = "encryption")]
 use arrow::datatypes::SchemaRef;
+#[cfg(feature = "encryption")]
+use async_trait::async_trait;
 #[cfg(feature = "encryption")]
 use datafusion::common::config::EncryptionFactoryOptions;
 #[cfg(feature = "encryption")]
@@ -27,10 +27,20 @@ use parquet::encryption::encrypt::FileEncryptionProperties;
 ///
 /// This factory maintains a mapping of file paths to their encryption keys,
 /// populated from the DuckLake catalog metadata.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DuckLakeEncryptionFactory {
     /// Map of file paths to their encryption keys (base64 or hex encoded)
     file_keys: Arc<HashMap<String, String>>,
+}
+
+// Custom Debug implementation to avoid exposing encryption keys in logs
+impl std::fmt::Debug for DuckLakeEncryptionFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuckLakeEncryptionFactory")
+            .field("file_count", &self.file_keys.len())
+            .field("files", &self.file_keys.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl DuckLakeEncryptionFactory {
@@ -59,7 +69,7 @@ impl DuckLakeEncryptionFactory {
     /// Decode an encryption key from its stored format.
     ///
     /// DuckLake stores keys as strings - this function handles decoding.
-    /// Currently assumes base64 encoding, but can be extended for other formats.
+    /// Supports: base64, hex, or raw 16/32-byte keys.
     #[cfg(feature = "encryption")]
     fn decode_key(key: &str) -> Result<Vec<u8>> {
         use base64::Engine;
@@ -67,12 +77,12 @@ impl DuckLakeEncryptionFactory {
 
         // Try base64 first (most common for DuckLake)
         if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(key) {
-            return Ok(decoded);
+            return Self::validate_key_length(decoded);
         }
 
         // Try hex encoding as fallback
         if let Ok(decoded) = hex::decode(key) {
-            return Ok(decoded);
+            return Self::validate_key_length(decoded);
         }
 
         // If it's exactly 16 or 32 bytes, treat as raw key
@@ -81,9 +91,30 @@ impl DuckLakeEncryptionFactory {
             return Ok(bytes.to_vec());
         }
 
+        // Provide specific error message (without exposing the key value)
         Err(DataFusionError::Execution(format!(
-            "Unable to decode encryption key: not valid base64, hex, or raw key format"
+            "Invalid encryption key format. Expected: base64-encoded (recommended), \
+             hex-encoded, or raw 16/32-byte string. Provided key length: {} chars. \
+             Hint: Use base64 encoding, e.g., 'MDEyMzQ1Njc4OWFiY2RlZg==' for a 16-byte key.",
+            key.len()
         )))
+    }
+
+    /// Validate that decoded key is valid AES key length (128 or 256 bits)
+    #[cfg(feature = "encryption")]
+    fn validate_key_length(key: Vec<u8>) -> Result<Vec<u8>> {
+        use datafusion::error::DataFusionError;
+
+        match key.len() {
+            16 => Ok(key), // AES-128
+            32 => Ok(key), // AES-256
+            24 => Ok(key), // AES-192 (less common but valid)
+            len => Err(DataFusionError::Execution(format!(
+                "Invalid encryption key length: {} bytes. AES requires 16 bytes (128-bit), \
+                 24 bytes (192-bit), or 32 bytes (256-bit)",
+                len
+            ))),
+        }
     }
 }
 
@@ -148,11 +179,11 @@ impl EncryptionFactory for DuckLakeEncryptionFactory {
                     })?;
 
                 Ok(Some(props))
-            }
+            },
             None => {
                 // No encryption key for this file - it's not encrypted
                 Ok(None)
-            }
+            },
         }
     }
 }
@@ -175,10 +206,9 @@ impl EncryptionFactoryBuilder {
     /// * `file_path` - The path to the file
     /// * `encryption_key` - The encryption key (if Some)
     pub fn add_file(&mut self, file_path: &str, encryption_key: Option<&str>) -> &mut Self {
-        if let Some(key) = encryption_key {
-            if !key.is_empty() {
-                self.file_keys.insert(file_path.to_string(), key.to_string());
-            }
+        if let Some(key) = encryption_key.filter(|k| !k.is_empty()) {
+            self.file_keys
+                .insert(file_path.to_string(), key.to_string());
         }
         self
     }

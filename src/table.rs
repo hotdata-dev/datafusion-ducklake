@@ -90,12 +90,17 @@ impl DuckLakeTable {
             let mut builder = EncryptionFactoryBuilder::new();
             for table_file in &table_files {
                 // Resolve the file path for the mapping
-                let resolved_path = resolve_path(&table_path, &table_file.file.path, table_file.file.path_is_relative);
+                let resolved_path = resolve_path(
+                    &table_path,
+                    &table_file.file.path,
+                    table_file.file.path_is_relative,
+                );
                 builder.add_file(&resolved_path, table_file.file.encryption_key.as_deref());
 
                 // Also add delete file encryption key if present
                 if let Some(ref delete_file) = table_file.delete_file {
-                    let resolved_delete_path = resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative);
+                    let resolved_delete_path =
+                        resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative);
                     builder.add_file(&resolved_delete_path, delete_file.encryption_key.as_deref());
                 }
             }
@@ -130,8 +135,7 @@ impl DuckLakeTable {
         #[cfg(feature = "encryption")]
         {
             if let Some(ref factory) = self.encryption_factory {
-                return ParquetSource::default()
-                    .with_encryption_factory(Arc::clone(factory));
+                return ParquetSource::default().with_encryption_factory(Arc::clone(factory));
             }
         }
         ParquetSource::default()
@@ -272,7 +276,8 @@ impl DuckLakeTable {
 
         let file_scan_config = builder.build();
         // Use DataSourceExec directly to preserve our ParquetSource with encryption factory
-        let parquet_exec: Arc<dyn ExecutionPlan> = DataSourceExec::from_data_source(file_scan_config);
+        let parquet_exec: Arc<dyn ExecutionPlan> =
+            DataSourceExec::from_data_source(file_scan_config);
 
         // Wrap with delete filter - we know there's a delete file since we partitioned
         // The metadata already tells us which delete file goes with this data file
