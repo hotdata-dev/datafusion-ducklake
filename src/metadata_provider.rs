@@ -29,11 +29,13 @@ pub const SQL_GET_DATA_FILES: &str = "
         data.path_is_relative AS data_path_is_relative,
         data.file_size_bytes AS data_file_size,
         data.footer_size AS data_footer_size,
+        data.encryption_key AS data_encryption_key,
         del.delete_file_id,
         del.path AS delete_file_path,
         del.path_is_relative AS delete_path_is_relative,
         del.file_size_bytes AS delete_file_size,
         del.footer_size AS delete_footer_size,
+        del.encryption_key AS delete_encryption_key,
         del.delete_count
     FROM ducklake_data_file AS data
     LEFT JOIN ducklake_delete_file AS del
@@ -75,7 +77,8 @@ pub const SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
         data.path,
         data.path_is_relative,
         data.file_size_bytes,
-        data.footer_size
+        data.footer_size,
+        data.encryption_key
     FROM ducklake_data_file AS data
     WHERE data.table_id = ?
       AND data.begin_snapshot > ?
@@ -132,11 +135,13 @@ pub const SQL_LIST_ALL_FILES: &str = "
         data.path_is_relative AS data_path_is_relative,
         data.file_size_bytes AS data_file_size,
         data.footer_size AS data_footer_size,
+        data.encryption_key AS data_encryption_key,
         del.delete_file_id,
         del.path AS delete_file_path,
         del.path_is_relative AS delete_path_is_relative,
         del.file_size_bytes AS delete_file_size,
         del.footer_size AS delete_footer_size,
+        del.encryption_key AS delete_encryption_key,
         del.delete_count
     FROM ducklake_schema s
     JOIN ducklake_table t ON s.schema_id = t.schema_id
@@ -246,8 +251,8 @@ pub struct DuckLakeFileData {
     pub path: String,
     /// Whether the path is relative to the table's path
     pub path_is_relative: bool,
-    /// Encryption key for the file (currently unused, reserved for future use)
-    pub encryption_key: String,
+    /// Encryption key for the file (used for Parquet Modular Encryption)
+    pub encryption_key: Option<String>,
     /// Size of the file in bytes
     pub file_size_bytes: i64,
     /// Size of the Parquet footer in bytes (optional optimization hint)
@@ -259,7 +264,7 @@ impl DuckLakeFileData {
         Self {
             path,
             path_is_relative,
-            encryption_key: String::new(),
+            encryption_key: None,
             file_size_bytes,
             footer_size: None,
         }
@@ -302,6 +307,7 @@ pub struct DataFileChange {
     pub path_is_relative: bool,
     pub file_size_bytes: i64,
     pub footer_size: Option<i64>,
+    pub encryption_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]

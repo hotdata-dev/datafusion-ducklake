@@ -37,6 +37,7 @@
 
 pub mod catalog;
 pub mod delete_filter;
+pub mod encryption;
 pub mod error;
 pub mod information_schema;
 pub mod metadata_provider;

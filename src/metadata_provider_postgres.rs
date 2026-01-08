@@ -197,11 +197,13 @@ impl MetadataProvider for PostgresMetadataProvider {
                     data.path_is_relative AS data_path_is_relative,
                     data.file_size_bytes AS data_file_size,
                     data.footer_size AS data_footer_size,
+                    data.encryption_key AS data_encryption_key,
                     del.delete_file_id,
                     del.path AS delete_file_path,
                     del.path_is_relative AS delete_path_is_relative,
                     del.file_size_bytes AS delete_file_size,
                     del.footer_size AS delete_footer_size,
+                    del.encryption_key AS delete_encryption_key,
                     del.delete_count
                 FROM ducklake_data_file AS data
                 LEFT JOIN ducklake_delete_file AS del
@@ -225,16 +227,16 @@ impl MetadataProvider for PostgresMetadataProvider {
                         path_is_relative: row.try_get(2)?,
                         file_size_bytes: row.try_get(3)?,
                         footer_size: row.try_get(4)?,
-                        encryption_key: String::new(),
+                        encryption_key: row.try_get(5)?,
                     };
 
-                    let delete_file = if row.try_get::<Option<i64>, _>(5)?.is_some() {
+                    let delete_file = if row.try_get::<Option<i64>, _>(6)?.is_some() {
                         Some(DuckLakeFileData {
-                            path: row.try_get(6)?,
-                            path_is_relative: row.try_get(7)?,
-                            file_size_bytes: row.try_get(8)?,
-                            footer_size: row.try_get(9)?,
-                            encryption_key: String::new(),
+                            path: row.try_get(7)?,
+                            path_is_relative: row.try_get(8)?,
+                            file_size_bytes: row.try_get(9)?,
+                            footer_size: row.try_get(10)?,
+                            encryption_key: row.try_get(11)?,
                         })
                     } else {
                         None
@@ -420,11 +422,13 @@ impl MetadataProvider for PostgresMetadataProvider {
                     data.path_is_relative AS data_path_is_relative,
                     data.file_size_bytes AS data_file_size,
                     data.footer_size AS data_footer_size,
+                    data.encryption_key AS data_encryption_key,
                     del.delete_file_id,
                     del.path AS delete_file_path,
                     del.path_is_relative AS delete_path_is_relative,
                     del.file_size_bytes AS delete_file_size,
                     del.footer_size AS delete_footer_size,
+                    del.encryption_key AS delete_encryption_key,
                     del.delete_count
                 FROM ducklake_schema s
                 JOIN ducklake_table t ON s.schema_id = t.schema_id
@@ -456,16 +460,16 @@ impl MetadataProvider for PostgresMetadataProvider {
                         path_is_relative: row.try_get(4)?,
                         file_size_bytes: row.try_get(5)?,
                         footer_size: row.try_get(6)?,
-                        encryption_key: String::new(),
+                        encryption_key: row.try_get(7)?,
                     };
 
-                    let delete_file = if row.try_get::<Option<i64>, _>(7)?.is_some() {
+                    let delete_file = if row.try_get::<Option<i64>, _>(8)?.is_some() {
                         Some(DuckLakeFileData {
-                            path: row.try_get(8)?,
-                            path_is_relative: row.try_get(9)?,
-                            file_size_bytes: row.try_get(10)?,
-                            footer_size: row.try_get(11)?,
-                            encryption_key: String::new(),
+                            path: row.try_get(9)?,
+                            path_is_relative: row.try_get(10)?,
+                            file_size_bytes: row.try_get(11)?,
+                            footer_size: row.try_get(12)?,
+                            encryption_key: row.try_get(13)?,
                         })
                     } else {
                         None
@@ -479,7 +483,7 @@ impl MetadataProvider for PostgresMetadataProvider {
                             delete_file,
                             row_id_start: None,
                             snapshot_id: None,
-                            max_row_count: row.try_get(12)?,
+                            max_row_count: row.try_get(14)?,
                         },
                     })
                 })
@@ -500,7 +504,8 @@ impl MetadataProvider for PostgresMetadataProvider {
                     data.path,
                     data.path_is_relative,
                     data.file_size_bytes,
-                    data.footer_size
+                    data.footer_size,
+                    data.encryption_key
                 FROM ducklake_data_file AS data
                 WHERE data.table_id = $1
                   AND data.begin_snapshot > $2
@@ -521,6 +526,7 @@ impl MetadataProvider for PostgresMetadataProvider {
                         path_is_relative: row.try_get(2)?,
                         file_size_bytes: row.try_get(3)?,
                         footer_size: row.try_get(4)?,
+                        encryption_key: row.try_get(5)?,
                     })
                 })
                 .collect()

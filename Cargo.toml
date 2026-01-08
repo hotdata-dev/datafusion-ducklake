@@ -25,6 +25,10 @@ futures = "0.3"
 tracing = "0.1"
 thiserror = "2.0"
 
+# Encryption support (optional)
+base64 = { version = "0.22", optional = true }
+hex = { version = "0.4", optional = true }
+
 # Metadata providers (optional)
 duckdb = { version = "1.4.1", features = ["bundled"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio"], optional = true }
@@ -49,3 +53,6 @@ metadata-duckdb = ["dep:duckdb"]
 metadata-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
 # Future: metadata-sqlite = ["sqlx", "sqlx/sqlite", "sqlx/chrono"]
 # Future: metadata-mysql = ["sqlx", "sqlx/mysql", "sqlx/chrono"]
+
+# Encryption support for Parquet files
+encryption = ["parquet/encryption", "datafusion/parquet_encryption", "dep:base64", "dep:hex"]
