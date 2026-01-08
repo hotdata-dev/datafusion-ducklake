@@ -6,23 +6,28 @@ use std::sync::Arc;
 
 use crate::Result;
 use crate::delete_filter::DeleteFilterExec;
-use crate::metadata_provider::{DuckLakeFileData, MetadataProvider};
+use crate::metadata_provider::{DuckLakeFileData, DuckLakeTableFile, MetadataProvider};
 use crate::path_resolver::resolve_path;
 use crate::types::build_arrow_schema;
+
+#[cfg(feature = "encryption")]
+use crate::encryption::EncryptionFactoryBuilder;
 use arrow::array::{Array, Int64Array};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
-use datafusion::datasource::file_format::FileFormat;
-use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
+use datafusion::datasource::source::DataSourceExec;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 use futures::StreamExt;
+
+#[cfg(feature = "encryption")]
+use datafusion::execution::parquet_encryption::EncryptionFactory;
 
 // Delete file schema constants (public for testing)
 pub const DELETE_FILE_PATH_COL: &str = "file_path";
@@ -58,7 +63,10 @@ pub struct DuckLakeTable {
     table_path: String,
     schema: SchemaRef,
     /// Table files with paths as stored in metadata (resolved on-the-fly when needed)
-    table_files: Vec<crate::metadata_provider::DuckLakeTableFile>,
+    table_files: Vec<DuckLakeTableFile>,
+    /// Encryption factory for decrypting encrypted Parquet files (when encryption feature is enabled)
+    #[cfg(feature = "encryption")]
+    encryption_factory: Option<Arc<dyn EncryptionFactory>>,
 }
 
 impl DuckLakeTable {
@@ -76,6 +84,29 @@ impl DuckLakeTable {
         let schema = Arc::new(build_arrow_schema(&columns)?);
         let table_files = provider.get_table_files_for_select(table_id, snapshot_id)?;
 
+        // Build encryption factory from file encryption keys (when encryption feature is enabled)
+        #[cfg(feature = "encryption")]
+        let encryption_factory = {
+            let mut builder = EncryptionFactoryBuilder::new();
+            for table_file in &table_files {
+                // Resolve the file path for the mapping
+                let resolved_path = resolve_path(&table_path, &table_file.file.path, table_file.file.path_is_relative);
+                builder.add_file(&resolved_path, table_file.file.encryption_key.as_deref());
+
+                // Also add delete file encryption key if present
+                if let Some(ref delete_file) = table_file.delete_file {
+                    let resolved_delete_path = resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative);
+                    builder.add_file(&resolved_delete_path, delete_file.encryption_key.as_deref());
+                }
+            }
+            let factory = builder.build();
+            if factory.has_encrypted_files() {
+                Some(Arc::new(factory) as Arc<dyn EncryptionFactory>)
+            } else {
+                None
+            }
+        };
+
         Ok(Self {
             table_id,
             table_name: table_name.into(),
@@ -84,12 +115,26 @@ impl DuckLakeTable {
             table_path,
             schema,
             table_files,
+            #[cfg(feature = "encryption")]
+            encryption_factory,
         })
     }
 
     /// Resolve a file path (data or delete file) to its absolute path
     fn resolve_file_path(&self, file: &DuckLakeFileData) -> String {
         resolve_path(&self.table_path, &file.path, file.path_is_relative)
+    }
+
+    /// Create a ParquetSource with encryption support if enabled and needed
+    fn create_parquet_source(&self) -> ParquetSource {
+        #[cfg(feature = "encryption")]
+        {
+            if let Some(ref factory) = self.encryption_factory {
+                return ParquetSource::default()
+                    .with_encryption_factory(Arc::clone(factory));
+            }
+        }
+        ParquetSource::default()
     }
 
     /// Read a delete file and extract all deleted row positions
@@ -119,14 +164,13 @@ impl DuckLakeTable {
         let file_scan_config = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             delete_schema,
-            Arc::new(ParquetSource::default()),
+            Arc::new(self.create_parquet_source()),
         )
         .with_file_group(FileGroup::new(vec![pf]))
         .build();
 
-        // Create Parquet execution plan
-        let format = ParquetFormat::new();
-        let exec = format.create_physical_plan(state, file_scan_config).await?;
+        // Use DataSourceExec directly to preserve our ParquetSource with encryption factory
+        let exec = DataSourceExec::from_data_source(file_scan_config);
 
         // Execute and collect all batches
         let task_ctx = state.task_ctx();
@@ -153,7 +197,7 @@ impl DuckLakeTable {
     /// need delete filtering.
     async fn build_exec_for_files_without_deletes(
         &self,
-        state: &dyn Session,
+        _state: &dyn Session,
         files: &[&crate::metadata_provider::DuckLakeTableFile],
         projection: Option<&Vec<usize>>,
         limit: Option<usize>,
@@ -178,7 +222,7 @@ impl DuckLakeTable {
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             self.schema.clone(),
-            Arc::new(ParquetSource::default()),
+            Arc::new(self.create_parquet_source()),
         )
         .with_limit(limit)
         .with_file_group(FileGroup::new(partitioned_files));
@@ -189,8 +233,9 @@ impl DuckLakeTable {
         }
 
         let file_scan_config = builder.build();
-        let format = ParquetFormat::new();
-        format.create_physical_plan(state, file_scan_config).await
+        // Use DataSourceExec directly to preserve our ParquetSource with encryption factory
+        // (ParquetFormat::create_physical_plan creates its own ParquetSource and ignores ours)
+        Ok(DataSourceExec::from_data_source(file_scan_config))
     }
 
     /// Build an execution plan for a single file with delete filtering
@@ -215,7 +260,7 @@ impl DuckLakeTable {
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             self.schema.clone(),
-            Arc::new(ParquetSource::default()),
+            Arc::new(self.create_parquet_source()),
         )
         .with_limit(limit)
         .with_file_group(FileGroup::new(vec![pf]));
@@ -226,8 +271,8 @@ impl DuckLakeTable {
         }
 
         let file_scan_config = builder.build();
-        let format = ParquetFormat::new();
-        let parquet_exec = format.create_physical_plan(state, file_scan_config).await?;
+        // Use DataSourceExec directly to preserve our ParquetSource with encryption factory
+        let parquet_exec: Arc<dyn ExecutionPlan> = DataSourceExec::from_data_source(file_scan_config);
 
         // Wrap with delete filter - we know there's a delete file since we partitioned
         // The metadata already tells us which delete file goes with this data file

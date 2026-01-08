@@ -17,10 +17,9 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::Session;
 use datafusion::common::Result as DataFusionResult;
-use datafusion::datasource::file_format::FileFormat;
-use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
+use datafusion::datasource::source::DataSourceExec;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::DataFusionError;
 use datafusion::execution::object_store::ObjectStoreUrl;
@@ -32,6 +31,11 @@ use futures::Stream;
 
 use crate::metadata_provider::{DataFileChange, MetadataProvider};
 use crate::path_resolver::resolve_path;
+
+#[cfg(feature = "encryption")]
+use crate::encryption::EncryptionFactoryBuilder;
+#[cfg(feature = "encryption")]
+use datafusion::execution::parquet_encryption::EncryptionFactory;
 
 /// Type of change captured in CDC output
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -393,11 +397,42 @@ impl TableChangesTable {
     }
 
     /// Build a ParquetExec wrapped with AppendCDCColumnsExec for a single file
+    #[cfg(feature = "encryption")]
     async fn build_exec_for_file(
         &self,
         state: &dyn Session,
         data_file: &DataFileChange,
         proj_info: &ProjectionInfo,
+        encryption_factory: &Option<Arc<dyn EncryptionFactory>>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let parquet_source = if let Some(factory) = encryption_factory {
+            ParquetSource::default().with_encryption_factory(Arc::clone(factory))
+        } else {
+            ParquetSource::default()
+        };
+        self.build_exec_for_file_impl(state, data_file, proj_info, parquet_source)
+            .await
+    }
+
+    /// Build a ParquetExec wrapped with AppendCDCColumnsExec for a single file
+    #[cfg(not(feature = "encryption"))]
+    async fn build_exec_for_file(
+        &self,
+        state: &dyn Session,
+        data_file: &DataFileChange,
+        proj_info: &ProjectionInfo,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        self.build_exec_for_file_impl(state, data_file, proj_info, ParquetSource::default())
+            .await
+    }
+
+    /// Internal implementation for building a ParquetExec wrapped with AppendCDCColumnsExec
+    async fn build_exec_for_file_impl(
+        &self,
+        _state: &dyn Session,
+        data_file: &DataFileChange,
+        proj_info: &ProjectionInfo,
+        parquet_source: ParquetSource,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         // Resolve file path
         let resolved_path = resolve_path(
@@ -424,7 +459,7 @@ impl TableChangesTable {
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
             self.table_schema.clone(),
-            Arc::new(ParquetSource::default()),
+            Arc::new(parquet_source),
         )
         .with_file_group(FileGroup::new(vec![pf]));
 
@@ -434,9 +469,8 @@ impl TableChangesTable {
 
         let file_scan_config = builder.build();
 
-        // Create Parquet execution plan
-        let format = ParquetFormat::new();
-        let parquet_exec = format.create_physical_plan(state, file_scan_config).await?;
+        // Use DataSourceExec directly to preserve our ParquetSource with encryption factory
+        let parquet_exec: Arc<dyn ExecutionPlan> = DataSourceExec::from_data_source(file_scan_config);
 
         // Determine if we should skip input columns (only CDC columns requested)
         let skip_input_columns = proj_info.table_indices.is_empty();
@@ -512,9 +546,34 @@ impl TableProvider for TableChangesTable {
             return Ok(Arc::new(EmptyExec::new(proj_info.output_schema)));
         }
 
+        // Build encryption factory from file encryption keys (when encryption feature is enabled)
+        #[cfg(feature = "encryption")]
+        let encryption_factory: Option<Arc<dyn EncryptionFactory>> = {
+            let mut builder = EncryptionFactoryBuilder::new();
+            for data_file in &data_files {
+                let resolved_path = resolve_path(
+                    &self.table_path,
+                    &data_file.path,
+                    data_file.path_is_relative,
+                );
+                builder.add_file(&resolved_path, data_file.encryption_key.as_deref());
+            }
+            let factory = builder.build();
+            if factory.has_encrypted_files() {
+                Some(Arc::new(factory) as Arc<dyn EncryptionFactory>)
+            } else {
+                None
+            }
+        };
+
         // Build execution plan for each file with projection pushdown
         let mut execs: Vec<Arc<dyn ExecutionPlan>> = Vec::with_capacity(data_files.len());
         for data_file in &data_files {
+            #[cfg(feature = "encryption")]
+            let exec = self
+                .build_exec_for_file(state, data_file, &proj_info, &encryption_factory)
+                .await?;
+            #[cfg(not(feature = "encryption"))]
             let exec = self
                 .build_exec_for_file(state, data_file, &proj_info)
                 .await?;
