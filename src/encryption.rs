@@ -2,9 +2,59 @@
 //!
 //! This module provides integration with Parquet Modular Encryption (PME) using
 //! encryption keys stored in the DuckLake catalog.
+//!
+//! # Supported Encryption
+//!
+//! This module supports **PME-compliant** encrypted Parquet files created by:
+//! - Apache Arrow (PyArrow, arrow-rs)
+//! - Apache Spark
+//! - Any tool following the Parquet Modular Encryption specification
+//!
+//! # NOT Supported
+//!
+//! **DuckDB-encrypted Parquet files are NOT supported.** DuckDB's encryption
+//! implementation is non-standard and missing required PME fields (`aad_file_unique`).
+//! Attempting to read DuckDB-encrypted files will result in an error:
+//! "AAD unique file identifier is not set"
+//!
+//! For more information, see: <https://duckdb.org/docs/stable/data/parquet/encryption>
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Error message for DuckDB-encrypted files (non-PME compliant)
+pub const DUCKDB_ENCRYPTION_ERROR: &str = "Encrypted Parquet file detected but decryption failed. \
+     This may be a DuckDB-encrypted file which uses non-standard encryption \
+     (missing 'aad_file_unique' field required by PME specification). \
+     DataFusion can only decrypt PME-compliant files created by PyArrow, Spark, or parquet-rs. \
+     See: https://duckdb.org/docs/stable/data/parquet/encryption";
+
+/// Known error patterns from parquet-rs that indicate DuckDB encryption
+const DUCKDB_ERROR_PATTERNS: &[&str] =
+    &["AAD unique file identifier is not set", "aad_file_unique"];
+
+/// Check if an error message indicates a DuckDB encryption incompatibility
+pub fn is_duckdb_encryption_error(error_msg: &str) -> bool {
+    DUCKDB_ERROR_PATTERNS
+        .iter()
+        .any(|pattern| error_msg.contains(pattern))
+}
+
+/// Wrap a parquet/datafusion error with a more helpful message if it's a DuckDB encryption error
+#[cfg(feature = "encryption")]
+pub fn wrap_encryption_error(
+    error: datafusion::error::DataFusionError,
+) -> datafusion::error::DataFusionError {
+    let error_str = error.to_string();
+    if is_duckdb_encryption_error(&error_str) {
+        datafusion::error::DataFusionError::Execution(format!(
+            "{}. Original error: {}",
+            DUCKDB_ENCRYPTION_ERROR, error_str
+        ))
+    } else {
+        error
+    }
+}
 
 #[cfg(feature = "encryption")]
 use arrow::datatypes::SchemaRef;
@@ -69,39 +119,57 @@ impl DuckLakeEncryptionFactory {
     /// Decode an encryption key from its stored format.
     ///
     /// DuckLake stores keys as strings - this function handles decoding.
-    /// Supports: base64, hex, or raw 16/32-byte keys.
+    /// Supports: base64, hex, or raw 16/24/32-byte keys.
+    ///
+    /// Decoding priority:
+    /// 1. Base64 (if decodes to valid AES length)
+    /// 2. Hex (if decodes to valid AES length)
+    /// 3. Raw bytes (if exactly 16, 24, or 32 chars)
     #[cfg(feature = "encryption")]
     fn decode_key(key: &str) -> Result<Vec<u8>> {
         use base64::Engine;
         use datafusion::error::DataFusionError;
 
         // Try base64 first (most common for DuckLake)
-        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(key) {
-            return Self::validate_key_length(decoded);
+        // Falls through to hex if base64 decode fails or produces invalid AES length
+        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(key)
+            && Self::is_valid_aes_length(decoded.len())
+        {
+            return Ok(decoded);
         }
 
         // Try hex encoding as fallback
-        if let Ok(decoded) = hex::decode(key) {
-            return Self::validate_key_length(decoded);
+        // Falls through to raw bytes if hex decode fails or produces invalid AES length
+        if let Ok(decoded) = hex::decode(key)
+            && Self::is_valid_aes_length(decoded.len())
+        {
+            return Ok(decoded);
         }
 
-        // If it's exactly 16 or 32 bytes, treat as raw key
+        // If it's exactly 16, 24, or 32 bytes, treat as raw key
         let bytes = key.as_bytes();
-        if bytes.len() == 16 || bytes.len() == 32 {
+        if Self::is_valid_aes_length(bytes.len()) {
             return Ok(bytes.to_vec());
         }
 
         // Provide specific error message (without exposing the key value)
         Err(DataFusionError::Execution(format!(
             "Invalid encryption key format. Expected: base64-encoded (recommended), \
-             hex-encoded, or raw 16/32-byte string. Provided key length: {} chars. \
+             hex-encoded, or raw 16/24/32-byte string. Provided key length: {} chars. \
              Hint: Use base64 encoding, e.g., 'MDEyMzQ1Njc4OWFiY2RlZg==' for a 16-byte key.",
             key.len()
         )))
     }
 
-    /// Validate that decoded key is valid AES key length (128 or 256 bits)
+    /// Check if a key length is valid for AES (128, 192, or 256 bits)
     #[cfg(feature = "encryption")]
+    fn is_valid_aes_length(len: usize) -> bool {
+        matches!(len, 16 | 24 | 32)
+    }
+
+    /// Validate that decoded key is valid AES key length (128 or 256 bits)
+    /// Used by tests to verify error message format
+    #[cfg(all(feature = "encryption", test))]
     fn validate_key_length(key: Vec<u8>) -> Result<Vec<u8>> {
         use datafusion::error::DataFusionError;
 
@@ -223,10 +291,13 @@ impl EncryptionFactoryBuilder {
 mod tests {
     use super::*;
 
+    // ==================== Factory Construction Tests ====================
+
     #[test]
     fn test_empty_factory() {
         let factory = DuckLakeEncryptionFactory::empty();
         assert!(!factory.has_encrypted_files());
+        assert_eq!(factory.file_keys.len(), 0);
     }
 
     #[test]
@@ -237,10 +308,11 @@ mod tests {
 
         let factory = DuckLakeEncryptionFactory::new(keys);
         assert!(factory.has_encrypted_files());
+        assert_eq!(factory.file_keys.len(), 2);
     }
 
     #[test]
-    fn test_builder() {
+    fn test_builder_basic() {
         let mut builder = EncryptionFactoryBuilder::new();
         builder.add_file("file1.parquet", Some("key1"));
         builder.add_file("file2.parquet", None);
@@ -249,5 +321,238 @@ mod tests {
 
         assert!(factory.has_encrypted_files());
         assert_eq!(factory.file_keys.len(), 1);
+    }
+
+    #[test]
+    fn test_builder_multiple_files() {
+        let mut builder = EncryptionFactoryBuilder::new();
+        builder.add_file("/path/to/file1.parquet", Some("a]key1"));
+        builder.add_file("/path/to/file2.parquet", Some("key2"));
+        builder.add_file("/path/to/file3.parquet", Some("key3"));
+        let factory = builder.build();
+
+        assert_eq!(factory.file_keys.len(), 3);
+        assert!(factory.file_keys.contains_key("/path/to/file1.parquet"));
+        assert!(factory.file_keys.contains_key("/path/to/file2.parquet"));
+        assert!(factory.file_keys.contains_key("/path/to/file3.parquet"));
+    }
+
+    #[test]
+    fn test_builder_overwrites_duplicate_paths() {
+        let mut builder = EncryptionFactoryBuilder::new();
+        builder.add_file("file.parquet", Some("key1"));
+        builder.add_file("file.parquet", Some("key2"));
+        let factory = builder.build();
+
+        assert_eq!(factory.file_keys.len(), 1);
+        assert_eq!(
+            factory.file_keys.get("file.parquet"),
+            Some(&"key2".to_string())
+        );
+    }
+
+    // ==================== DuckDB Error Detection Tests ====================
+
+    #[test]
+    fn test_is_duckdb_encryption_error_aad_unique() {
+        assert!(is_duckdb_encryption_error(
+            "AAD unique file identifier is not set"
+        ));
+        assert!(is_duckdb_encryption_error(
+            "Parquet error: AAD unique file identifier is not set"
+        ));
+        assert!(is_duckdb_encryption_error(
+            "Some prefix: AAD unique file identifier is not set - some suffix"
+        ));
+    }
+
+    #[test]
+    fn test_is_duckdb_encryption_error_aad_file_unique() {
+        assert!(is_duckdb_encryption_error(
+            "aad_file_unique field is missing"
+        ));
+        assert!(is_duckdb_encryption_error(
+            "Error: aad_file_unique not found"
+        ));
+    }
+
+    #[test]
+    fn test_is_not_duckdb_encryption_error() {
+        assert!(!is_duckdb_encryption_error("Invalid key format"));
+        assert!(!is_duckdb_encryption_error("File not found"));
+        assert!(!is_duckdb_encryption_error("Decryption failed"));
+        assert!(!is_duckdb_encryption_error(""));
+    }
+
+    // ==================== Debug Implementation Tests ====================
+
+    #[test]
+    fn test_debug_does_not_expose_keys() {
+        let mut keys = HashMap::new();
+        keys.insert("file1.parquet".to_string(), "SECRET_KEY_12345".to_string());
+        keys.insert("file2.parquet".to_string(), "ANOTHER_SECRET".to_string());
+
+        let factory = DuckLakeEncryptionFactory::new(keys);
+        let debug_output = format!("{:?}", factory);
+
+        // Debug should show file paths but NOT key values
+        assert!(debug_output.contains("file1.parquet"));
+        assert!(debug_output.contains("file2.parquet"));
+        assert!(debug_output.contains("file_count"));
+        assert!(!debug_output.contains("SECRET_KEY_12345"));
+        assert!(!debug_output.contains("ANOTHER_SECRET"));
+    }
+
+    #[test]
+    fn test_debug_shows_file_count() {
+        let mut keys = HashMap::new();
+        keys.insert("a.parquet".to_string(), "key".to_string());
+        keys.insert("b.parquet".to_string(), "key".to_string());
+        keys.insert("c.parquet".to_string(), "key".to_string());
+
+        let factory = DuckLakeEncryptionFactory::new(keys);
+        let debug_output = format!("{:?}", factory);
+
+        assert!(debug_output.contains("file_count: 3"));
+    }
+
+    // ==================== Key Validation Tests (encryption feature) ====================
+
+    #[cfg(feature = "encryption")]
+    mod key_validation {
+        use super::*;
+
+        #[test]
+        fn test_decode_key_base64_valid_16_bytes() {
+            // "0123456789abcdef" base64-encoded = 16 bytes
+            let key = "MDEyMzQ1Njc4OWFiY2RlZg==";
+            let result = DuckLakeEncryptionFactory::decode_key(key);
+            assert!(result.is_ok());
+            let decoded = result.unwrap();
+            assert_eq!(decoded.len(), 16);
+            assert_eq!(&decoded, b"0123456789abcdef");
+        }
+
+        #[test]
+        fn test_decode_key_base64_valid_32_bytes() {
+            // 32 random bytes base64-encoded
+            use base64::Engine;
+            let original_key = vec![0u8; 32]; // 32 zero bytes for AES-256
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&original_key);
+            let result = DuckLakeEncryptionFactory::decode_key(&encoded);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap().len(), 32);
+        }
+
+        #[test]
+        fn test_decode_key_hex_valid() {
+            // 48 hex chars = 24 bytes (AES-192)
+            // Base64 decode of 48 alphanumeric chars = 36 bytes (invalid AES)
+            // So base64 decode succeeds but validation fails, falls through to hex
+            let key = "000102030405060708090a0b0c0d0e0f1011121314151617";
+            let result = DuckLakeEncryptionFactory::decode_key(key);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap().len(), 24); // AES-192
+        }
+
+        #[test]
+        fn test_decode_key_raw_16_bytes() {
+            // Use chars that are NOT valid base64 to ensure raw fallback is tested
+            // Base64 alphabet: A-Z, a-z, 0-9, +, /, =
+            // Using special chars that will fail base64 decode
+            let key = "!@#$%^&*()_+{}[]"; // Exactly 16 chars, not valid base64 or hex
+            let result = DuckLakeEncryptionFactory::decode_key(key);
+            assert!(result.is_ok());
+            let decoded = result.unwrap();
+            assert_eq!(decoded.len(), 16);
+            assert_eq!(&decoded, key.as_bytes());
+        }
+
+        #[test]
+        fn test_decode_key_raw_32_bytes() {
+            // 32 chars with special characters that aren't base64 or hex
+            let key = "!@#$%^&*()_+{}[]!@#$%^&*()_+{}[]";
+            let result = DuckLakeEncryptionFactory::decode_key(key);
+            assert!(result.is_ok());
+            let decoded = result.unwrap();
+            assert_eq!(decoded.len(), 32);
+            assert_eq!(&decoded, key.as_bytes());
+        }
+
+        #[test]
+        fn test_decode_key_invalid_format_and_length() {
+            // Not valid base64, not valid hex, and not 16 or 32 chars
+            let key = "!@#short"; // 8 chars
+            let result = DuckLakeEncryptionFactory::decode_key(key);
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("Invalid encryption key format"));
+        }
+
+        #[test]
+        fn test_decode_key_base64_invalid_aes_length() {
+            // Valid base64 that decodes to 50 bytes (not valid AES length)
+            // The encoded string will be ~68 chars, which also fails raw check
+            use base64::Engine;
+            let fifty_bytes = vec![1u8; 50];
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&fifty_bytes);
+            // encoded is 68 chars, base64 decodes to 50 bytes (invalid)
+            // hex decode would be 34 bytes (invalid), raw is 68 chars (invalid)
+            let result = DuckLakeEncryptionFactory::decode_key(&encoded);
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("Invalid encryption key format"));
+        }
+
+        #[test]
+        fn test_validate_key_length_valid() {
+            assert!(DuckLakeEncryptionFactory::validate_key_length(vec![0u8; 16]).is_ok());
+            assert!(DuckLakeEncryptionFactory::validate_key_length(vec![0u8; 24]).is_ok());
+            assert!(DuckLakeEncryptionFactory::validate_key_length(vec![0u8; 32]).is_ok());
+        }
+
+        #[test]
+        fn test_validate_key_length_invalid() {
+            let result = DuckLakeEncryptionFactory::validate_key_length(vec![0u8; 10]);
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("Invalid encryption key length: 10 bytes"));
+        }
+    }
+
+    // ==================== Error Message Tests ====================
+
+    #[test]
+    fn test_duckdb_error_message_content() {
+        assert!(DUCKDB_ENCRYPTION_ERROR.contains("DuckDB"));
+        assert!(DUCKDB_ENCRYPTION_ERROR.contains("PME"));
+        assert!(DUCKDB_ENCRYPTION_ERROR.contains("aad_file_unique"));
+        assert!(DUCKDB_ENCRYPTION_ERROR.contains("PyArrow"));
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_wrap_encryption_error_duckdb() {
+        let original = datafusion::error::DataFusionError::Execution(
+            "AAD unique file identifier is not set".to_string(),
+        );
+        let wrapped = wrap_encryption_error(original);
+        let msg = wrapped.to_string();
+
+        assert!(msg.contains("DuckDB"));
+        assert!(msg.contains("PME"));
+        assert!(msg.contains("Original error"));
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn test_wrap_encryption_error_passthrough() {
+        let original =
+            datafusion::error::DataFusionError::Execution("Some other error".to_string());
+        let wrapped = wrap_encryption_error(original);
+        let msg = wrapped.to_string();
+
+        assert!(!msg.contains("DuckDB"));
+        assert!(msg.contains("Some other error"));
     }
 }
