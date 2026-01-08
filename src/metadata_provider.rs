@@ -17,7 +17,7 @@ pub const SQL_LIST_TABLES: &str =
        AND ? >= begin_snapshot
        AND (? < end_snapshot OR end_snapshot IS NULL)";
 
-pub const SQL_GET_TABLE_COLUMNS: &str = "SELECT column_id, column_name, column_type
+pub const SQL_GET_TABLE_COLUMNS: &str = "SELECT column_id, column_name, column_type, nulls_allowed
      FROM ducklake_column
      WHERE table_id = ?
      ORDER BY column_order";
@@ -116,7 +116,8 @@ pub const SQL_LIST_ALL_COLUMNS: &str = "
         t.table_name,
         c.column_id,
         c.column_name,
-        c.column_type
+        c.column_type,
+        c.nulls_allowed
     FROM ducklake_schema s
     JOIN ducklake_table t ON s.schema_id = t.schema_id
     JOIN ducklake_column c ON t.table_id = c.table_id
@@ -232,14 +233,22 @@ pub struct DuckLakeTableColumn {
     pub column_name: String,
     /// DuckLake type string (e.g., "varchar", "int64", "decimal(10,2)")
     pub column_type: String,
+    /// Whether this column allows NULL values
+    pub is_nullable: bool,
 }
 
 impl DuckLakeTableColumn {
-    pub fn new(column_id: i64, column_name: String, column_type: String) -> Self {
+    pub fn new(
+        column_id: i64,
+        column_name: String,
+        column_type: String,
+        is_nullable: bool,
+    ) -> Self {
         Self {
             column_id,
             column_name,
             column_type,
+            is_nullable,
         }
     }
 }
