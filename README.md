@@ -11,12 +11,13 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 ## Currently Supported
 
 - Read-only queries against DuckLake catalogs
-- DuckDB and PostgreSQL catalog backends
+- DuckDB, PostgreSQL, and MySQL catalog backends
 - Local filesystem and S3-compatible object stores (MinIO, S3)
 - Snapshot-based consistency
 - Basic and decimal types
 - Hierarchical path resolution (`data_path`, `schema`, `table`, `file`)
 - Delete files for row-level deletion (MOR – Merge-On-Read)
+- Parquet Modular Encryption (PME) for reading encrypted Parquet files
 - Parquet footer size hints for optimized I/O
 - Filter pushdown to Parquet for row group pruning and page-level filtering
 - Dynamic metadata lookup (no upfront catalog caching)
@@ -31,6 +32,7 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 - No write operations
 - No partition-based file pruning
 - No time travel support
+- DuckDB-encrypted Parquet files (non-PME) are not supported
 
 ---
 
@@ -41,10 +43,7 @@ This project is under active development. The roadmap below reflects major areas
 ### Metadata & Catalog Improvements
 
 - Metadata caching to reduce repeated catalog lookups
-- Pluggable metadata providers beyond DuckDB:
-  - PostgreSQL
-  - SQLite
-  - MySQL
+- SQLite metadata provider
 - Clear abstraction boundaries between catalog, metadata provider, and execution
 
 ### Query Planning & Performance
@@ -86,6 +85,7 @@ This project is under active development. The roadmap below reflects major areas
 |---------|-------------|---------|
 | `metadata-duckdb` | DuckDB catalog backend | ✅ |
 | `metadata-postgres` | PostgreSQL catalog backend | |
+| `metadata-mysql` | MySQL catalog backend | |
 
 ```bash
 # DuckDB only (default)
@@ -94,15 +94,26 @@ cargo build
 # PostgreSQL only
 cargo build --no-default-features --features metadata-postgres
 
-# Both backends
-cargo build --features metadata-postgres
+# MySQL only
+cargo build --no-default-features --features metadata-mysql
+
+# All backends
+cargo build --features metadata-postgres,metadata-mysql
 ```
 
 ### Example
 
 ```bash
-cargo run --example basic_query -- <catalog.db> <sql>
+# DuckDB catalog
+cargo run --example basic_query -- catalog.db "SELECT * FROM main.users"
 
+# PostgreSQL catalog
+cargo run --example basic_query --features metadata-postgres -- \
+  "postgresql://user:password@localhost:5432/database" "SELECT * FROM main.users"
+
+# MySQL catalog
+cargo run --example basic_query --features metadata-mysql -- \
+  "mysql://user:password@localhost:3306/database" "SELECT * FROM main.users"
 ```
 
 ### Integration
