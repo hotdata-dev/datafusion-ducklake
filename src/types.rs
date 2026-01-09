@@ -194,22 +194,6 @@ pub fn build_read_schema_with_field_id_mapping(
     Ok((Schema::new(fields?), name_mapping))
 }
 
-/// Returns true if all column names match (no renaming needed).
-pub fn schema_names_match(
-    current_columns: &[DuckLakeTableColumn],
-    parquet_field_ids: &HashMap<i32, String>,
-) -> bool {
-    for col in current_columns {
-        let field_id = col.column_id as i32;
-        if let Some(parquet_name) = parquet_field_ids.get(&field_id)
-            && parquet_name != &col.column_name
-        {
-            return false;
-        }
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,36 +270,6 @@ mod tests {
         // Falls back to current column name
         assert_eq!(read_schema.field(0).name(), "id");
         assert!(name_mapping.is_empty());
-    }
-
-    #[test]
-    fn test_schema_names_match() {
-        let current_columns = vec![DuckLakeTableColumn {
-            column_id: 1,
-            column_name: "id".to_string(),
-            column_type: "int32".to_string(),
-            is_nullable: true,
-        }];
-
-        let mut parquet_field_ids = HashMap::new();
-        parquet_field_ids.insert(1, "id".to_string());
-
-        assert!(schema_names_match(&current_columns, &parquet_field_ids));
-    }
-
-    #[test]
-    fn test_schema_names_dont_match() {
-        let current_columns = vec![DuckLakeTableColumn {
-            column_id: 1,
-            column_name: "userId".to_string(), // Renamed
-            column_type: "int32".to_string(),
-            is_nullable: true,
-        }];
-
-        let mut parquet_field_ids = HashMap::new();
-        parquet_field_ids.insert(1, "user_id".to_string()); // Original name
-
-        assert!(!schema_names_match(&current_columns, &parquet_field_ids));
     }
 
     #[test]
