@@ -18,8 +18,8 @@ pub enum DuckLakeError {
     #[error("DuckDB error: {0}")]
     DuckDb(#[from] duckdb::Error),
 
-    /// sqlx database error (for PostgreSQL metadata provider)
-    #[cfg(feature = "metadata-postgres")]
+    /// sqlx database error (for PostgreSQL/MySQL metadata providers)
+    #[cfg(any(feature = "metadata-postgres", feature = "metadata-mysql"))]
     #[error("Database error: {0}")]
     Sqlx(#[from] sqlx::Error),
 
