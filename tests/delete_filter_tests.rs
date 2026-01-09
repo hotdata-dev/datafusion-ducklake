@@ -344,9 +344,7 @@ mod integration_tests {
         ctx.register_catalog("all_deleted", catalog);
 
         // Query the table - should return 0 rows since all data was deleted
-        let df = ctx
-            .sql("SELECT * FROM all_deleted.main.tbl")
-            .await?;
+        let df = ctx.sql("SELECT * FROM all_deleted.main.tbl").await?;
         let results = df.collect().await?;
 
         let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
