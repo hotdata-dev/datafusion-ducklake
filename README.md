@@ -86,6 +86,7 @@ This project is under active development. The roadmap below reflects major areas
 | `metadata-duckdb` | DuckDB catalog backend | ✅ |
 | `metadata-postgres` | PostgreSQL catalog backend | |
 | `metadata-mysql` | MySQL catalog backend | |
+| `encryption` | Parquet Modular Encryption (PME) support | |
 
 ```bash
 # DuckDB only (default)
