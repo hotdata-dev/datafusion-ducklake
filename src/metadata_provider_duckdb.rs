@@ -167,40 +167,43 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES)?;
 
         let files = stmt
-            .query_map([table_id, snapshot_id, snapshot_id, table_id], |row| {
-                // Parse data file (columns 0-5)
-                let _data_file_id: i64 = row.get(0)?;
-                let data_file = DuckLakeFileData {
-                    path: row.get(1)?,
-                    path_is_relative: row.get(2)?,
-                    file_size_bytes: row.get(3)?,
-                    footer_size: row.get(4)?,
-                    encryption_key: row.get(5)?,
-                };
+            .query_map(
+                [table_id, snapshot_id, snapshot_id, table_id, snapshot_id, snapshot_id],
+                |row| {
+                    // Parse data file (columns 0-5)
+                    let _data_file_id: i64 = row.get(0)?;
+                    let data_file = DuckLakeFileData {
+                        path: row.get(1)?,
+                        path_is_relative: row.get(2)?,
+                        file_size_bytes: row.get(3)?,
+                        footer_size: row.get(4)?,
+                        encryption_key: row.get(5)?,
+                    };
 
-                // Parse delete file (columns 6-12) if exists
-                let delete_file = if let Ok(Some(_)) = row.get::<_, Option<i64>>(6) {
-                    Some(DuckLakeFileData {
-                        path: row.get(7)?,
-                        path_is_relative: row.get(8)?,
-                        file_size_bytes: row.get(9)?,
-                        footer_size: row.get(10)?,
-                        encryption_key: row.get(11)?,
+                    // Parse delete file (columns 6-12) if exists
+                    let delete_file = if let Ok(Some(_)) = row.get::<_, Option<i64>>(6) {
+                        Some(DuckLakeFileData {
+                            path: row.get(7)?,
+                            path_is_relative: row.get(8)?,
+                            file_size_bytes: row.get(9)?,
+                            footer_size: row.get(10)?,
+                            encryption_key: row.get(11)?,
+                        })
+                    } else {
+                        None
+                    };
+
+                    let _delete_count: Option<i64> = row.get(12)?;
+
+                    Ok(DuckLakeTableFile {
+                        file: data_file,
+                        delete_file,
+                        row_id_start: None,
+                        snapshot_id: Some(snapshot_id),
+                        max_row_count: None, // Set to None until we have actual row count from data file metadata
                     })
-                } else {
-                    None
-                };
-
-                let _delete_count: Option<i64> = row.get(12)?;
-
-                Ok(DuckLakeTableFile {
-                    file: data_file,
-                    delete_file,
-                    row_id_start: None,
-                    snapshot_id: Some(snapshot_id),
-                    max_row_count: None, // Set to None until we have actual row count from data file metadata
-                })
-            })?
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
@@ -331,6 +334,8 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let files = stmt
             .query_map(
                 params![
+                    snapshot_id,
+                    snapshot_id,
                     snapshot_id,
                     snapshot_id,
                     snapshot_id,

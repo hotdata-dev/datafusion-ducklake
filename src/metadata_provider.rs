@@ -43,7 +43,9 @@ pub const SQL_GET_DATA_FILES: &str = "
         AND del.table_id = ?
         AND ? >= del.begin_snapshot
         AND (? < del.end_snapshot OR del.end_snapshot IS NULL)
-    WHERE data.table_id = ?";
+    WHERE data.table_id = ?
+      AND ? >= data.begin_snapshot
+      AND (? < data.end_snapshot OR data.end_snapshot IS NULL)";
 
 pub const SQL_GET_DATA_PATH: &str =
     "SELECT value FROM ducklake_metadata WHERE key = 'data_path' AND scope IS NULL";
@@ -156,6 +158,8 @@ pub const SQL_LIST_ALL_FILES: &str = "
       AND (? < s.end_snapshot OR s.end_snapshot IS NULL)
       AND ? >= t.begin_snapshot
       AND (? < t.end_snapshot OR t.end_snapshot IS NULL)
+      AND ? >= data.begin_snapshot
+      AND (? < data.end_snapshot OR data.end_snapshot IS NULL)
     ORDER BY s.schema_name, t.table_name, data.path";
 
 /// Metadata for a snapshot in the DuckLake catalog
