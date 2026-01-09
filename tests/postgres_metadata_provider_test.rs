@@ -118,10 +118,10 @@ async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS ducklake_metadata (
-            key VARCHAR NOT NULL,
+            key VARCHAR NOT NULL PRIMARY KEY,
             value VARCHAR NOT NULL,
-            scope VARCHAR NOT NULL DEFAULT '',
-            PRIMARY KEY (key, scope)
+            scope VARCHAR,
+            scope_id BIGINT
         )",
     )
     .execute(pool)
@@ -199,12 +199,13 @@ async fn populate_test_data(provider: &PostgresMetadataProvider) -> anyhow::Resu
         .await?;
 
     // Insert metadata (data_path)
-    sqlx::query("INSERT INTO ducklake_metadata (key, value, scope) VALUES ($1, $2, $3)")
-        .bind("data_path")
-        .bind("file:///tmp/ducklake_data/")
-        .bind("")
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "INSERT INTO ducklake_metadata (key, value, scope, scope_id) VALUES ($1, $2, NULL, NULL)",
+    )
+    .bind("data_path")
+    .bind("file:///tmp/ducklake_data/")
+    .execute(pool)
+    .await?;
 
     // Insert schema
     sqlx::query(
@@ -398,12 +399,13 @@ async fn populate_from_duckdb_catalog(
     }
 
     // Insert data_path metadata
-    sqlx::query("INSERT INTO ducklake_metadata (key, value, scope) VALUES ($1, $2, $3)")
-        .bind("data_path")
-        .bind(&data_path)
-        .bind("")
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO ducklake_metadata (key, value, scope, scope_id) VALUES ($1, $2, NULL, NULL)",
+    )
+    .bind("data_path")
+    .bind(&data_path)
+    .execute(&mut *tx)
+    .await?;
 
     // Insert schemas, tables, columns, and files
     for schema in &schemas {

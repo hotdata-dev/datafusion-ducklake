@@ -1,7 +1,7 @@
 //! Basic DuckLake query example with snapshot isolation
 //!
 //! This example demonstrates how to:
-//! 1. Create a DuckLake catalog from DuckDB or PostgreSQL
+//! 1. Create a DuckLake catalog from DuckDB, PostgreSQL, or MySQL
 //! 2. Bind the catalog to a specific snapshot for query consistency
 //! 3. Register it with DataFusion
 //! 4. Execute a simple SELECT query
@@ -29,11 +29,20 @@
 //!   "postgresql://user:password@localhost:5432/postgres" \
 //!   "SELECT * FROM main.users"
 //! ```
+//!
+//! With MySQL catalog (requires --features metadata-mysql):
+//! ```bash
+//! cargo run --example basic_query --features metadata-mysql \
+//!   "mysql://user:password@localhost:3306/database" \
+//!   "SELECT * FROM main.users"
+//! ```
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
 #[cfg(feature = "metadata-duckdb")]
 use datafusion_ducklake::DuckdbMetadataProvider;
+#[cfg(feature = "metadata-mysql")]
+use datafusion_ducklake::MySqlMetadataProvider;
 #[cfg(feature = "metadata-postgres")]
 use datafusion_ducklake::PostgresMetadataProvider;
 use datafusion_ducklake::{DuckLakeCatalog, MetadataProvider, register_ducklake_functions};
@@ -53,6 +62,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!(
             "  PostgreSQL: cargo run --example basic_query --features metadata-postgres \"postgresql://...\" \"SQL\""
         );
+        eprintln!(
+            "  MySQL:      cargo run --example basic_query --features metadata-mysql \"mysql://...\" \"SQL\""
+        );
         exit(1);
     }
     let catalog_source = &args[1];
@@ -60,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Detect provider type based on input
     let is_postgres = catalog_source.starts_with("postgresql://");
+    let is_mysql = catalog_source.starts_with("mysql://");
 
     if is_postgres {
         #[cfg(not(feature = "metadata-postgres"))]
@@ -73,6 +86,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             println!("Connecting to PostgreSQL catalog: {}", catalog_source);
             let provider = Arc::new(PostgresMetadataProvider::new(catalog_source).await?);
+            let snapshot_id = provider.get_current_snapshot()?;
+            println!("Current snapshot ID: {}", snapshot_id);
+            run_query(provider, snapshot_id, sql).await?;
+        }
+    } else if is_mysql {
+        #[cfg(not(feature = "metadata-mysql"))]
+        {
+            eprintln!("Error: MySQL support requires the 'metadata-mysql' feature");
+            eprintln!("Run with: cargo run --example basic_query --features metadata-mysql");
+            exit(1);
+        }
+
+        #[cfg(feature = "metadata-mysql")]
+        {
+            println!("Connecting to MySQL catalog: {}", catalog_source);
+            let provider = Arc::new(MySqlMetadataProvider::new(catalog_source).await?);
             let snapshot_id = provider.get_current_snapshot()?;
             println!("Current snapshot ID: {}", snapshot_id);
             run_query(provider, snapshot_id, sql).await?;

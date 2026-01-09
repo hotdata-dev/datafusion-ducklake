@@ -42,12 +42,12 @@ impl MetadataProvider for MySqlMetadataProvider {
 
     fn get_data_path(&self) -> Result<String> {
         block_on(async {
-            let row =
-                sqlx::query("SELECT value FROM ducklake_metadata WHERE `key` = ? AND scope = ?")
-                    .bind("data_path")
-                    .bind("")
-                    .fetch_optional(&self.pool)
-                    .await?;
+            let row = sqlx::query(
+                "SELECT value FROM ducklake_metadata WHERE `key` = ? AND scope IS NULL",
+            )
+            .bind("data_path")
+            .fetch_optional(&self.pool)
+            .await?;
 
             match row {
                 Some(r) => Ok(r.try_get(0)?),

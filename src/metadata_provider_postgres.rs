@@ -78,9 +78,8 @@ impl MetadataProvider for PostgresMetadataProvider {
     fn get_data_path(&self) -> Result<String> {
         block_on(async {
             let row =
-                sqlx::query("SELECT value FROM ducklake_metadata WHERE key = $1 AND scope = $2")
+                sqlx::query("SELECT value FROM ducklake_metadata WHERE key = $1 AND scope IS NULL")
                     .bind("data_path")
-                    .bind("")
                     .fetch_optional(&self.pool)
                     .await?;
 
