@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use arrow::datatypes::{Field, Schema, SchemaRef};
+use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
@@ -29,8 +29,10 @@ pub struct ColumnRenameExec {
     input: Arc<dyn ExecutionPlan>,
     /// Output schema with renamed columns
     output_schema: SchemaRef,
-    /// Mapping from old column names to new column names (for display purposes)
+    /// Mapping from old (Parquet) column names to new (DuckLake) column names
     name_mapping: HashMap<String, String>,
+    /// Reverse mapping: new name -> old name, for looking up input columns
+    reverse_mapping: Arc<HashMap<String, String>>,
     /// Cached plan properties with updated schema
     properties: PlanProperties,
 }
@@ -42,7 +44,7 @@ impl ColumnRenameExec {
         name_mapping: HashMap<String, String>,
     ) -> Self {
         // PlanProperties must use output schema for DataFusion schema validation
-        let eq_props = EquivalenceProperties::new(output_schema.clone());
+        let eq_props = EquivalenceProperties::new(Arc::clone(&output_schema));
         let properties = PlanProperties::new(
             eq_props,
             input.output_partitioning().clone(),
@@ -50,25 +52,25 @@ impl ColumnRenameExec {
             Boundedness::Bounded,
         );
 
+        // Pre-compute reverse mapping once (new_name -> old_name)
+        let reverse_mapping: HashMap<String, String> = name_mapping
+            .iter()
+            .map(|(old, new)| (new.clone(), old.clone()))
+            .collect();
+
         Self {
             input,
             output_schema,
             name_mapping,
+            reverse_mapping: Arc::new(reverse_mapping),
             properties,
         }
     }
 }
 
 impl DisplayAs for ColumnRenameExec {
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match t {
-            DisplayFormatType::Default | DisplayFormatType::Verbose => {
-                write!(f, "ColumnRenameExec: renames={}", self.name_mapping.len())
-            },
-            DisplayFormatType::TreeRender => {
-                write!(f, "ColumnRenameExec: renames={}", self.name_mapping.len())
-            },
-        }
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "ColumnRenameExec: renames={}", self.name_mapping.len())
     }
 }
 
@@ -99,11 +101,14 @@ impl ExecutionPlan for ColumnRenameExec {
             ));
         }
 
-        Ok(Arc::new(ColumnRenameExec::new(
-            children[0].clone(),
-            self.output_schema.clone(),
-            self.name_mapping.clone(),
-        )))
+        // Reuse existing reverse_mapping since name_mapping hasn't changed
+        Ok(Arc::new(Self {
+            input: Arc::clone(&children[0]),
+            output_schema: Arc::clone(&self.output_schema),
+            name_mapping: self.name_mapping.clone(),
+            reverse_mapping: Arc::clone(&self.reverse_mapping),
+            properties: self.properties.clone(),
+        }))
     }
 
     fn execute(
@@ -113,17 +118,10 @@ impl ExecutionPlan for ColumnRenameExec {
     ) -> DataFusionResult<SendableRecordBatchStream> {
         let input_stream = self.input.execute(partition, context)?;
 
-        // Invert mapping: new_name -> old_name (for looking up input columns)
-        let reverse_mapping: HashMap<String, String> = self
-            .name_mapping
-            .iter()
-            .map(|(old, new)| (new.clone(), old.clone()))
-            .collect();
-
         Ok(Box::pin(ColumnRenameStream {
             input: input_stream,
-            output_schema: self.output_schema.clone(),
-            reverse_mapping,
+            output_schema: Arc::clone(&self.output_schema),
+            reverse_mapping: Arc::clone(&self.reverse_mapping),
         }))
     }
 }
@@ -133,7 +131,7 @@ struct ColumnRenameStream {
     input: SendableRecordBatchStream,
     output_schema: SchemaRef,
     /// Mapping from output column name -> input column name (for renamed columns only)
-    reverse_mapping: HashMap<String, String>,
+    reverse_mapping: Arc<HashMap<String, String>>,
 }
 
 impl Stream for ColumnRenameStream {
@@ -146,7 +144,11 @@ impl Stream for ColumnRenameStream {
                     // COUNT(*) case: preserve row count with empty schema
                     use arrow::record_batch::RecordBatchOptions;
                     let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
-                    RecordBatch::try_new_with_options(self.output_schema.clone(), vec![], &options)
+                    RecordBatch::try_new_with_options(
+                        Arc::clone(&self.output_schema),
+                        vec![],
+                        &options,
+                    )
                 } else {
                     // Build columns by looking up each output field in the input batch
                     let input_schema = batch.schema();
@@ -169,7 +171,7 @@ impl Stream for ColumnRenameStream {
                         .collect();
 
                     match columns {
-                        Ok(cols) => RecordBatch::try_new(self.output_schema.clone(), cols),
+                        Ok(cols) => RecordBatch::try_new(Arc::clone(&self.output_schema), cols),
                         Err(e) => Err(e),
                     }
                 };
@@ -190,76 +192,15 @@ impl Stream for ColumnRenameStream {
 
 impl RecordBatchStream for ColumnRenameStream {
     fn schema(&self) -> SchemaRef {
-        self.output_schema.clone()
+        Arc::clone(&self.output_schema)
     }
-}
-
-/// Build a schema with renamed fields, preserving data types and metadata.
-pub fn build_renamed_schema(
-    input_schema: &Schema,
-    name_mapping: &HashMap<String, String>,
-) -> Schema {
-    let renamed_fields: Vec<Field> = input_schema
-        .fields()
-        .iter()
-        .map(|field| {
-            let new_name = name_mapping
-                .get(field.name())
-                .cloned()
-                .unwrap_or_else(|| field.name().clone());
-            Field::new(new_name, field.data_type().clone(), field.is_nullable())
-                .with_metadata(field.metadata().clone())
-        })
-        .collect();
-
-    Schema::new(renamed_fields).with_metadata(input_schema.metadata().clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::datatypes::DataType;
+    use arrow::datatypes::{DataType, Field, Schema};
     use datafusion::physical_plan::EmptyRecordBatchStream;
-
-    #[test]
-    fn test_build_renamed_schema() {
-        let input_schema = Schema::new(vec![
-            Field::new("old_id", DataType::Int32, false),
-            Field::new("old_name", DataType::Utf8, true),
-        ]);
-
-        let mut name_mapping = HashMap::new();
-        name_mapping.insert("old_id".to_string(), "new_id".to_string());
-        name_mapping.insert("old_name".to_string(), "new_name".to_string());
-
-        let renamed_schema = build_renamed_schema(&input_schema, &name_mapping);
-
-        assert_eq!(renamed_schema.fields().len(), 2);
-        assert_eq!(renamed_schema.field(0).name(), "new_id");
-        assert_eq!(renamed_schema.field(1).name(), "new_name");
-        assert_eq!(renamed_schema.field(0).data_type(), &DataType::Int32);
-        assert_eq!(renamed_schema.field(1).data_type(), &DataType::Utf8);
-    }
-
-    #[test]
-    fn test_build_renamed_schema_partial_mapping() {
-        // Test when only some columns are renamed
-        let input_schema = Schema::new(vec![
-            Field::new("col1", DataType::Int32, false),
-            Field::new("col2", DataType::Utf8, true),
-            Field::new("col3", DataType::Float64, false),
-        ]);
-
-        let mut name_mapping = HashMap::new();
-        name_mapping.insert("col1".to_string(), "renamed_col1".to_string());
-        // col2 and col3 are not renamed
-
-        let renamed_schema = build_renamed_schema(&input_schema, &name_mapping);
-
-        assert_eq!(renamed_schema.field(0).name(), "renamed_col1");
-        assert_eq!(renamed_schema.field(1).name(), "col2"); // unchanged
-        assert_eq!(renamed_schema.field(2).name(), "col3"); // unchanged
-    }
 
     #[test]
     fn test_column_rename_stream_schema() {
@@ -280,8 +221,8 @@ mod tests {
 
         let stream = ColumnRenameStream {
             input: Box::pin(EmptyRecordBatchStream::new(input_schema)),
-            output_schema: output_schema.clone(),
-            reverse_mapping,
+            output_schema: Arc::clone(&output_schema),
+            reverse_mapping: Arc::new(reverse_mapping),
         };
 
         // The stream should report the output schema
