@@ -101,14 +101,12 @@ impl ExecutionPlan for ColumnRenameExec {
             ));
         }
 
-        // Reuse existing reverse_mapping since name_mapping hasn't changed
-        Ok(Arc::new(Self {
-            input: Arc::clone(&children[0]),
-            output_schema: Arc::clone(&self.output_schema),
-            name_mapping: self.name_mapping.clone(),
-            reverse_mapping: Arc::clone(&self.reverse_mapping),
-            properties: self.properties.clone(),
-        }))
+        // Must call new() to rebuild properties from new child's partitioning
+        Ok(Arc::new(ColumnRenameExec::new(
+            Arc::clone(&children[0]),
+            Arc::clone(&self.output_schema),
+            self.name_mapping.clone(),
+        )))
     }
 
     fn execute(
