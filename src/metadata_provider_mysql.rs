@@ -139,7 +139,7 @@ impl MetadataProvider for MySqlMetadataProvider {
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>> {
         block_on(async {
             let rows = sqlx::query(
-                "SELECT column_id, column_name, column_type
+                "SELECT column_id, column_name, column_type, nulls_allowed
                  FROM ducklake_column
                  WHERE table_id = ?
                  ORDER BY column_order",
@@ -150,10 +150,12 @@ impl MetadataProvider for MySqlMetadataProvider {
 
             rows.into_iter()
                 .map(|row| {
+                    let nulls_allowed: Option<bool> = row.try_get(3)?;
                     Ok(DuckLakeTableColumn {
                         column_id: row.try_get(0)?,
                         column_name: row.try_get(1)?,
                         column_type: row.try_get(2)?,
+                        is_nullable: nulls_allowed.unwrap_or(true),
                     })
                 })
                 .collect()
@@ -356,7 +358,7 @@ impl MetadataProvider for MySqlMetadataProvider {
     fn list_all_columns(&self, snapshot_id: i64) -> Result<Vec<ColumnWithTable>> {
         block_on(async {
             let rows = sqlx::query(
-                "SELECT s.schema_name, t.table_name, c.column_id, c.column_name, c.column_type
+                "SELECT s.schema_name, t.table_name, c.column_id, c.column_name, c.column_type, c.nulls_allowed
                  FROM ducklake_schema s
                  JOIN ducklake_table t ON s.schema_id = t.schema_id
                  JOIN ducklake_column c ON t.table_id = c.table_id
@@ -377,10 +379,12 @@ impl MetadataProvider for MySqlMetadataProvider {
                 .map(|row| {
                     let schema_name: String = row.try_get(0)?;
                     let table_name: String = row.try_get(1)?;
+                    let nulls_allowed: Option<bool> = row.try_get(5)?;
                     let column = DuckLakeTableColumn {
                         column_id: row.try_get(2)?,
                         column_name: row.try_get(3)?,
                         column_type: row.try_get(4)?,
+                        is_nullable: nulls_allowed.unwrap_or(true),
                     };
                     Ok(ColumnWithTable {
                         schema_name,

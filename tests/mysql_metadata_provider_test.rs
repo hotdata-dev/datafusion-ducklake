@@ -77,6 +77,7 @@ async fn init_schema(pool: &MySqlPool) -> anyhow::Result<()> {
             column_name VARCHAR(255) NOT NULL,
             column_type VARCHAR(255) NOT NULL,
             column_order INTEGER NOT NULL,
+            nulls_allowed BOOLEAN,
             FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
         )",
     )
@@ -254,38 +255,41 @@ async fn populate_test_data(provider: &MySqlMetadataProvider) -> anyhow::Result<
 
     // Insert columns for users table
     sqlx::query(
-        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order, nulls_allowed)
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(1i64)
     .bind(1i64)
     .bind("id")
     .bind("INT")
     .bind(0i32)
+    .bind(false)
     .execute(pool)
     .await?;
 
     sqlx::query(
-        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order, nulls_allowed)
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(2i64)
     .bind(1i64)
     .bind("name")
     .bind("VARCHAR")
     .bind(1i32)
+    .bind(true)
     .execute(pool)
     .await?;
 
     sqlx::query(
-        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order, nulls_allowed)
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(3i64)
     .bind(1i64)
     .bind("email")
     .bind("VARCHAR")
     .bind(2i32)
+    .bind(true)
     .execute(pool)
     .await?;
 
@@ -422,14 +426,15 @@ async fn populate_from_duckdb_catalog(
 
             for (order, column) in columns.iter().enumerate() {
                 sqlx::query(
-                    "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-                     VALUES (?, ?, ?, ?, ?)"
+                    "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order, nulls_allowed)
+                     VALUES (?, ?, ?, ?, ?, ?)"
                 )
                 .bind(column.column_id)
                 .bind(table.table_id)
                 .bind(&column.column_name)
                 .bind(&column.column_type)
                 .bind(order as i32)
+                .bind(column.is_nullable)
                 .execute(pool)
                 .await?;
             }
