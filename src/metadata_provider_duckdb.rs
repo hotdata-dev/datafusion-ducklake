@@ -145,10 +145,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
                 let column_id: i64 = row.get(0)?;
                 let column_name: String = row.get(1)?;
                 let column_type: String = row.get(2)?;
+                let nulls_allowed: Option<bool> = row.get(3)?;
                 Ok(DuckLakeTableColumn::new(
                     column_id,
                     column_name,
                     column_type,
+                    nulls_allowed.unwrap_or(true),
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -306,10 +308,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
                 |row| {
                     let schema_name: String = row.get(0)?;
                     let table_name: String = row.get(1)?;
+                    let nulls_allowed: Option<bool> = row.get(5)?;
                     let column = DuckLakeTableColumn {
                         column_id: row.get(2)?,
                         column_name: row.get(3)?,
                         column_type: row.get(4)?,
+                        is_nullable: nulls_allowed.unwrap_or(true),
                     };
                     Ok(ColumnWithTable {
                         schema_name,

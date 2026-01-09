@@ -1,14 +1,19 @@
 //! DuckLake table provider implementation
 
 use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::Result;
+use crate::column_rename::ColumnRenameExec;
 use crate::delete_filter::DeleteFilterExec;
-use crate::metadata_provider::{DuckLakeFileData, DuckLakeTableFile, MetadataProvider};
+use crate::metadata_provider::{
+    DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, MetadataProvider,
+};
 use crate::path_resolver::resolve_path;
-use crate::types::build_arrow_schema;
+use crate::types::{
+    build_arrow_schema, build_read_schema_with_field_id_mapping, extract_parquet_field_ids,
+};
 
 #[cfg(feature = "encryption")]
 use crate::encryption::EncryptionFactoryBuilder;
@@ -25,6 +30,10 @@ use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 use futures::StreamExt;
+use object_store::path::Path as ObjectPath;
+use parquet::arrow::ParquetRecordBatchStreamBuilder;
+use parquet::arrow::async_reader::ParquetObjectReader;
+use tokio::sync::OnceCell;
 
 #[cfg(feature = "encryption")]
 use datafusion::execution::parquet_encryption::EncryptionFactory;
@@ -45,11 +54,13 @@ pub fn delete_file_schema() -> SchemaRef {
     ]))
 }
 
+/// Cached schema mapping for renamed columns
+type SchemaMappingCache = (SchemaRef, HashMap<String, String>);
+
 /// DuckLake table provider
 ///
 /// Represents a table within a DuckLake schema and provides access to data via Parquet files.
 /// Caches snapshot_id and uses it to load all metadata atomically.
-#[derive(Debug)]
 pub struct DuckLakeTable {
     #[allow(dead_code)]
     table_id: i64,
@@ -61,12 +72,30 @@ pub struct DuckLakeTable {
     object_store_url: Arc<ObjectStoreUrl>,
     /// Table path for resolving relative file paths
     table_path: String,
+    /// Current schema with potentially renamed column names
     schema: SchemaRef,
+    /// Column metadata from DuckLake (needed for field_id mapping)
+    columns: Vec<DuckLakeTableColumn>,
     /// Table files with paths as stored in metadata (resolved on-the-fly when needed)
     table_files: Vec<DuckLakeTableFile>,
+    /// Cached schema mapping (read_schema, name_mapping) - computed once on first scan
+    schema_mapping_cache: OnceCell<SchemaMappingCache>,
     /// Encryption factory for decrypting encrypted Parquet files (when encryption feature is enabled)
     #[cfg(feature = "encryption")]
     encryption_factory: Option<Arc<dyn EncryptionFactory>>,
+}
+
+impl std::fmt::Debug for DuckLakeTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DuckLakeTable")
+            .field("table_id", &self.table_id)
+            .field("table_name", &self.table_name)
+            .field("table_path", &self.table_path)
+            .field("schema", &self.schema)
+            .field("columns", &self.columns)
+            .field("table_files", &self.table_files)
+            .finish_non_exhaustive()
+    }
 }
 
 impl DuckLakeTable {
@@ -119,9 +148,11 @@ impl DuckLakeTable {
             object_store_url,
             table_path,
             schema,
+            columns,
             table_files,
             #[cfg(feature = "encryption")]
             encryption_factory,
+            schema_mapping_cache: OnceCell::new(),
         })
     }
 
@@ -139,6 +170,46 @@ impl DuckLakeTable {
             }
         }
         ParquetSource::default()
+    }
+
+    /// Get the cached schema mapping, computing it once from the first file if needed.
+    /// All files in a DuckLake table have the same schema structure, so we only need to check one.
+    async fn get_schema_mapping(
+        &self,
+        state: &dyn Session,
+    ) -> DataFusionResult<&SchemaMappingCache> {
+        self.schema_mapping_cache
+            .get_or_try_init(|| async {
+                // If no files, use current schema with no rename mapping
+                let Some(first_file) = self.table_files.first() else {
+                    return Ok((self.schema.clone(), HashMap::new()));
+                };
+
+                let resolved_path = self.resolve_file_path(&first_file.file);
+                let object_store = state
+                    .runtime_env()
+                    .object_store(self.object_store_url.as_ref())?;
+                let object_path = ObjectPath::from(resolved_path.as_str());
+
+                let reader = ParquetObjectReader::new(object_store, object_path);
+                let builder = ParquetRecordBatchStreamBuilder::new(reader)
+                    .await
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                let field_id_map = extract_parquet_field_ids(builder.metadata());
+
+                // No field_ids means external file - use current schema directly
+                if field_id_map.is_empty() {
+                    return Ok((self.schema.clone(), HashMap::new()));
+                }
+
+                let (read_schema, name_mapping) =
+                    build_read_schema_with_field_id_mapping(&self.columns, &field_id_map)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                Ok((Arc::new(read_schema), name_mapping))
+            })
+            .await
     }
 
     /// Read a delete file and extract all deleted row positions
@@ -201,11 +272,13 @@ impl DuckLakeTable {
     /// need delete filtering.
     async fn build_exec_for_files_without_deletes(
         &self,
-        _state: &dyn Session,
-        files: &[&crate::metadata_provider::DuckLakeTableFile],
+        state: &dyn Session,
+        files: &[&DuckLakeTableFile],
         projection: Option<&Vec<usize>>,
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let (read_schema, name_mapping) = self.get_schema_mapping(state).await?;
+
         let partitioned_files: Vec<PartitionedFile> = files
             .iter()
             .map(|table_file| {
@@ -223,9 +296,10 @@ impl DuckLakeTable {
             })
             .collect();
 
+        // Use read_schema (with original Parquet names) for reading
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            self.schema.clone(),
+            read_schema.clone(),
             Arc::new(self.create_parquet_source()),
         )
         .with_limit(limit)
@@ -238,8 +312,23 @@ impl DuckLakeTable {
 
         let file_scan_config = builder.build();
         // Use DataSourceExec directly to preserve our ParquetSource with encryption factory
-        // (ParquetFormat::create_physical_plan creates its own ParquetSource and ignores ours)
-        Ok(DataSourceExec::from_data_source(file_scan_config))
+        let parquet_exec: Arc<dyn ExecutionPlan> =
+            DataSourceExec::from_data_source(file_scan_config);
+
+        // Wrap with ColumnRenameExec if column names differ
+        if !name_mapping.is_empty() {
+            let output_schema = match projection {
+                Some(indices) => Arc::new(self.schema.project(indices)?),
+                None => self.schema.clone(),
+            };
+            Ok(Arc::new(ColumnRenameExec::new(
+                parquet_exec,
+                output_schema,
+                name_mapping.clone(),
+            )))
+        } else {
+            Ok(parquet_exec)
+        }
     }
 
     /// Build an execution plan for a single file with delete filtering
@@ -248,10 +337,12 @@ impl DuckLakeTable {
     async fn build_exec_for_file_with_deletes(
         &self,
         state: &dyn Session,
-        table_file: &crate::metadata_provider::DuckLakeTableFile,
+        table_file: &DuckLakeTableFile,
         projection: Option<&Vec<usize>>,
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let (read_schema, name_mapping) = self.get_schema_mapping(state).await?;
+
         // Resolve the data file path for scanning
         let resolved_path = self.resolve_file_path(&table_file.file);
 
@@ -261,9 +352,10 @@ impl DuckLakeTable {
             pf = pf.with_metadata_size_hint(footer_size as usize);
         }
 
+        // Use read_schema (with original Parquet names) for reading
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            self.schema.clone(),
+            read_schema.clone(),
             Arc::new(self.create_parquet_source()),
         )
         .with_limit(limit)
@@ -281,20 +373,36 @@ impl DuckLakeTable {
 
         // Wrap with delete filter - we know there's a delete file since we partitioned
         // The metadata already tells us which delete file goes with this data file
-        if let Some(ref delete_file) = table_file.delete_file {
-            let deleted_positions = self.read_delete_file_positions(state, delete_file).await?;
+        let exec_after_delete: Arc<dyn ExecutionPlan> =
+            if let Some(ref delete_file) = table_file.delete_file {
+                let deleted_positions = self.read_delete_file_positions(state, delete_file).await?;
 
-            if !deleted_positions.is_empty() {
-                Ok(Arc::new(DeleteFilterExec::new(
-                    parquet_exec,
-                    table_file.file.path.clone(),
-                    Arc::new(deleted_positions),
-                )) as Arc<dyn ExecutionPlan>)
+                if !deleted_positions.is_empty() {
+                    Arc::new(DeleteFilterExec::new(
+                        parquet_exec,
+                        table_file.file.path.clone(),
+                        Arc::new(deleted_positions),
+                    ))
+                } else {
+                    parquet_exec
+                }
             } else {
-                Ok(parquet_exec)
-            }
+                parquet_exec
+            };
+
+        // Wrap with ColumnRenameExec if column names differ
+        if !name_mapping.is_empty() {
+            let output_schema = match projection {
+                Some(indices) => Arc::new(self.schema.project(indices)?),
+                None => self.schema.clone(),
+            };
+            Ok(Arc::new(ColumnRenameExec::new(
+                exec_after_delete,
+                output_schema,
+                name_mapping.clone(),
+            )))
         } else {
-            Ok(parquet_exec)
+            Ok(exec_after_delete)
         }
     }
 }
