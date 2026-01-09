@@ -325,6 +325,58 @@ mod integration_tests {
         Ok(())
     }
 
+    /// Test that a table with all rows deleted returns 0 rows
+    ///
+    /// This is the bug scenario from https://github.com/hotdata-dev/datafusion-ducklake/issues/30
+    /// When all rows are deleted from a table, querying should return 0 rows.
+    #[tokio::test]
+    async fn test_table_with_all_rows_deleted() -> DataFusionResult<()> {
+        let temp_dir = TempDir::new()
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let catalog_path = temp_dir.path().join("all_deleted.ducklake");
+
+        // Generate test data - inserts a row, then deletes it
+        common::create_catalog_empty_table(&catalog_path).map_err(common::to_datafusion_error)?;
+
+        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+
+        let ctx = SessionContext::new();
+        ctx.register_catalog("all_deleted", catalog);
+
+        // Query the table - should return 0 rows since all data was deleted
+        let df = ctx.sql("SELECT * FROM all_deleted.main.tbl").await?;
+        let results = df.collect().await?;
+
+        let total_rows: usize = results.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(
+            total_rows, 0,
+            "Table with all rows deleted should return 0 rows, but got {}",
+            total_rows
+        );
+
+        // Also verify COUNT(*) returns 0
+        let df = ctx
+            .sql("SELECT COUNT(*) as cnt FROM all_deleted.main.tbl")
+            .await?;
+        let results = df.collect().await?;
+
+        assert!(!results.is_empty());
+        let batch = &results[0];
+        let counts = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+
+        assert_eq!(
+            counts.value(0),
+            0,
+            "COUNT(*) should be 0 after all rows deleted"
+        );
+
+        Ok(())
+    }
+
     /// Test filter pushdown correctness with delete files
     ///
     /// This test verifies that WHERE filters are applied AFTER delete filtering,
