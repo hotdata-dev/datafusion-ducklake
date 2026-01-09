@@ -32,6 +32,17 @@ macro_rules! bind_repeat {
             .bind($value)
             .bind($value)
     };
+    ($query:expr, $value:expr, 8) => {
+        $query
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
+            .bind($value)
+    };
 }
 
 /// PostgreSQL-based metadata provider for DuckLake catalogs.
@@ -211,12 +222,16 @@ impl MetadataProvider for PostgresMetadataProvider {
                     AND del.table_id = $1
                     AND $2 >= del.begin_snapshot
                     AND ($3 < del.end_snapshot OR del.end_snapshot IS NULL)
-                WHERE data.table_id = $4",
+                WHERE data.table_id = $4
+                  AND $5 >= data.begin_snapshot
+                  AND ($6 < data.end_snapshot OR data.end_snapshot IS NULL)",
             )
             .bind(table_id)
             .bind(snapshot_id)
             .bind(snapshot_id)
             .bind(table_id)
+            .bind(snapshot_id)
+            .bind(snapshot_id)
             .fetch_all(&self.pool)
             .await?;
 
@@ -442,8 +457,12 @@ impl MetadataProvider for PostgresMetadataProvider {
                   AND ($4 < s.end_snapshot OR s.end_snapshot IS NULL)
                   AND $5 >= t.begin_snapshot
                   AND ($6 < t.end_snapshot OR t.end_snapshot IS NULL)
+                  AND $7 >= data.begin_snapshot
+                  AND ($8 < data.end_snapshot OR data.end_snapshot IS NULL)
                 ORDER BY s.schema_name, t.table_name, data.path",
             )
+            .bind(snapshot_id)
+            .bind(snapshot_id)
             .bind(snapshot_id)
             .bind(snapshot_id)
             .bind(snapshot_id)

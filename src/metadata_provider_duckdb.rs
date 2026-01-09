@@ -165,7 +165,7 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES)?;
 
         let files = stmt
-            .query_map([table_id, snapshot_id, snapshot_id, table_id], |row| {
+            .query_map([table_id, snapshot_id, snapshot_id, table_id, snapshot_id, snapshot_id], |row| {
                 // Parse data file (columns 0-5)
                 let _data_file_id: i64 = row.get(0)?;
                 let data_file = DuckLakeFileData {
@@ -327,6 +327,8 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let files = stmt
             .query_map(
                 params![
+                    snapshot_id,
+                    snapshot_id,
                     snapshot_id,
                     snapshot_id,
                     snapshot_id,
