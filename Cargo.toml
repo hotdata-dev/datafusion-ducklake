@@ -1,8 +1,8 @@
 [package]
 name = "datafusion-ducklake"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
-authors = ["zac@hotdata.dev", "shefeek@hotdata.dev"]
+authors = ["zac@hotdata.dev", "shefeek@hotdata.dev", "anoop@hotdata.dev"]
 description = "DuckLake query engine for rust, built with datafusion."
 license = "Apache-2.0"
 repository = "https://github.com/hotdata-dev/datafusion-ducklake"
