@@ -1,4 +1,4 @@
-//! PostgreSQL metadata provider for DuckLake catalogs.
+//! MySQL metadata provider for DuckLake catalogs.
 
 use crate::Result;
 use crate::metadata_provider::{
@@ -7,54 +7,19 @@ use crate::metadata_provider::{
     TableMetadata, TableWithSchema, block_on,
 };
 use sqlx::Row;
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 use sqlx::types::chrono::NaiveDateTime;
 
-macro_rules! bind_repeat {
-    ($query:expr, $value:expr, 1) => {
-        $query.bind($value)
-    };
-    ($query:expr, $value:expr, 2) => {
-        $query.bind($value).bind($value)
-    };
-    ($query:expr, $value:expr, 3) => {
-        $query.bind($value).bind($value).bind($value)
-    };
-    ($query:expr, $value:expr, 4) => {
-        $query.bind($value).bind($value).bind($value).bind($value)
-    };
-    ($query:expr, $value:expr, 6) => {
-        $query
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-    };
-    ($query:expr, $value:expr, 8) => {
-        $query
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-            .bind($value)
-    };
-}
-
-/// PostgreSQL-based metadata provider for DuckLake catalogs.
+/// MySQL-based metadata provider for DuckLake catalogs.
 #[derive(Debug, Clone)]
-pub struct PostgresMetadataProvider {
-    pub pool: PgPool,
+pub struct MySqlMetadataProvider {
+    pub pool: MySqlPool,
 }
 
-impl PostgresMetadataProvider {
+impl MySqlMetadataProvider {
     /// Creates a new provider for an existing DuckLake catalog.
     pub async fn new(connection_string: &str) -> Result<Self> {
-        let pool = PgPoolOptions::new()
+        let pool = MySqlPoolOptions::new()
             .max_connections(5)
             .connect(connection_string)
             .await?;
@@ -65,7 +30,7 @@ impl PostgresMetadataProvider {
     }
 }
 
-impl MetadataProvider for PostgresMetadataProvider {
+impl MetadataProvider for MySqlMetadataProvider {
     fn get_current_snapshot(&self) -> Result<i64> {
         block_on(async {
             let row = sqlx::query("SELECT COALESCE(MAX(snapshot_id), 0) FROM ducklake_snapshot")
@@ -77,11 +42,12 @@ impl MetadataProvider for PostgresMetadataProvider {
 
     fn get_data_path(&self) -> Result<String> {
         block_on(async {
-            let row =
-                sqlx::query("SELECT value FROM ducklake_metadata WHERE key = $1 AND scope IS NULL")
-                    .bind("data_path")
-                    .fetch_optional(&self.pool)
-                    .await?;
+            let row = sqlx::query(
+                "SELECT value FROM ducklake_metadata WHERE `key` = ? AND scope IS NULL",
+            )
+            .bind("data_path")
+            .fetch_optional(&self.pool)
+            .await?;
 
             match row {
                 Some(r) => Ok(r.try_get(0)?),
@@ -123,7 +89,7 @@ impl MetadataProvider for PostgresMetadataProvider {
         block_on(async {
             let rows = sqlx::query(
                 "SELECT schema_id, schema_name, path, path_is_relative FROM ducklake_schema
-                 WHERE $1 >= begin_snapshot AND ($2 < end_snapshot OR end_snapshot IS NULL)",
+                 WHERE ? >= begin_snapshot AND (? < end_snapshot OR end_snapshot IS NULL)",
             )
             .bind(snapshot_id)
             .bind(snapshot_id)
@@ -147,9 +113,9 @@ impl MetadataProvider for PostgresMetadataProvider {
         block_on(async {
             let rows = sqlx::query(
                 "SELECT table_id, table_name, path, path_is_relative FROM ducklake_table
-                 WHERE schema_id = $1
-                   AND $2 >= begin_snapshot
-                   AND ($3 < end_snapshot OR end_snapshot IS NULL)",
+                 WHERE schema_id = ?
+                   AND ? >= begin_snapshot
+                   AND (? < end_snapshot OR end_snapshot IS NULL)",
             )
             .bind(schema_id)
             .bind(snapshot_id)
@@ -175,7 +141,7 @@ impl MetadataProvider for PostgresMetadataProvider {
             let rows = sqlx::query(
                 "SELECT column_id, column_name, column_type, nulls_allowed
                  FROM ducklake_column
-                 WHERE table_id = $1
+                 WHERE table_id = ?
                  ORDER BY column_order",
             )
             .bind(table_id)
@@ -220,12 +186,12 @@ impl MetadataProvider for PostgresMetadataProvider {
                 FROM ducklake_data_file AS data
                 LEFT JOIN ducklake_delete_file AS del
                     ON data.data_file_id = del.data_file_id
-                    AND del.table_id = $1
-                    AND $2 >= del.begin_snapshot
-                    AND ($3 < del.end_snapshot OR del.end_snapshot IS NULL)
-                WHERE data.table_id = $4
-                  AND $5 >= data.begin_snapshot
-                  AND ($6 < data.end_snapshot OR data.end_snapshot IS NULL)",
+                    AND del.table_id = ?
+                    AND ? >= del.begin_snapshot
+                    AND (? < del.end_snapshot OR del.end_snapshot IS NULL)
+                WHERE data.table_id = ?
+                  AND ? >= data.begin_snapshot
+                  AND (? < data.end_snapshot OR data.end_snapshot IS NULL)",
             )
             .bind(table_id)
             .bind(snapshot_id)
@@ -274,9 +240,9 @@ impl MetadataProvider for PostgresMetadataProvider {
         block_on(async {
             let row = sqlx::query(
                 "SELECT schema_id, schema_name, path, path_is_relative FROM ducklake_schema
-                 WHERE schema_name = $1
-                   AND $2 >= begin_snapshot
-                   AND ($3 < end_snapshot OR end_snapshot IS NULL)",
+                 WHERE schema_name = ?
+                   AND ? >= begin_snapshot
+                   AND (? < end_snapshot OR end_snapshot IS NULL)",
             )
             .bind(name)
             .bind(snapshot_id)
@@ -305,10 +271,10 @@ impl MetadataProvider for PostgresMetadataProvider {
         block_on(async {
             let row = sqlx::query(
                 "SELECT table_id, table_name, path, path_is_relative FROM ducklake_table
-                 WHERE schema_id = $1
-                   AND table_name = $2
-                   AND $3 >= begin_snapshot
-                   AND ($4 < end_snapshot OR end_snapshot IS NULL)",
+                 WHERE schema_id = ?
+                   AND table_name = ?
+                   AND ? >= begin_snapshot
+                   AND (? < end_snapshot OR end_snapshot IS NULL)",
             )
             .bind(schema_id)
             .bind(name)
@@ -331,14 +297,14 @@ impl MetadataProvider for PostgresMetadataProvider {
 
     fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<bool> {
         block_on(async {
+            // MySQL doesn't support SELECT EXISTS(...) the same way PostgreSQL does
+            // Use COUNT instead
             let row = sqlx::query(
-                "SELECT EXISTS(
-                    SELECT 1 FROM ducklake_table
-                    WHERE schema_id = $1
-                      AND table_name = $2
-                      AND $3 >= begin_snapshot
-                      AND ($4 < end_snapshot OR end_snapshot IS NULL)
-                )",
+                "SELECT COUNT(*) FROM ducklake_table
+                 WHERE schema_id = ?
+                   AND table_name = ?
+                   AND ? >= begin_snapshot
+                   AND (? < end_snapshot OR end_snapshot IS NULL)",
             )
             .bind(schema_id)
             .bind(name)
@@ -347,26 +313,27 @@ impl MetadataProvider for PostgresMetadataProvider {
             .fetch_one(&self.pool)
             .await?;
 
-            Ok(row.try_get(0)?)
+            let count: i64 = row.try_get(0)?;
+            Ok(count > 0)
         })
     }
 
     fn list_all_tables(&self, snapshot_id: i64) -> Result<Vec<TableWithSchema>> {
         block_on(async {
-            let rows = bind_repeat!(
-                sqlx::query(
-                    "SELECT s.schema_name, t.table_id, t.table_name, t.path, t.path_is_relative
-                     FROM ducklake_schema s
-                     JOIN ducklake_table t ON s.schema_id = t.schema_id
-                     WHERE $1 >= s.begin_snapshot
-                       AND ($2 < s.end_snapshot OR s.end_snapshot IS NULL)
-                       AND $3 >= t.begin_snapshot
-                       AND ($4 < t.end_snapshot OR t.end_snapshot IS NULL)
-                     ORDER BY s.schema_name, t.table_name"
-                ),
-                snapshot_id,
-                4
+            let rows = sqlx::query(
+                "SELECT s.schema_name, t.table_id, t.table_name, t.path, t.path_is_relative
+                 FROM ducklake_schema s
+                 JOIN ducklake_table t ON s.schema_id = t.schema_id
+                 WHERE ? >= s.begin_snapshot
+                   AND (? < s.end_snapshot OR s.end_snapshot IS NULL)
+                   AND ? >= t.begin_snapshot
+                   AND (? < t.end_snapshot OR t.end_snapshot IS NULL)
+                 ORDER BY s.schema_name, t.table_name",
             )
+            .bind(snapshot_id)
+            .bind(snapshot_id)
+            .bind(snapshot_id)
+            .bind(snapshot_id)
             .fetch_all(&self.pool)
             .await?;
 
@@ -395,10 +362,10 @@ impl MetadataProvider for PostgresMetadataProvider {
                  FROM ducklake_schema s
                  JOIN ducklake_table t ON s.schema_id = t.schema_id
                  JOIN ducklake_column c ON t.table_id = c.table_id
-                 WHERE $1 >= s.begin_snapshot
-                   AND ($2 < s.end_snapshot OR s.end_snapshot IS NULL)
-                   AND $3 >= t.begin_snapshot
-                   AND ($4 < t.end_snapshot OR t.end_snapshot IS NULL)
+                 WHERE ? >= s.begin_snapshot
+                   AND (? < s.end_snapshot OR s.end_snapshot IS NULL)
+                   AND ? >= t.begin_snapshot
+                   AND (? < t.end_snapshot OR t.end_snapshot IS NULL)
                  ORDER BY s.schema_name, t.table_name, c.column_order",
             )
             .bind(snapshot_id)
@@ -454,14 +421,14 @@ impl MetadataProvider for PostgresMetadataProvider {
                 LEFT JOIN ducklake_delete_file del
                     ON data.data_file_id = del.data_file_id
                     AND del.table_id = t.table_id
-                    AND $1 >= del.begin_snapshot
-                    AND ($2 < del.end_snapshot OR del.end_snapshot IS NULL)
-                WHERE $3 >= s.begin_snapshot
-                  AND ($4 < s.end_snapshot OR s.end_snapshot IS NULL)
-                  AND $5 >= t.begin_snapshot
-                  AND ($6 < t.end_snapshot OR t.end_snapshot IS NULL)
-                  AND $7 >= data.begin_snapshot
-                  AND ($8 < data.end_snapshot OR data.end_snapshot IS NULL)
+                    AND ? >= del.begin_snapshot
+                    AND (? < del.end_snapshot OR del.end_snapshot IS NULL)
+                WHERE ? >= s.begin_snapshot
+                  AND (? < s.end_snapshot OR s.end_snapshot IS NULL)
+                  AND ? >= t.begin_snapshot
+                  AND (? < t.end_snapshot OR t.end_snapshot IS NULL)
+                  AND ? >= data.begin_snapshot
+                  AND (? < data.end_snapshot OR data.end_snapshot IS NULL)
                 ORDER BY s.schema_name, t.table_name, data.path",
             )
             .bind(snapshot_id)
@@ -529,9 +496,9 @@ impl MetadataProvider for PostgresMetadataProvider {
                     data.footer_size,
                     data.encryption_key
                 FROM ducklake_data_file AS data
-                WHERE data.table_id = $1
-                  AND data.begin_snapshot > $2
-                  AND data.begin_snapshot <= $3
+                WHERE data.table_id = ?
+                  AND data.begin_snapshot > ?
+                  AND data.begin_snapshot <= ?
                 ORDER BY data.begin_snapshot",
             )
             .bind(table_id)
@@ -565,9 +532,9 @@ impl MetadataProvider for PostgresMetadataProvider {
             let rows = sqlx::query(
                 "SELECT del.begin_snapshot
                 FROM ducklake_delete_file AS del
-                WHERE del.table_id = $1
-                  AND del.begin_snapshot > $2
-                  AND del.begin_snapshot <= $3
+                WHERE del.table_id = ?
+                  AND del.begin_snapshot > ?
+                  AND del.begin_snapshot <= ?
                 ORDER BY del.begin_snapshot",
             )
             .bind(table_id)
