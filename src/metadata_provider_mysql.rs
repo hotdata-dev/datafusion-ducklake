@@ -529,14 +529,112 @@ impl MetadataProvider for MySqlMetadataProvider {
         end_snapshot: i64,
     ) -> Result<Vec<DeleteFileChange>> {
         block_on(async {
+            // MySQL equivalent of DuckDB's SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS
+            // Uses LATERAL (supported in MySQL 8.0.14+) for previous delete file lookup
             let rows = sqlx::query(
-                "SELECT del.begin_snapshot
-                FROM ducklake_delete_file AS del
-                WHERE del.table_id = ?
-                  AND del.begin_snapshot > ?
-                  AND del.begin_snapshot <= ?
-                ORDER BY del.begin_snapshot",
+                r#"
+WITH current_delete AS (
+    SELECT
+        ddf.data_file_id,
+        ddf.begin_snapshot,
+        ddf.path,
+        ddf.path_is_relative,
+        ddf.file_size_bytes,
+        ddf.footer_size,
+        ddf.encryption_key
+    FROM ducklake_delete_file ddf
+    WHERE ddf.table_id = ?
+      AND ddf.begin_snapshot > ?
+      AND ddf.begin_snapshot <= ?
+),
+
+data_files AS (
+    SELECT df.*
+    FROM ducklake_data_file df
+    WHERE df.table_id = ?
+)
+
+-- Part 1: Incremental deletes
+SELECT
+    data.path,
+    data.path_is_relative,
+    data.file_size_bytes,
+    data.footer_size,
+    data.row_id_start,
+    data.record_count,
+    data.mapping_id,
+    current_delete.path,
+    current_delete.path_is_relative,
+    current_delete.file_size_bytes,
+    current_delete.footer_size,
+    prev.path,
+    prev.path_is_relative,
+    prev.file_size_bytes,
+    prev.footer_size,
+    current_delete.begin_snapshot
+FROM current_delete
+JOIN data_files data USING (data_file_id)
+LEFT JOIN LATERAL (
+    SELECT
+        ddf.path,
+        ddf.path_is_relative,
+        ddf.file_size_bytes,
+        ddf.footer_size
+    FROM ducklake_delete_file ddf
+    WHERE ddf.table_id = ?
+      AND ddf.data_file_id = current_delete.data_file_id
+      AND ddf.begin_snapshot < current_delete.begin_snapshot
+    ORDER BY ddf.begin_snapshot DESC
+    LIMIT 1
+) prev ON true
+
+UNION ALL
+
+-- Part 2: Full file deletes
+SELECT
+    data.path,
+    data.path_is_relative,
+    data.file_size_bytes,
+    data.footer_size,
+    data.row_id_start,
+    data.record_count,
+    data.mapping_id,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    prev.path,
+    prev.path_is_relative,
+    prev.file_size_bytes,
+    prev.footer_size,
+    data.end_snapshot
+FROM ducklake_data_file data
+LEFT JOIN LATERAL (
+    SELECT
+        ddf.path,
+        ddf.path_is_relative,
+        ddf.file_size_bytes,
+        ddf.footer_size
+    FROM ducklake_delete_file ddf
+    WHERE ddf.table_id = ?
+      AND ddf.data_file_id = data.data_file_id
+      AND ddf.begin_snapshot < data.end_snapshot
+    ORDER BY ddf.begin_snapshot DESC
+    LIMIT 1
+) prev ON true
+WHERE data.table_id = ?
+  AND data.end_snapshot > ?
+  AND data.end_snapshot <= ?
+"#,
             )
+            // Part 1 bindings: table_id (current_delete), start_snapshot, end_snapshot, table_id (data_files), table_id (prev lateral)
+            .bind(table_id)
+            .bind(start_snapshot)
+            .bind(end_snapshot)
+            .bind(table_id)
+            .bind(table_id)
+            // Part 2 bindings: table_id (prev lateral), table_id (data), start_snapshot, end_snapshot
+            .bind(table_id)
             .bind(table_id)
             .bind(start_snapshot)
             .bind(end_snapshot)
@@ -546,7 +644,29 @@ impl MetadataProvider for MySqlMetadataProvider {
             rows.into_iter()
                 .map(|row| {
                     Ok(DeleteFileChange {
-                        begin_snapshot: row.try_get(0)?,
+                        // data file
+                        data_file_path: row.try_get(0)?,
+                        data_file_path_is_relative: row.try_get(1)?,
+                        data_file_size_bytes: row.try_get(2)?,
+                        data_file_footer_size: row.try_get(3)?,
+                        data_row_id_start: row.try_get(4)?,
+                        data_record_count: row.try_get(5)?,
+                        data_mapping_id: row.try_get(6)?,
+
+                        // current delete
+                        current_delete_path: row.try_get(7)?,
+                        current_delete_path_is_relative: row.try_get(8)?,
+                        current_delete_file_size_bytes: row.try_get(9)?,
+                        current_delete_footer_size: row.try_get(10)?,
+
+                        // previous delete
+                        previous_delete_path: row.try_get(11)?,
+                        previous_delete_path_is_relative: row.try_get(12)?,
+                        previous_delete_file_size_bytes: row.try_get(13)?,
+                        previous_delete_footer_size: row.try_get(14)?,
+
+                        // snapshot
+                        snapshot_id: row.try_get(15)?,
                     })
                 })
                 .collect()
