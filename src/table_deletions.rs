@@ -240,7 +240,7 @@ impl TableProvider for TableDeletionsTable {
                         .map(|&i| self.output_schema.field(i).clone())
                         .collect();
                     Arc::new(Schema::new(fields))
-                }
+                },
                 None => self.output_schema.clone(),
             };
             return Ok(Arc::new(EmptyExec::new(output_schema)));
@@ -320,7 +320,9 @@ impl DeletedRowsExec {
 impl DisplayAs for DeletedRowsExec {
     fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match t {
-            DisplayFormatType::Default | DisplayFormatType::Verbose | DisplayFormatType::TreeRender => {
+            DisplayFormatType::Default
+            | DisplayFormatType::Verbose
+            | DisplayFormatType::TreeRender => {
                 write!(
                     f,
                     "DeletedRowsExec: snapshot_id={}, full_delete={}, has_previous={}",
@@ -328,7 +330,7 @@ impl DisplayAs for DeletedRowsExec {
                     self.current_delete_scan.is_none(),
                     self.previous_delete_scan.is_some()
                 )
-            }
+            },
         }
     }
 }
@@ -365,9 +367,10 @@ impl ExecutionPlan for DeletedRowsExec {
         let mut idx = 0;
 
         let current = if self.current_delete_scan.is_some() {
-            let c = children.get(idx).cloned().ok_or_else(|| {
-                DataFusionError::Internal("Missing current delete child".into())
-            })?;
+            let c = children
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| DataFusionError::Internal("Missing current delete child".into()))?;
             idx += 1;
             Some(c)
         } else {
@@ -375,18 +378,20 @@ impl ExecutionPlan for DeletedRowsExec {
         };
 
         let previous = if self.previous_delete_scan.is_some() {
-            let p = children.get(idx).cloned().ok_or_else(|| {
-                DataFusionError::Internal("Missing previous delete child".into())
-            })?;
+            let p = children
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| DataFusionError::Internal("Missing previous delete child".into()))?;
             idx += 1;
             Some(p)
         } else {
             None
         };
 
-        let data = children.get(idx).cloned().ok_or_else(|| {
-            DataFusionError::Internal("Missing data file child".into())
-        })?;
+        let data = children
+            .get(idx)
+            .cloned()
+            .ok_or_else(|| DataFusionError::Internal("Missing data file child".into()))?;
 
         Ok(Arc::new(DeletedRowsExec::new(
             current,
@@ -569,7 +574,10 @@ impl DeletedRowsStream {
 
         // Append CDC columns
         let num_output_rows = keep_indices.len();
-        columns.push(Arc::new(Int64Array::from(vec![self.snapshot_id; num_output_rows])));
+        columns.push(Arc::new(Int64Array::from(vec![
+            self.snapshot_id;
+            num_output_rows
+        ])));
         columns.push(Arc::new(StringArray::from(vec!["delete"; num_output_rows])));
 
         RecordBatch::try_new(self.output_schema.clone(), columns)
@@ -590,7 +598,7 @@ impl Stream for DeletedRowsStream {
                         Poll::Ready(Some(Ok(batch))) => {
                             let positions = Self::extract_positions(&batch);
                             self.current_positions.extend(positions);
-                        }
+                        },
                         Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
                         Poll::Ready(None) => {
                             if self.previous_delete_stream.is_some() {
@@ -599,25 +607,25 @@ impl Stream for DeletedRowsStream {
                                 self.compute_deleted_positions();
                                 self.state = StreamState::ReadingData;
                             }
-                        }
+                        },
                         Poll::Pending => return Poll::Pending,
                     }
-                }
+                },
                 StreamState::ReadingPreviousDelete => {
                     let prev = self.previous_delete_stream.as_mut().unwrap();
                     match Pin::new(prev).poll_next(cx) {
                         Poll::Ready(Some(Ok(batch))) => {
                             let positions = Self::extract_positions(&batch);
                             self.previous_positions.extend(positions);
-                        }
+                        },
                         Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
                         Poll::Ready(None) => {
                             self.compute_deleted_positions();
                             self.state = StreamState::ReadingData;
-                        }
+                        },
                         Poll::Pending => return Poll::Pending,
                     }
-                }
+                },
                 StreamState::ReadingData => {
                     match Pin::new(&mut self.data_stream).poll_next(cx) {
                         Poll::Ready(Some(Ok(batch))) => {
@@ -625,18 +633,18 @@ impl Stream for DeletedRowsStream {
                                 Some(filtered) => return Poll::Ready(Some(Ok(filtered))),
                                 None => continue, // No deleted rows in this batch
                             }
-                        }
+                        },
                         Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
                         Poll::Ready(None) => {
                             self.state = StreamState::Done;
                             return Poll::Ready(None);
-                        }
+                        },
                         Poll::Pending => return Poll::Pending,
                     }
-                }
+                },
                 StreamState::Done => {
                     return Poll::Ready(None);
-                }
+                },
             }
         }
     }

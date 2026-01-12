@@ -229,7 +229,9 @@ pub struct DucklakeTableDeletionsFunction {
 
 impl DucklakeTableDeletionsFunction {
     pub fn new(provider: Arc<dyn MetadataProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+        }
     }
 
     fn parse_table_name(table_name: &str) -> (&str, &str) {
@@ -260,7 +262,7 @@ impl TableFunctionImpl for DucklakeTableDeletionsFunction {
                     "First argument to ducklake_table_deletions() must be a string literal \
                      (e.g., 'main.users' or 'users')"
                 );
-            }
+            },
         };
 
         // Parse start_snapshot argument
@@ -271,7 +273,7 @@ impl TableFunctionImpl for DucklakeTableDeletionsFunction {
                 return plan_err!(
                     "Second argument to ducklake_table_deletions() must be an integer (start_snapshot)"
                 );
-            }
+            },
         };
 
         // Parse end_snapshot argument
@@ -282,7 +284,7 @@ impl TableFunctionImpl for DucklakeTableDeletionsFunction {
                 return plan_err!(
                     "Third argument to ducklake_table_deletions() must be an integer (end_snapshot)"
                 );
-            }
+            },
         };
 
         // Validate snapshot range
