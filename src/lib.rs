@@ -56,6 +56,8 @@ pub mod metadata_provider_duckdb;
 pub mod metadata_provider_mysql;
 #[cfg(feature = "metadata-postgres")]
 pub mod metadata_provider_postgres;
+#[cfg(feature = "metadata-sqlite")]
+pub mod metadata_provider_sqlite;
 
 // Result type for DuckLake operations
 pub type Result<T> = std::result::Result<T, DuckLakeError>;
@@ -75,3 +77,5 @@ pub use metadata_provider_duckdb::DuckdbMetadataProvider;
 pub use metadata_provider_mysql::MySqlMetadataProvider;
 #[cfg(feature = "metadata-postgres")]
 pub use metadata_provider_postgres::PostgresMetadataProvider;
+#[cfg(feature = "metadata-sqlite")]
+pub use metadata_provider_sqlite::SqliteMetadataProvider;

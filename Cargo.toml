@@ -52,7 +52,7 @@ skip-tests-with-docker = []
 metadata-duckdb = ["dep:duckdb"]
 metadata-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
 metadata-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
-# Future: metadata-sqlite = ["sqlx", "sqlx/sqlite", "sqlx/chrono"]
+metadata-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
 
 # Encryption support for Parquet files
 encryption = ["parquet/encryption", "datafusion/parquet_encryption", "dep:base64", "dep:hex"]

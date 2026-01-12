@@ -1,7 +1,7 @@
 //! Basic DuckLake query example with snapshot isolation
 //!
 //! This example demonstrates how to:
-//! 1. Create a DuckLake catalog from DuckDB, PostgreSQL, or MySQL
+//! 1. Create a DuckLake catalog from DuckDB, PostgreSQL, MySQL, or SQLite
 //! 2. Bind the catalog to a specific snapshot for query consistency
 //! 3. Register it with DataFusion
 //! 4. Execute a simple SELECT query
@@ -36,6 +36,13 @@
 //!   "mysql://user:password@localhost:3306/database" \
 //!   "SELECT * FROM main.users"
 //! ```
+//!
+//! With SQLite catalog (requires --features metadata-sqlite):
+//! ```bash
+//! cargo run --example basic_query --features metadata-sqlite \
+//!   "sqlite:///path/to/catalog.db" \
+//!   "SELECT * FROM main.users"
+//! ```
 
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
@@ -45,6 +52,8 @@ use datafusion_ducklake::DuckdbMetadataProvider;
 use datafusion_ducklake::MySqlMetadataProvider;
 #[cfg(feature = "metadata-postgres")]
 use datafusion_ducklake::PostgresMetadataProvider;
+#[cfg(feature = "metadata-sqlite")]
+use datafusion_ducklake::SqliteMetadataProvider;
 use datafusion_ducklake::{DuckLakeCatalog, MetadataProvider, register_ducklake_functions};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
@@ -65,6 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!(
             "  MySQL:      cargo run --example basic_query --features metadata-mysql \"mysql://...\" \"SQL\""
         );
+        eprintln!(
+            "  SQLite:     cargo run --example basic_query --features metadata-sqlite \"sqlite://...\" \"SQL\""
+        );
         exit(1);
     }
     let catalog_source = &args[1];
@@ -73,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Detect provider type based on input
     let is_postgres = catalog_source.starts_with("postgresql://");
     let is_mysql = catalog_source.starts_with("mysql://");
+    let is_sqlite = catalog_source.starts_with("sqlite:");
 
     if is_postgres {
         #[cfg(not(feature = "metadata-postgres"))]
@@ -102,6 +115,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             println!("Connecting to MySQL catalog: {}", catalog_source);
             let provider = Arc::new(MySqlMetadataProvider::new(catalog_source).await?);
+            let snapshot_id = provider.get_current_snapshot()?;
+            println!("Current snapshot ID: {}", snapshot_id);
+            run_query(provider, snapshot_id, sql).await?;
+        }
+    } else if is_sqlite {
+        #[cfg(not(feature = "metadata-sqlite"))]
+        {
+            eprintln!("Error: SQLite support requires the 'metadata-sqlite' feature");
+            eprintln!("Run with: cargo run --example basic_query --features metadata-sqlite");
+            exit(1);
+        }
+
+        #[cfg(feature = "metadata-sqlite")]
+        {
+            println!("Connecting to SQLite catalog: {}", catalog_source);
+            let provider = Arc::new(SqliteMetadataProvider::new(catalog_source).await?);
             let snapshot_id = provider.get_current_snapshot()?;
             println!("Current snapshot ID: {}", snapshot_id);
             run_query(provider, snapshot_id, sql).await?;

@@ -405,7 +405,7 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<DeleteFileChange>>;
 }
 
-#[cfg(any(feature = "metadata-postgres", feature = "metadata-mysql"))]
+#[cfg(any(feature = "metadata-postgres", feature = "metadata-mysql", feature = "metadata-sqlite"))]
 /// Helper function to bridge async sqlx operations to sync MetadataProvider trait
 pub(crate) fn block_on<F, T>(f: F) -> T
 where
