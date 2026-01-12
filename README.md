@@ -11,7 +11,7 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 ## Currently Supported
 
 - Read-only queries against DuckLake catalogs
-- DuckDB, PostgreSQL, and MySQL catalog backends
+- DuckDB, PostgreSQL, MySQL, and SQLite catalog backends
 - Local filesystem and S3-compatible object stores (MinIO, S3)
 - Snapshot-based consistency
 - Basic and decimal types
@@ -43,7 +43,6 @@ This project is under active development. The roadmap below reflects major areas
 ### Metadata & Catalog Improvements
 
 - Metadata caching to reduce repeated catalog lookups
-- SQLite metadata provider
 - Clear abstraction boundaries between catalog, metadata provider, and execution
 
 ### Query Planning & Performance
@@ -86,6 +85,7 @@ This project is under active development. The roadmap below reflects major areas
 | `metadata-duckdb` | DuckDB catalog backend | ✅ |
 | `metadata-postgres` | PostgreSQL catalog backend | |
 | `metadata-mysql` | MySQL catalog backend | |
+| `metadata-sqlite` | SQLite catalog backend | |
 | `encryption` | Parquet Modular Encryption (PME) support | |
 
 ```bash
@@ -98,8 +98,11 @@ cargo build --no-default-features --features metadata-postgres
 # MySQL only
 cargo build --no-default-features --features metadata-mysql
 
+# SQLite only
+cargo build --no-default-features --features metadata-sqlite
+
 # All backends
-cargo build --features metadata-postgres,metadata-mysql
+cargo build --features metadata-postgres,metadata-mysql,metadata-sqlite
 ```
 
 ### Example
@@ -115,6 +118,10 @@ cargo run --example basic_query --features metadata-postgres -- \
 # MySQL catalog
 cargo run --example basic_query --features metadata-mysql -- \
   "mysql://user:password@localhost:3306/database" "SELECT * FROM main.users"
+
+# SQLite catalog
+cargo run --example basic_query --features metadata-sqlite -- \
+  "sqlite:///path/to/catalog.db" "SELECT * FROM main.users"
 ```
 
 ### Integration
