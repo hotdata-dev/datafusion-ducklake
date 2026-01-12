@@ -90,58 +90,40 @@ pub const SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
 pub const SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
 WITH params AS (
     SELECT
-        ? AS table_id,
+        ? AS table_identifier,
         ? AS start_snapshot,
-        ? AS end_snapshot
+        ? AS finish_snapshot
 ),
 
--- Part 1: Incremental deletes
 current_delete AS (
     SELECT
-        ddf.data_file_id,
-        ddf.begin_snapshot,
-        ddf.path,
-        ddf.path_is_relative,
-        ddf.file_size_bytes,
-        ddf.footer_size,
-        ddf.encryption_key
-    FROM ducklake_delete_file ddf
-    JOIN params p ON true
-    WHERE ddf.table_id = p.table_id
-      AND ddf.begin_snapshot BETWEEN p.start_snapshot AND p.end_snapshot
+        df.data_file_id,
+        df.begin_snapshot,
+        df.path,
+        df.path_is_relative,
+        df.file_size_bytes,
+        df.footer_size,
+        df.encryption_key
+    FROM ducklake_delete_file df
+    CROSS JOIN params p
+    WHERE df.table_id = p.table_identifier
+      AND df.begin_snapshot BETWEEN p.start_snapshot AND p.finish_snapshot
 ),
 
-previous_delete AS (
+all_deletes AS (
     SELECT
-        ddf.data_file_id,
-        MAX_BY(
-            COLUMNS([
-                'path',
-                'path_is_relative',
-                'file_size_bytes',
-                'footer_size',
-                'encryption_key'
-            ]),
-            ddf.begin_snapshot
-        ) AS ''
-    FROM ducklake_delete_file ddf
-    JOIN params p ON true
-    JOIN current_delete cd
-      ON cd.data_file_id = ddf.data_file_id
-     AND ddf.begin_snapshot < cd.begin_snapshot
-    WHERE ddf.table_id = p.table_id
-    GROUP BY ddf.data_file_id
-),
-
-data_files AS (
-    SELECT
-        df.*
-    FROM ducklake_data_file df
-    JOIN params p ON true
-    WHERE df.table_id = p.table_id
+        df.data_file_id,
+        df.begin_snapshot,
+        df.path,
+        df.path_is_relative,
+        df.file_size_bytes,
+        df.footer_size,
+        df.encryption_key
+    FROM ducklake_delete_file df
+    CROSS JOIN params p
+    WHERE df.table_id = p.table_identifier
 )
 
--- Part 1 result
 SELECT
     data.path,
     data.path_is_relative,
@@ -150,22 +132,34 @@ SELECT
     data.row_id_start,
     data.record_count,
     data.mapping_id,
-    current_delete.path,
-    current_delete.path_is_relative,
-    current_delete.file_size_bytes,
-    current_delete.footer_size,
-    previous_delete.path,
-    previous_delete.path_is_relative,
-    previous_delete.file_size_bytes,
-    previous_delete.footer_size,
-    current_delete.begin_snapshot
-FROM current_delete
-LEFT JOIN previous_delete USING (data_file_id)
-JOIN data_files data USING (data_file_id)
+
+    cd.path AS current_delete_path,
+    cd.path_is_relative AS current_delete_path_is_relative,
+    cd.file_size_bytes AS current_delete_file_size_bytes,
+    cd.footer_size AS current_delete_footer_size,
+
+    pd.path AS previous_delete_path,
+    pd.path_is_relative AS previous_delete_path_is_relative,
+    pd.file_size_bytes AS previous_delete_file_size_bytes,
+    pd.footer_size AS previous_delete_footer_size,
+
+    cd.begin_snapshot
+FROM current_delete cd
+JOIN ducklake_data_file data
+  ON data.data_file_id = cd.data_file_id
+LEFT JOIN LATERAL (
+    SELECT path, path_is_relative, file_size_bytes, footer_size
+    FROM all_deletes ad
+    WHERE ad.data_file_id = cd.data_file_id
+      AND ad.begin_snapshot < cd.begin_snapshot
+    ORDER BY ad.begin_snapshot DESC
+    LIMIT 1
+) pd ON true
+CROSS JOIN params p
+WHERE data.table_id = p.table_identifier
 
 UNION ALL
 
--- Part 2: Full file deletes
 SELECT
     data.path,
     data.path_is_relative,
@@ -174,57 +168,32 @@ SELECT
     data.row_id_start,
     data.record_count,
     data.mapping_id,
-    current_delete.path,
-    current_delete.path_is_relative,
-    current_delete.file_size_bytes,
-    current_delete.footer_size,
-    previous_delete.path,
-    previous_delete.path_is_relative,
-    previous_delete.file_size_bytes,
-    previous_delete.footer_size,
+
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+
+    pd.path,
+    pd.path_is_relative,
+    pd.file_size_bytes,
+    pd.footer_size,
+
     data.end_snapshot
-FROM (
-    SELECT
-        df.*
-    FROM ducklake_data_file df
-    JOIN params p ON true
-    WHERE df.table_id = p.table_id
-      AND df.end_snapshot BETWEEN p.start_snapshot AND p.end_snapshot
-) AS data
-LEFT JOIN (
-    SELECT
-        ddf.data_file_id,
-        MAX_BY(
-            COLUMNS([
-                'path',
-                'path_is_relative',
-                'file_size_bytes',
-                'footer_size',
-                'encryption_key'
-            ]),
-            ddf.begin_snapshot
-        ) AS ''
-    FROM ducklake_delete_file ddf
-    JOIN params p ON true
-    WHERE ddf.table_id = p.table_id
-      AND ddf.begin_snapshot < (
-          SELECT end_snapshot
-          FROM ducklake_data_file
-          WHERE data_file_id = ddf.data_file_id
-      )
-    GROUP BY ddf.data_file_id
-) AS previous_delete
-USING (data_file_id),
-(
-    -- No current delete file for full deletes
-    SELECT
-        NULL AS path,
-        NULL AS path_is_relative,
-        NULL AS file_size_bytes,
-        NULL AS footer_size,
-        NULL AS encryption_key
-) AS current_delete;
+FROM ducklake_data_file data
+LEFT JOIN LATERAL (
+    SELECT path, path_is_relative, file_size_bytes, footer_size
+    FROM all_deletes ad
+    WHERE ad.data_file_id = data.data_file_id
+      AND ad.begin_snapshot < data.end_snapshot
+    ORDER BY ad.begin_snapshot DESC
+    LIMIT 1
+) pd ON true
+CROSS JOIN params p
+WHERE data.table_id = p.table_identifier
+  AND data.end_snapshot BETWEEN p.start_snapshot AND p.finish_snapshot;
 ";
+
 // Bulk queries for information_schema (avoids N+1 query problem)
 
 pub const SQL_LIST_ALL_TABLES: &str = "
