@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "benchmark"]
+
 [package]
 name = "datafusion-ducklake"
 version = "0.0.3"

@@ -1,0 +1,193 @@
+mod duckdb_runner;
+mod datafusion_runner;
+mod metrics;
+mod report;
+mod tpch;
+
+use anyhow::Result;
+use clap::Parser;
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(name = "ducklake-benchmark")]
+#[command(about = "Benchmark comparing DuckDB-DuckLake vs DataFusion-DuckLake performance")]
+struct Args {
+    /// Path to the DuckLake catalog database
+    #[arg(short, long)]
+    catalog: PathBuf,
+
+    /// Use TPC-H queries from DuckDB's tpch extension
+    #[arg(long)]
+    tpch: bool,
+
+    /// Directory containing custom SQL query files
+    #[arg(short, long)]
+    queries: Option<PathBuf>,
+
+    /// Number of iterations per query
+    #[arg(short, long, default_value = "5")]
+    iterations: usize,
+
+    /// Output directory for results
+    #[arg(short, long, default_value = "benchmark/results")]
+    output: PathBuf,
+
+    /// Skip warmup iteration
+    #[arg(long)]
+    no_warmup: bool,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    println!("╔═══════════════════════════════════════════════════════════════╗");
+    println!("║   DuckLake Query Engine Comparison                            ║");
+    println!("║   DuckDB-DuckLake vs DataFusion-DuckLake                      ║");
+    println!("╚═══════════════════════════════════════════════════════════════╝");
+    println!();
+    println!("Catalog:    {:?}", args.catalog);
+    println!("Iterations: {}", args.iterations);
+    println!("Warmup:     {}", !args.no_warmup);
+
+    // Initialize runners
+    let duckdb_runner = duckdb_runner::DuckDbRunner::new(&args.catalog)?;
+    let datafusion_runner = datafusion_runner::DataFusionRunner::new(&args.catalog).await?;
+
+    let mut all_results = Vec::new();
+
+    if args.tpch {
+        println!("Queries:    TPC-H (from DuckDB extension)");
+        println!();
+
+        let queries = tpch::get_tpch_queries_with_metadata()?;
+        println!("Loaded {} TPC-H queries\n", queries.len());
+
+        for query in &queries {
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("{} [{}] - {}", query.name, query.category, query.description);
+            println!("───────────────────────────────────────────────────────────────");
+
+            // Show query (truncate long lines)
+            for line in query.sql.lines().take(12) {
+                println!("  {}", line.chars().take(65).collect::<String>());
+            }
+            if query.sql.lines().count() > 12 {
+                println!("  ... ({} more lines)", query.sql.lines().count() - 12);
+            }
+            println!("───────────────────────────────────────────────────────────────");
+
+            // Warmup
+            if !args.no_warmup {
+                print!("  Warmup... ");
+                let _ = duckdb_runner.execute(&query.sql);
+                let _ = datafusion_runner.execute(&query.sql).await;
+                println!("done");
+            }
+
+            // Benchmark DuckDB
+            print!("  DuckDB:     ");
+            let duckdb_metrics = metrics::benchmark(|| duckdb_runner.execute(&query.sql), args.iterations)?;
+            println!(
+                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
+                duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
+            );
+
+            // Benchmark DataFusion
+            print!("  DataFusion: ");
+            let datafusion_metrics =
+                metrics::benchmark_async(|| datafusion_runner.execute(&query.sql), args.iterations).await?;
+            println!(
+                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
+                datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
+            );
+
+            // Show ratio
+            let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
+            let indicator = if ratio < 1.5 { "★★★" } else if ratio < 3.0 { "★★" } else if ratio < 5.0 { "★" } else { "" };
+            println!("  Ratio:      {:.2}x {}", ratio, indicator);
+
+            all_results.push(report::QueryResult {
+                query_name: format!("{} [{}]", query.name, query.category),
+                duckdb: duckdb_metrics,
+                datafusion: datafusion_metrics,
+            });
+        }
+    } else if let Some(queries_dir) = &args.queries {
+        println!("Queries:    {:?}", queries_dir);
+        println!();
+
+        let queries = load_sql_queries(queries_dir)?;
+        println!("Loaded {} queries\n", queries.len());
+
+        for (name, sql) in &queries {
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("{}", name);
+            println!("───────────────────────────────────────────────────────────────");
+
+            // Warmup
+            if !args.no_warmup {
+                print!("  Warmup... ");
+                let _ = duckdb_runner.execute(sql);
+                let _ = datafusion_runner.execute(sql).await;
+                println!("done");
+            }
+
+            // Benchmark DuckDB
+            print!("  DuckDB:     ");
+            let duckdb_metrics = metrics::benchmark(|| duckdb_runner.execute(sql), args.iterations)?;
+            println!(
+                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
+                duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
+            );
+
+            // Benchmark DataFusion
+            print!("  DataFusion: ");
+            let datafusion_metrics =
+                metrics::benchmark_async(|| datafusion_runner.execute(sql), args.iterations).await?;
+            println!(
+                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
+                datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
+            );
+
+            // Show ratio
+            let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
+            println!("  Ratio:      {:.2}x", ratio);
+
+            all_results.push(report::QueryResult {
+                query_name: name.clone(),
+                duckdb: duckdb_metrics,
+                datafusion: datafusion_metrics,
+            });
+        }
+    } else {
+        println!("\nError: Specify --tpch or --queries <dir>");
+        std::process::exit(1);
+    }
+
+    // Generate report
+    report::generate(&args.output, &all_results)?;
+    println!("\n═══════════════════════════════════════════════════════════════");
+    println!("Results written to {:?}", args.output);
+
+    Ok(())
+}
+
+fn load_sql_queries(dir: &PathBuf) -> Result<Vec<(String, String)>> {
+    let mut queries = Vec::new();
+
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "sql") {
+                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+                let sql = std::fs::read_to_string(&path)?;
+                queries.push((name, sql));
+            }
+        }
+    }
+
+    queries.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(queries)
+}
