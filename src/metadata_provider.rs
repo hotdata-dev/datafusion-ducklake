@@ -88,12 +88,111 @@ pub const SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
     ORDER BY data.begin_snapshot";
 
 pub const SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS: &str = "
-    SELECT del.begin_snapshot
-    FROM ducklake_delete_file AS del
-    WHERE del.table_id = ?
-      AND del.begin_snapshot > ?
-      AND del.begin_snapshot <= ?
-    ORDER BY del.begin_snapshot";
+WITH params AS (
+    SELECT
+        ? AS table_identifier,
+        ? AS start_snapshot,
+        ? AS finish_snapshot
+),
+
+current_delete AS (
+    SELECT
+        df.data_file_id,
+        df.begin_snapshot,
+        df.path,
+        df.path_is_relative,
+        df.file_size_bytes,
+        df.footer_size,
+        df.encryption_key
+    FROM ducklake_delete_file df
+    CROSS JOIN params p
+    WHERE df.table_id = p.table_identifier
+      AND df.begin_snapshot BETWEEN p.start_snapshot AND p.finish_snapshot
+),
+
+all_deletes AS (
+    SELECT
+        df.data_file_id,
+        df.begin_snapshot,
+        df.path,
+        df.path_is_relative,
+        df.file_size_bytes,
+        df.footer_size,
+        df.encryption_key
+    FROM ducklake_delete_file df
+    CROSS JOIN params p
+    WHERE df.table_id = p.table_identifier
+)
+
+SELECT
+    data.path,
+    data.path_is_relative,
+    data.file_size_bytes,
+    data.footer_size,
+    data.row_id_start,
+    data.record_count,
+    data.mapping_id,
+
+    cd.path AS current_delete_path,
+    cd.path_is_relative AS current_delete_path_is_relative,
+    cd.file_size_bytes AS current_delete_file_size_bytes,
+    cd.footer_size AS current_delete_footer_size,
+
+    pd.path AS previous_delete_path,
+    pd.path_is_relative AS previous_delete_path_is_relative,
+    pd.file_size_bytes AS previous_delete_file_size_bytes,
+    pd.footer_size AS previous_delete_footer_size,
+
+    cd.begin_snapshot
+FROM current_delete cd
+JOIN ducklake_data_file data
+  ON data.data_file_id = cd.data_file_id
+LEFT JOIN LATERAL (
+    SELECT path, path_is_relative, file_size_bytes, footer_size
+    FROM all_deletes ad
+    WHERE ad.data_file_id = cd.data_file_id
+      AND ad.begin_snapshot < cd.begin_snapshot
+    ORDER BY ad.begin_snapshot DESC
+    LIMIT 1
+) pd ON true
+CROSS JOIN params p
+WHERE data.table_id = p.table_identifier
+
+UNION ALL
+
+SELECT
+    data.path,
+    data.path_is_relative,
+    data.file_size_bytes,
+    data.footer_size,
+    data.row_id_start,
+    data.record_count,
+    data.mapping_id,
+
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+
+    pd.path,
+    pd.path_is_relative,
+    pd.file_size_bytes,
+    pd.footer_size,
+
+    data.end_snapshot
+FROM ducklake_data_file data
+LEFT JOIN LATERAL (
+    SELECT path, path_is_relative, file_size_bytes, footer_size
+    FROM all_deletes ad
+    WHERE ad.data_file_id = data.data_file_id
+      AND ad.begin_snapshot < data.end_snapshot
+    ORDER BY ad.begin_snapshot DESC
+    LIMIT 1
+) pd ON true
+CROSS JOIN params p
+WHERE data.table_id = p.table_identifier
+  AND data.end_snapshot BETWEEN p.start_snapshot AND p.finish_snapshot;
+";
 
 // Bulk queries for information_schema (avoids N+1 query problem)
 
@@ -325,7 +424,29 @@ pub struct DataFileChange {
 
 #[derive(Debug, Clone)]
 pub struct DeleteFileChange {
-    pub begin_snapshot: i64,
+    /* -------- Data file being affected -------- */
+    pub data_file_path: String,
+    pub data_file_path_is_relative: bool,
+    pub data_file_size_bytes: i64,
+    pub data_file_footer_size: i64,
+    pub data_row_id_start: i64,
+    pub data_record_count: i64,
+    pub data_mapping_id: Option<i64>,
+
+    /* -------- Delete file added at this snapshot (None for full file deletes) -------- */
+    pub current_delete_path: Option<String>,
+    pub current_delete_path_is_relative: Option<bool>,
+    pub current_delete_file_size_bytes: Option<i64>,
+    pub current_delete_footer_size: Option<i64>,
+
+    /* -------- Delete file replaced (if any) -------- */
+    pub previous_delete_path: Option<String>,
+    pub previous_delete_path_is_relative: Option<bool>,
+    pub previous_delete_file_size_bytes: Option<i64>,
+    pub previous_delete_footer_size: Option<i64>,
+
+    /* -------- Snapshot where change occurred -------- */
+    pub snapshot_id: i64,
 }
 
 pub trait MetadataProvider: Send + Sync + std::fmt::Debug {

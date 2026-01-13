@@ -46,6 +46,7 @@ pub mod path_resolver;
 pub mod schema;
 pub mod table;
 pub mod table_changes;
+pub mod table_deletions;
 pub mod table_functions;
 pub mod types;
 

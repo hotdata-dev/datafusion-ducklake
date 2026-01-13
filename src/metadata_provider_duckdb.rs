@@ -427,7 +427,29 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let files = stmt
             .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
                 Ok(DeleteFileChange {
-                    begin_snapshot: row.get(0)?,
+                    // data file
+                    data_file_path: row.get(0)?,
+                    data_file_path_is_relative: row.get(1)?,
+                    data_file_size_bytes: row.get(2)?,
+                    data_file_footer_size: row.get(3)?,
+                    data_row_id_start: row.get(4)?,
+                    data_record_count: row.get(5)?,
+                    data_mapping_id: row.get(6)?,
+
+                    // current delete
+                    current_delete_path: row.get(7)?,
+                    current_delete_path_is_relative: row.get(8)?,
+                    current_delete_file_size_bytes: row.get(9)?,
+                    current_delete_footer_size: row.get(10)?,
+
+                    // previous delete
+                    previous_delete_path: row.get(11)?,
+                    previous_delete_path_is_relative: row.get(12)?,
+                    previous_delete_file_size_bytes: row.get(13)?,
+                    previous_delete_footer_size: row.get(14)?,
+
+                    // snapshot
+                    snapshot_id: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
