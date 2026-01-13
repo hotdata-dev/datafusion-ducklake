@@ -202,13 +202,9 @@ async fn main() -> Result<()> {
 
                 match (&duckdb_result, &datafusion_result) {
                     (Ok(duck), Ok(df)) => {
-                        if let Err(e) = assert_results_match(
-                            &query.name,
-                            duck,
-                            "DuckDB",
-                            df,
-                            "DataFusion",
-                        ) {
+                        if let Err(e) =
+                            assert_results_match(&query.name, duck, "DuckDB", df, "DataFusion")
+                        {
                             if args.skip_errors {
                                 println!("SKIP (row mismatch)");
                                 skipped_queries.push((query.name.clone(), e.to_string()));
@@ -218,7 +214,7 @@ async fn main() -> Result<()> {
                         } else {
                             println!("done ({} rows)", duck.row_count);
                         }
-                    }
+                    },
                     (Err(e), _) => {
                         if args.skip_errors {
                             println!("SKIP (DuckDB error)");
@@ -226,15 +222,20 @@ async fn main() -> Result<()> {
                         } else {
                             return Err(anyhow::anyhow!("DuckDB failed on {}: {}", query.name, e));
                         }
-                    }
+                    },
                     (_, Err(e)) => {
                         if args.skip_errors {
                             println!("SKIP (DataFusion error)");
-                            skipped_queries.push((query.name.clone(), format!("DataFusion: {}", e)));
+                            skipped_queries
+                                .push((query.name.clone(), format!("DataFusion: {}", e)));
                         } else {
-                            return Err(anyhow::anyhow!("DataFusion failed on {}: {}", query.name, e));
+                            return Err(anyhow::anyhow!(
+                                "DataFusion failed on {}: {}",
+                                query.name,
+                                e
+                            ));
                         }
-                    }
+                    },
                 }
             }
             if !skipped_queries.is_empty() {
