@@ -1,3 +1,4 @@
+use crate::runner::QueryResult;
 use anyhow::{Context, Result};
 use duckdb::Connection;
 use std::path::Path;
@@ -54,8 +55,4 @@ impl DuckDbRunner {
             row_count,
         })
     }
-}
-
-pub struct QueryResult {
-    pub row_count: usize,
 }

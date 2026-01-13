@@ -1,3 +1,4 @@
+use crate::runner::QueryResult;
 use anyhow::{Context, Result};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
@@ -60,8 +61,4 @@ impl DataFusionRunner {
             row_count,
         })
     }
-}
-
-pub struct QueryResult {
-    pub row_count: usize,
 }

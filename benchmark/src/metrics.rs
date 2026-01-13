@@ -76,13 +76,7 @@ pub trait HasRowCount {
     fn row_count(&self) -> usize;
 }
 
-impl HasRowCount for crate::duckdb_runner::QueryResult {
-    fn row_count(&self) -> usize {
-        self.row_count
-    }
-}
-
-impl HasRowCount for crate::datafusion_runner::QueryResult {
+impl HasRowCount for crate::runner::QueryResult {
     fn row_count(&self) -> usize {
         self.row_count
     }

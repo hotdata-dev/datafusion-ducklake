@@ -2,10 +2,12 @@ mod datafusion_runner;
 mod duckdb_runner;
 mod metrics;
 mod report;
+mod runner;
 mod tpch;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
+use runner::assert_results_match;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -63,15 +65,27 @@ async fn main() -> Result<()> {
         let queries = tpch::get_tpch_queries_with_metadata()?;
         println!("Loaded {} TPC-H queries\n", queries.len());
 
-        // Separate warmup phase - run all queries once before timing
+        // Separate warmup phase - run all queries once before timing and verify row counts match
         if !args.no_warmup {
             println!("───────────────────────────────────────────────────────────────");
-            println!("Warmup phase: running all queries once...");
+            println!("Warmup phase: running all queries once and verifying row counts...");
             for (i, query) in queries.iter().enumerate() {
                 print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name);
-                let _ = duckdb_runner.execute(&query.sql);
-                let _ = datafusion_runner.execute(&query.sql).await;
-                println!("done");
+                let duckdb_result = duckdb_runner
+                    .execute(&query.sql)
+                    .with_context(|| format!("DuckDB failed on {}", query.name))?;
+                let datafusion_result = datafusion_runner
+                    .execute(&query.sql)
+                    .await
+                    .with_context(|| format!("DataFusion failed on {}", query.name))?;
+                assert_results_match(
+                    &query.name,
+                    &duckdb_result,
+                    "DuckDB",
+                    &datafusion_result,
+                    "DataFusion",
+                )?;
+                println!("done ({} rows)", duckdb_result.row_count);
             }
             println!("Warmup complete.\n");
         }
@@ -138,15 +152,27 @@ async fn main() -> Result<()> {
         let queries = load_sql_queries(queries_dir)?;
         println!("Loaded {} queries\n", queries.len());
 
-        // Separate warmup phase - run all queries once before timing
+        // Separate warmup phase - run all queries once before timing and verify row counts match
         if !args.no_warmup {
             println!("───────────────────────────────────────────────────────────────");
-            println!("Warmup phase: running all queries once...");
+            println!("Warmup phase: running all queries once and verifying row counts...");
             for (i, (name, sql)) in queries.iter().enumerate() {
                 print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), name);
-                let _ = duckdb_runner.execute(sql);
-                let _ = datafusion_runner.execute(sql).await;
-                println!("done");
+                let duckdb_result = duckdb_runner
+                    .execute(sql)
+                    .with_context(|| format!("DuckDB failed on {}", name))?;
+                let datafusion_result = datafusion_runner
+                    .execute(sql)
+                    .await
+                    .with_context(|| format!("DataFusion failed on {}", name))?;
+                assert_results_match(
+                    name,
+                    &duckdb_result,
+                    "DuckDB",
+                    &datafusion_result,
+                    "DataFusion",
+                )?;
+                println!("done ({} rows)", duckdb_result.row_count);
             }
             println!("Warmup complete.\n");
         }

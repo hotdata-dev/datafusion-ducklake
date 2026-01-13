@@ -77,6 +77,7 @@ pub fn get_tpch_queries_with_metadata() -> Result<Vec<TpchQuery>> {
 }
 
 /// Add main. prefix to TPC-H table names for DuckLake schema
+// TODO: Replace regex-based table rewriting with a proper SQL parser for robustness
 fn prefix_table_names(query: &str) -> String {
     let tables =
         ["lineitem", "orders", "customer", "nation", "region", "part", "partsupp", "supplier"];
