@@ -1,6 +1,10 @@
 use anyhow::Result;
 use duckdb::Connection;
 
+/// TPC-H tables (8 tables)
+pub const TPCH_TABLES: &[&str] =
+    &["lineitem", "orders", "customer", "part", "partsupp", "supplier", "nation", "region"];
+
 /// TPC-H query with metadata
 #[derive(Clone)]
 pub struct TpchQuery {
@@ -79,28 +83,30 @@ pub fn get_tpch_queries_with_metadata() -> Result<Vec<TpchQuery>> {
 /// Add main. prefix to TPC-H table names for DuckLake schema
 // TODO: Replace regex-based table rewriting with a proper SQL parser for robustness
 fn prefix_table_names(query: &str) -> String {
-    let tables =
-        ["lineitem", "orders", "customer", "nation", "region", "part", "partsupp", "supplier"];
-
     let mut result = query.to_string();
-    for table in tables {
-        // Use regex for more robust matching
-        // Match table name after FROM, JOIN, or comma, with optional whitespace
+    for table in TPCH_TABLES {
+        // Match table name followed by whitespace, comma, or end - indicating it's a table reference
+        // Capture the trailing character to preserve it in replacement
         let patterns = vec![
-            // FROM table (with possible newlines/spaces)
+            // FROM table (followed by whitespace or newline)
             (
-                regex::Regex::new(&format!(r"(?i)(FROM\s+){}", table)).unwrap(),
-                format!("${{1}}main.{}", table),
+                regex::Regex::new(&format!(r"(?i)(FROM\s+){}(\s)", table)).unwrap(),
+                format!("${{1}}main.{}${{2}}", table),
             ),
-            // JOIN table
+            // JOIN table (followed by whitespace or newline)
             (
-                regex::Regex::new(&format!(r"(?i)(JOIN\s+){}", table)).unwrap(),
-                format!("${{1}}main.{}", table),
+                regex::Regex::new(&format!(r"(?i)(JOIN\s+){}(\s)", table)).unwrap(),
+                format!("${{1}}main.{}${{2}}", table),
             ),
-            // , table (in FROM clause with multiple tables)
+            // , table (followed by whitespace)
             (
-                regex::Regex::new(&format!(r"(,\s*){}", table)).unwrap(),
-                format!("${{1}}main.{}", table),
+                regex::Regex::new(&format!(r"(,\s*){}(\s)", table)).unwrap(),
+                format!("${{1}}main.{}${{2}}", table),
+            ),
+            // FROM table, (followed by comma - for multi-table FROM)
+            (
+                regex::Regex::new(&format!(r"(?i)(FROM\s+)({})(,)", table)).unwrap(),
+                format!("${{1}}main.{}${{3}}", table),
             ),
         ];
 

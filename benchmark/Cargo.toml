@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "generate-tpch"
 path = "src/bin/generate_tpch.rs"
 
+[[bin]]
+name = "generate-tpcds"
+path = "src/bin/generate_tpcds.rs"
+
 [dependencies]
 # Use the parent crate
 datafusion-ducklake = { path = "..", features = ["metadata-duckdb"] }
