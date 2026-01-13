@@ -190,6 +190,45 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // Print comparison table
+    println!("\n═══════════════════════════════════════════════════════════════");
+    println!("                      COMPARISON TABLE");
+    println!("═══════════════════════════════════════════════════════════════");
+    println!(
+        "{:<25} {:>12} {:>12} {:>10}",
+        "Query", "DuckDB (ms)", "DataFusion", "Ratio"
+    );
+    println!("───────────────────────────────────────────────────────────────");
+
+    for r in &all_results {
+        let ratio = r.datafusion.avg_ms / r.duckdb.avg_ms;
+        let winner = if ratio < 1.0 {
+            "◀"
+        } else {
+            ""
+        };
+        println!(
+            "{:<25} {:>12.2} {:>12.2} {:>8.2}x {}",
+            &r.query_name[..r.query_name.len().min(25)],
+            r.duckdb.avg_ms,
+            r.datafusion.avg_ms,
+            ratio,
+            winner
+        );
+    }
+
+    println!("───────────────────────────────────────────────────────────────");
+
+    // Calculate totals
+    let total_duckdb: f64 = all_results.iter().map(|r| r.duckdb.avg_ms).sum();
+    let total_datafusion: f64 = all_results.iter().map(|r| r.datafusion.avg_ms).sum();
+    let total_ratio = total_datafusion / total_duckdb;
+
+    println!(
+        "{:<25} {:>12.2} {:>12.2} {:>8.2}x",
+        "TOTAL", total_duckdb, total_datafusion, total_ratio
+    );
+
     // Generate report
     report::generate(&args.output, &all_results)?;
     println!("\n═══════════════════════════════════════════════════════════════");
