@@ -278,6 +278,53 @@ pub fn to_datafusion_error(e: anyhow::Error) -> datafusion::error::DataFusionErr
     datafusion::error::DataFusionError::External(e.into())
 }
 
+/// Creates a catalog with complex deletion scenario for testing table_deletions
+///
+/// This creates a table and performs:
+/// - Insert initial rows (1, 2, 3)
+/// - Delete all rows
+/// - Insert more rows (4, 5, 6, 7)
+/// - Delete some rows (5, 6)
+///
+/// Total deletions: 5 rows (1, 2, 3, 5, 6)
+pub fn create_catalog_complex_deletions(catalog_path: &Path) -> Result<()> {
+    let conn = duckdb::Connection::open_in_memory()?;
+
+    conn.execute("INSTALL ducklake;", [])?;
+    conn.execute("LOAD ducklake;", [])?;
+
+    let ducklake_path = format!("ducklake:{}", catalog_path.display());
+    conn.execute(&format!("ATTACH '{}' AS test_catalog;", ducklake_path), [])?;
+
+    // Create table
+    conn.execute(
+        "CREATE TABLE test_catalog.items (
+            id INT
+        );",
+        [],
+    )?;
+
+    // Insert initial rows (1, 2, 3)
+    conn.execute(
+        "INSERT INTO test_catalog.items VALUES (1), (2), (3);",
+        [],
+    )?;
+
+    // Delete all rows
+    conn.execute("DELETE FROM test_catalog.items;", [])?;
+
+    // Insert more rows (4, 5, 6, 7)
+    conn.execute(
+        "INSERT INTO test_catalog.items VALUES (4), (5), (6), (7);",
+        [],
+    )?;
+
+    // Delete some rows (5, 6)
+    conn.execute("DELETE FROM test_catalog.items WHERE id IN (5, 6);", [])?;
+
+    Ok(())
+}
+
 /// Creates a catalog with multiple snapshots for testing table_changes
 ///
 /// This creates a table and performs operations across multiple snapshots:
