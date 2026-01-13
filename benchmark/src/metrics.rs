@@ -58,7 +58,8 @@ fn compute_metrics(durations: Vec<f64>, row_count: usize, iterations: usize) -> 
     let min_ms = durations.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_ms = durations.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
-    let variance: f64 = durations.iter().map(|d| (d - avg_ms).powi(2)).sum::<f64>() / iterations as f64;
+    let variance: f64 =
+        durations.iter().map(|d| (d - avg_ms).powi(2)).sum::<f64>() / iterations as f64;
     let std_dev_ms = variance.sqrt();
 
     BenchmarkMetrics {

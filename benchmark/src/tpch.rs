@@ -78,10 +78,8 @@ pub fn get_tpch_queries_with_metadata() -> Result<Vec<TpchQuery>> {
 
 /// Add main. prefix to TPC-H table names for DuckLake schema
 fn prefix_table_names(query: &str) -> String {
-    let tables = [
-        "lineitem", "orders", "customer", "nation",
-        "region", "part", "partsupp", "supplier"
-    ];
+    let tables =
+        ["lineitem", "orders", "customer", "nation", "region", "part", "partsupp", "supplier"];
 
     let mut result = query.to_string();
     for table in tables {
@@ -91,17 +89,17 @@ fn prefix_table_names(query: &str) -> String {
             // FROM table (with possible newlines/spaces)
             (
                 regex::Regex::new(&format!(r"(?i)(FROM\s+){}", table)).unwrap(),
-                format!("${{1}}main.{}", table)
+                format!("${{1}}main.{}", table),
             ),
             // JOIN table
             (
                 regex::Regex::new(&format!(r"(?i)(JOIN\s+){}", table)).unwrap(),
-                format!("${{1}}main.{}", table)
+                format!("${{1}}main.{}", table),
             ),
             // , table (in FROM clause with multiple tables)
             (
                 regex::Regex::new(&format!(r"(,\s*){}", table)).unwrap(),
-                format!("${{1}}main.{}", table)
+                format!("${{1}}main.{}", table),
             ),
         ];
 

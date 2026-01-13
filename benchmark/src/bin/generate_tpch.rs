@@ -27,7 +27,10 @@ fn main() -> Result<()> {
     println!("=============================");
     println!("Catalog: {:?}", args.catalog);
     println!("Data path: {:?}", args.data_path);
-    println!("Scale factor: {} (~{}GB)", args.scale_factor, args.scale_factor);
+    println!(
+        "Scale factor: {} (~{}GB)",
+        args.scale_factor, args.scale_factor
+    );
     println!();
 
     // Ensure directories exist
@@ -71,10 +74,8 @@ fn main() -> Result<()> {
     conn.execute("CREATE SCHEMA IF NOT EXISTS tpch_lake.main", [])?;
 
     // Copy TPC-H tables to DuckLake
-    let tables = [
-        "customer", "lineitem", "nation", "orders",
-        "part", "partsupp", "region", "supplier"
-    ];
+    let tables =
+        ["customer", "lineitem", "nation", "orders", "part", "partsupp", "region", "supplier"];
 
     for table in &tables {
         println!("  Copying {} to DuckLake...", table);
@@ -101,7 +102,10 @@ fn main() -> Result<()> {
 
     // Print data size
     let total_size = dir_size(&args.data_path)?;
-    println!("\nTotal data size: {:.2} MB", total_size as f64 / 1_000_000.0);
+    println!(
+        "\nTotal data size: {:.2} MB",
+        total_size as f64 / 1_000_000.0
+    );
 
     Ok(())
 }

@@ -1,5 +1,5 @@
-mod duckdb_runner;
 mod datafusion_runner;
+mod duckdb_runner;
 mod metrics;
 mod report;
 mod tpch;
@@ -63,9 +63,25 @@ async fn main() -> Result<()> {
         let queries = tpch::get_tpch_queries_with_metadata()?;
         println!("Loaded {} TPC-H queries\n", queries.len());
 
+        // Separate warmup phase - run all queries once before timing
+        if !args.no_warmup {
+            println!("───────────────────────────────────────────────────────────────");
+            println!("Warmup phase: running all queries once...");
+            for (i, query) in queries.iter().enumerate() {
+                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name);
+                let _ = duckdb_runner.execute(&query.sql);
+                let _ = datafusion_runner.execute(&query.sql).await;
+                println!("done");
+            }
+            println!("Warmup complete.\n");
+        }
+
         for query in &queries {
             println!("═══════════════════════════════════════════════════════════════");
-            println!("{} [{}] - {}", query.name, query.category, query.description);
+            println!(
+                "{} [{}] - {}",
+                query.name, query.category, query.description
+            );
             println!("───────────────────────────────────────────────────────────────");
 
             // Show query (truncate long lines)
@@ -77,17 +93,10 @@ async fn main() -> Result<()> {
             }
             println!("───────────────────────────────────────────────────────────────");
 
-            // Warmup
-            if !args.no_warmup {
-                print!("  Warmup... ");
-                let _ = duckdb_runner.execute(&query.sql);
-                let _ = datafusion_runner.execute(&query.sql).await;
-                println!("done");
-            }
-
             // Benchmark DuckDB
             print!("  DuckDB:     ");
-            let duckdb_metrics = metrics::benchmark(|| duckdb_runner.execute(&query.sql), args.iterations)?;
+            let duckdb_metrics =
+                metrics::benchmark(|| duckdb_runner.execute(&query.sql), args.iterations)?;
             println!(
                 "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
                 duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
@@ -96,7 +105,8 @@ async fn main() -> Result<()> {
             // Benchmark DataFusion
             print!("  DataFusion: ");
             let datafusion_metrics =
-                metrics::benchmark_async(|| datafusion_runner.execute(&query.sql), args.iterations).await?;
+                metrics::benchmark_async(|| datafusion_runner.execute(&query.sql), args.iterations)
+                    .await?;
             println!(
                 "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
                 datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
@@ -104,7 +114,15 @@ async fn main() -> Result<()> {
 
             // Show ratio
             let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
-            let indicator = if ratio < 1.5 { "★★★" } else if ratio < 3.0 { "★★" } else if ratio < 5.0 { "★" } else { "" };
+            let indicator = if ratio < 1.5 {
+                "★★★"
+            } else if ratio < 3.0 {
+                "★★"
+            } else if ratio < 5.0 {
+                "★"
+            } else {
+                ""
+            };
             println!("  Ratio:      {:.2}x {}", ratio, indicator);
 
             all_results.push(report::QueryResult {
@@ -120,22 +138,28 @@ async fn main() -> Result<()> {
         let queries = load_sql_queries(queries_dir)?;
         println!("Loaded {} queries\n", queries.len());
 
+        // Separate warmup phase - run all queries once before timing
+        if !args.no_warmup {
+            println!("───────────────────────────────────────────────────────────────");
+            println!("Warmup phase: running all queries once...");
+            for (i, (name, sql)) in queries.iter().enumerate() {
+                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), name);
+                let _ = duckdb_runner.execute(sql);
+                let _ = datafusion_runner.execute(sql).await;
+                println!("done");
+            }
+            println!("Warmup complete.\n");
+        }
+
         for (name, sql) in &queries {
             println!("═══════════════════════════════════════════════════════════════");
             println!("{}", name);
             println!("───────────────────────────────────────────────────────────────");
 
-            // Warmup
-            if !args.no_warmup {
-                print!("  Warmup... ");
-                let _ = duckdb_runner.execute(sql);
-                let _ = datafusion_runner.execute(sql).await;
-                println!("done");
-            }
-
             // Benchmark DuckDB
             print!("  DuckDB:     ");
-            let duckdb_metrics = metrics::benchmark(|| duckdb_runner.execute(sql), args.iterations)?;
+            let duckdb_metrics =
+                metrics::benchmark(|| duckdb_runner.execute(sql), args.iterations)?;
             println!(
                 "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
                 duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
@@ -144,7 +168,8 @@ async fn main() -> Result<()> {
             // Benchmark DataFusion
             print!("  DataFusion: ");
             let datafusion_metrics =
-                metrics::benchmark_async(|| datafusion_runner.execute(sql), args.iterations).await?;
+                metrics::benchmark_async(|| datafusion_runner.execute(sql), args.iterations)
+                    .await?;
             println!(
                 "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
                 datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
@@ -180,7 +205,7 @@ fn load_sql_queries(dir: &PathBuf) -> Result<Vec<(String, String)>> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "sql") {
+            if path.extension().is_some_and(|e| e == "sql") {
                 let name = path.file_stem().unwrap().to_string_lossy().to_string();
                 let sql = std::fs::read_to_string(&path)?;
                 queries.push((name, sql));
