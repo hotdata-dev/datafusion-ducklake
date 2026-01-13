@@ -438,10 +438,7 @@ mod table_deletions_tests {
 
         // All change_types should be 'delete'
         for change_type in &all_change_types {
-            assert_eq!(
-                change_type, "delete",
-                "All change_types should be 'delete'"
-            );
+            assert_eq!(change_type, "delete", "All change_types should be 'delete'");
         }
 
         Ok(())
@@ -483,10 +480,7 @@ mod table_deletions_tests {
         }
 
         for change_type in &all_change_types {
-            assert_eq!(
-                change_type, "delete",
-                "All change_types should be 'delete'"
-            );
+            assert_eq!(change_type, "delete", "All change_types should be 'delete'");
         }
 
         Ok(())

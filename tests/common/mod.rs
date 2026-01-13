@@ -305,10 +305,7 @@ pub fn create_catalog_complex_deletions(catalog_path: &Path) -> Result<()> {
     )?;
 
     // Insert initial rows (1, 2, 3)
-    conn.execute(
-        "INSERT INTO test_catalog.items VALUES (1), (2), (3);",
-        [],
-    )?;
+    conn.execute("INSERT INTO test_catalog.items VALUES (1), (2), (3);", [])?;
 
     // Delete all rows
     conn.execute("DELETE FROM test_catalog.items;", [])?;
