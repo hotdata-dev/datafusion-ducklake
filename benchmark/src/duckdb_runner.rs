@@ -92,6 +92,7 @@ impl DuckDbRunner {
 
         Ok(QueryResult {
             row_count,
+            phases: None, // DuckDB doesn't provide phase breakdown
         })
     }
 }

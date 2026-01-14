@@ -76,11 +76,21 @@ pub fn generate(output_dir: &Path, results: &[QueryResult]) -> Result<()> {
         "datafusion_avg_ms",
         "datafusion_min_ms",
         "datafusion_max_ms",
+        "df_plan_ms",
+        "df_physical_ms",
+        "df_exec_ms",
         "speedup_ratio",
         "row_count",
     ])?;
 
     for r in results {
+        let (plan_ms, physical_ms, exec_ms) = r
+            .datafusion
+            .phases
+            .as_ref()
+            .map(|p| (p.plan_ms, p.physical_ms, p.exec_ms))
+            .unwrap_or((0.0, 0.0, 0.0));
+
         csv_writer.write_record([
             &r.query_name,
             &format!("{:.2}", r.duckdb.avg_ms),
@@ -89,6 +99,9 @@ pub fn generate(output_dir: &Path, results: &[QueryResult]) -> Result<()> {
             &format!("{:.2}", r.datafusion.avg_ms),
             &format!("{:.2}", r.datafusion.min_ms),
             &format!("{:.2}", r.datafusion.max_ms),
+            &format!("{:.2}", plan_ms),
+            &format!("{:.2}", physical_ms),
+            &format!("{:.2}", exec_ms),
             &format!("{:.2}", r.datafusion.avg_ms / r.duckdb.avg_ms),
             &r.duckdb.row_count.to_string(),
         ])?;

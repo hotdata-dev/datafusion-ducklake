@@ -10,14 +10,16 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use runner::assert_results_match;
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "ducklake-benchmark")]
 #[command(about = "Benchmark comparing DuckDB-DuckLake vs DataFusion-DuckLake performance")]
+#[command(version)]
 struct Args {
     /// Path to the DuckLake catalog database
     #[arg(short, long)]
-    catalog: PathBuf,
+    catalog: Option<PathBuf>,
 
     /// Use TPC-H queries from DuckDB's tpch extension (22 queries)
     #[arg(long)]
@@ -46,24 +48,57 @@ struct Args {
     /// Skip queries that fail and continue (useful for TPC-DS where some queries may not be supported)
     #[arg(long)]
     skip_errors: bool,
+
+    /// Skip queries that take longer than this many milliseconds during warmup (e.g., 500)
+    #[arg(long)]
+    timeout_ms: Option<u64>,
+
+    /// Show version information for all components
+    #[arg(long)]
+    show_versions: bool,
+}
+
+fn print_versions() {
+    // Get DuckDB version by querying it
+    let duckdb_version = duckdb::Connection::open_in_memory()
+        .and_then(|conn| conn.query_row("SELECT version()", [], |row| row.get::<_, String>(0)))
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    println!("Component Versions:");
+    println!("  datafusion-ducklake: {}", env!("CARGO_PKG_VERSION"));
+    println!("  datafusion:          {}", datafusion::DATAFUSION_VERSION);
+    println!("  duckdb:              {}", duckdb_version);
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Handle --show-versions flag
+    if args.show_versions {
+        print_versions();
+        return Ok(());
+    }
+
+    // Validate catalog is provided for benchmarking
+    let catalog = args.catalog.ok_or_else(|| {
+        anyhow::anyhow!("--catalog is required. Use --show-versions to check component versions.")
+    })?;
+
     println!("╔═══════════════════════════════════════════════════════════════╗");
     println!("║   DuckLake Query Engine Comparison                            ║");
     println!("║   DuckDB-DuckLake vs DataFusion-DuckLake                      ║");
     println!("╚═══════════════════════════════════════════════════════════════╝");
     println!();
-    println!("Catalog:    {:?}", args.catalog);
+    print_versions();
+    println!();
+    println!("Catalog:    {:?}", catalog);
     println!("Iterations: {}", args.iterations);
     println!("Warmup:     {}", !args.no_warmup);
 
     // Initialize runners
-    let duckdb_runner = duckdb_runner::DuckDbRunner::new(&args.catalog)?;
-    let datafusion_runner = datafusion_runner::DataFusionRunner::new(&args.catalog).await?;
+    let duckdb_runner = duckdb_runner::DuckDbRunner::new(&catalog)?;
+    let datafusion_runner = datafusion_runner::DataFusionRunner::new(&catalog).await?;
 
     let mut all_results = Vec::new();
 
@@ -143,10 +178,18 @@ async fn main() -> Result<()> {
             let datafusion_metrics =
                 metrics::benchmark_async(|| datafusion_runner.execute(&query.sql), args.iterations)
                     .await?;
-            println!(
+            print!(
                 "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
                 datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
             );
+            if let Some(phases) = &datafusion_metrics.phases {
+                println!(
+                    "  (plan={:.1}ms, phys={:.1}ms, exec={:.1}ms)",
+                    phases.plan_ms, phases.physical_ms, phases.exec_ms
+                );
+            } else {
+                println!();
+            }
 
             // Show ratio
             let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
@@ -193,12 +236,27 @@ async fn main() -> Result<()> {
         // Separate warmup phase
         if !args.no_warmup {
             println!("───────────────────────────────────────────────────────────────");
-            println!("Warmup phase: running all queries once and verifying row counts...");
+            if let Some(timeout) = args.timeout_ms {
+                println!("Warmup phase: running all queries once (timeout={}ms)...", timeout);
+            } else {
+                println!("Warmup phase: running all queries once and verifying row counts...");
+            }
             for (i, query) in queries.iter().enumerate() {
                 print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name);
 
+                let start = Instant::now();
                 let duckdb_result = duckdb_runner.execute(&query.sql);
                 let datafusion_result = datafusion_runner.execute(&query.sql).await;
+                let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                // Check timeout
+                if let Some(timeout) = args.timeout_ms {
+                    if elapsed_ms > timeout {
+                        println!("SKIP (too slow: {}ms > {}ms)", elapsed_ms, timeout);
+                        skipped_queries.push((query.name.clone(), format!("Timeout: {}ms", elapsed_ms)));
+                        continue;
+                    }
+                }
 
                 match (&duckdb_result, &datafusion_result) {
                     (Ok(duck), Ok(df)) => {
@@ -212,7 +270,7 @@ async fn main() -> Result<()> {
                                 return Err(e);
                             }
                         } else {
-                            println!("done ({} rows)", duck.row_count);
+                            println!("done ({} rows, {}ms)", duck.row_count, elapsed_ms);
                         }
                     },
                     (Err(e), _) => {
@@ -239,7 +297,7 @@ async fn main() -> Result<()> {
                 }
             }
             if !skipped_queries.is_empty() {
-                println!("\nSkipped {} queries due to errors", skipped_queries.len());
+                println!("\nSkipped {} queries due to errors/timeout", skipped_queries.len());
             }
             println!("Warmup complete.\n");
         }
@@ -277,10 +335,18 @@ async fn main() -> Result<()> {
             let datafusion_metrics =
                 metrics::benchmark_async(|| datafusion_runner.execute(&query.sql), args.iterations)
                     .await?;
-            println!(
+            print!(
                 "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
                 datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
             );
+            if let Some(phases) = &datafusion_metrics.phases {
+                println!(
+                    "  (plan={:.1}ms, phys={:.1}ms, exec={:.1}ms)",
+                    phases.plan_ms, phases.physical_ms, phases.exec_ms
+                );
+            } else {
+                println!();
+            }
 
             // Show ratio
             let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
@@ -362,10 +428,18 @@ async fn main() -> Result<()> {
             let datafusion_metrics =
                 metrics::benchmark_async(|| datafusion_runner.execute(sql), args.iterations)
                     .await?;
-            println!(
+            print!(
                 "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
                 datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
             );
+            if let Some(phases) = &datafusion_metrics.phases {
+                println!(
+                    "  (plan={:.1}ms, phys={:.1}ms, exec={:.1}ms)",
+                    phases.plan_ms, phases.physical_ms, phases.exec_ms
+                );
+            } else {
+                println!();
+            }
 
             // Show ratio
             let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;

@@ -18,8 +18,19 @@ name = "generate-tpcds"
 path = "src/bin/generate_tpcds.rs"
 
 [dependencies]
-# Use the parent crate
+# DataFusion-DuckLake: Uncomment ONE of the following options
+
+# Option 1: Local development (default)
 datafusion-ducklake = { path = "..", features = ["metadata-duckdb"] }
+
+# Option 2: Specific git commit
+# datafusion-ducklake = { git = "https://github.com/hotdata-dev/datafusion-ducklake", rev = "COMMIT_HASH", features = ["metadata-duckdb"] }
+
+# Option 3: Git branch
+# datafusion-ducklake = { git = "https://github.com/hotdata-dev/datafusion-ducklake", branch = "main", features = ["metadata-duckdb"] }
+
+# Option 4: Published crates.io version
+# datafusion-ducklake = { version = "0.1.0", features = ["metadata-duckdb"] }
 
 # Core dependencies
 datafusion = "50.1.0"
