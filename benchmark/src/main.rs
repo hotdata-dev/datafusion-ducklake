@@ -237,7 +237,10 @@ async fn main() -> Result<()> {
         if !args.no_warmup {
             println!("───────────────────────────────────────────────────────────────");
             if let Some(timeout) = args.timeout_ms {
-                println!("Warmup phase: running all queries once (timeout={}ms)...", timeout);
+                println!(
+                    "Warmup phase: running all queries once (timeout={}ms)...",
+                    timeout
+                );
             } else {
                 println!("Warmup phase: running all queries once and verifying row counts...");
             }
@@ -253,7 +256,8 @@ async fn main() -> Result<()> {
                 if let Some(timeout) = args.timeout_ms {
                     if elapsed_ms > timeout {
                         println!("SKIP (too slow: {}ms > {}ms)", elapsed_ms, timeout);
-                        skipped_queries.push((query.name.clone(), format!("Timeout: {}ms", elapsed_ms)));
+                        skipped_queries
+                            .push((query.name.clone(), format!("Timeout: {}ms", elapsed_ms)));
                         continue;
                     }
                 }
@@ -297,7 +301,10 @@ async fn main() -> Result<()> {
                 }
             }
             if !skipped_queries.is_empty() {
-                println!("\nSkipped {} queries due to errors/timeout", skipped_queries.len());
+                println!(
+                    "\nSkipped {} queries due to errors/timeout",
+                    skipped_queries.len()
+                );
             }
             println!("Warmup complete.\n");
         }

@@ -44,7 +44,12 @@ where
         }
     }
 
-    Ok(compute_metrics(durations, row_count, iterations, phase_timings))
+    Ok(compute_metrics(
+        durations,
+        row_count,
+        iterations,
+        phase_timings,
+    ))
 }
 
 pub async fn benchmark_async<F, Fut, T>(mut f: F, iterations: usize) -> Result<BenchmarkMetrics>
@@ -68,7 +73,12 @@ where
         }
     }
 
-    Ok(compute_metrics(durations, row_count, iterations, phase_timings))
+    Ok(compute_metrics(
+        durations,
+        row_count,
+        iterations,
+        phase_timings,
+    ))
 }
 
 fn compute_metrics(
