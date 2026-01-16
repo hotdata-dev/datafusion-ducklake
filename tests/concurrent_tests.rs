@@ -15,7 +15,7 @@
 //! ## Thread Safety Guarantees
 //!
 //! The DuckLake implementation is designed to be thread-safe:
-//! - **MetadataProvider**: Opens a new read-only DuckDB connection per query
+//! - **MetadataProvider**: Uses a single shared connection protected by Mutex
 //! - **Catalog/Schema**: Dynamic metadata lookup with no shared mutable state
 //! - **Table**: Immutable metadata cached at creation time
 //! - **ObjectStore**: DataFusion's object stores are Arc<dyn ObjectStore> (thread-safe)
