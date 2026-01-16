@@ -39,7 +39,7 @@ The codebase follows a layered architecture with clear separation of concerns:
    - Also provides individual lookup methods: `get_schema_by_name()`, `get_table_by_name()`, and `table_exists()`
    - `DuckdbMetadataProvider` implements the trait using DuckDB as the catalog backend
    - Executes SQL queries against standard DuckLake catalog tables (`ducklake_snapshot`, `ducklake_schema`, `ducklake_table`, `ducklake_column`, `ducklake_data_file`, `ducklake_delete_file`, `ducklake_metadata`)
-   - Thread-safe: Opens a new read-only connection for each query
+   - Thread-safe: Uses a single shared connection protected by Mutex for efficiency
    - Supports delete files: `get_table_files_for_select()` returns data files with associated delete files
 
 2. **DataFusion Integration Layer** (`src/catalog.rs`, `src/schema.rs`, `src/table.rs`)

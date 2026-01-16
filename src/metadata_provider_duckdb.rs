@@ -20,6 +20,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 #[derive(Debug, Clone)]
 pub struct DuckdbMetadataProvider {
     conn: Arc<Mutex<Connection>>,
+    /// Path to the catalog database, retained for logging/debugging
+    #[allow(dead_code)]
+    catalog_path: String,
 }
 
 impl DuckdbMetadataProvider {
@@ -30,6 +33,7 @@ impl DuckdbMetadataProvider {
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            catalog_path,
         })
     }
 
