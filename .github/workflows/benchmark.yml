@@ -50,11 +50,11 @@ jobs:
 
       - name: Generate TPC-H SF1 data
         if: steps.cache-tpch.outputs.cache-hit != 'true'
-        run: cargo run --release --bin generate-tpch -- --scale-factor 1
+        run: cargo run --release --package ducklake-benchmark --bin generate-tpch -- --scale-factor 1
 
       - name: Run TPC-H Benchmark
         run: |
-          cargo run --release --bin ducklake-benchmark -- \
+          cargo run --release --package ducklake-benchmark --bin ducklake-benchmark -- \
             --catalog benchmark/data/tpch.ducklake \
             --tpch \
             --iterations 3
