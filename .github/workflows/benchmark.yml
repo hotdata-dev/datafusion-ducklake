@@ -58,3 +58,9 @@ jobs:
             --catalog benchmark/data/tpch.ducklake \
             --tpch \
             --iterations 3
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark/results/
