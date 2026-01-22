@@ -1,3 +1,4 @@
+use crate::runner::Query;
 use anyhow::Result;
 use duckdb::Connection;
 
@@ -12,6 +13,24 @@ pub struct TpchQuery {
     pub category: String,
     pub description: String,
     pub sql: String,
+}
+
+impl Query for TpchQuery {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    fn category(&self) -> Option<&str> {
+        Some(&self.category)
+    }
+
+    fn description(&self) -> Option<&str> {
+        Some(&self.description)
+    }
 }
 
 /// TPC-H query categories and descriptions
@@ -44,6 +63,7 @@ fn get_query_metadata(query_nr: i32) -> (&'static str, &'static str) {
 }
 
 /// Fetch TPC-H queries with full metadata (category, description)
+#[must_use = "queries should be used for benchmarking"]
 pub fn get_tpch_queries_with_metadata() -> Result<Vec<TpchQuery>> {
     let conn = Connection::open_in_memory()?;
 

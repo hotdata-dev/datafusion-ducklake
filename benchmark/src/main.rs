@@ -8,9 +8,27 @@ mod tpch;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use runner::assert_results_match;
+use datafusion_runner::DataFusionRunner;
+use duckdb_runner::DuckDbRunner;
+use runner::{Query, assert_results_match};
 use std::path::PathBuf;
 use std::time::Instant;
+
+/// Custom query loaded from SQL file
+struct CustomQuery {
+    name: String,
+    sql: String,
+}
+
+impl Query for CustomQuery {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sql(&self) -> &str {
+        &self.sql
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "ducklake-benchmark")]
@@ -70,6 +88,97 @@ fn print_versions() {
     println!("  duckdb:              {}", duckdb_version);
 }
 
+/// Run benchmark for a set of queries, returning results for each query
+async fn run_benchmark<Q: Query>(
+    queries: &[Q],
+    skipped_queries: &[(String, String)],
+    duckdb_runner: &DuckDbRunner,
+    datafusion_runner: &DataFusionRunner,
+    iterations: usize,
+    max_sql_lines: usize,
+) -> Result<Vec<report::QueryResult>> {
+    let mut results = Vec::new();
+
+    for query in queries {
+        // Skip queries that failed during warmup
+        if skipped_queries.iter().any(|(name, _)| name == query.name()) {
+            continue;
+        }
+
+        println!("═══════════════════════════════════════════════════════════════");
+        if let (Some(cat), Some(desc)) = (query.category(), query.description()) {
+            println!("{} [{}] - {}", query.name(), cat, desc);
+        } else {
+            println!("{}", query.name());
+        }
+        println!("───────────────────────────────────────────────────────────────");
+
+        // Show query (truncate long lines)
+        for line in query.sql().lines().take(max_sql_lines) {
+            println!("  {}", line.chars().take(65).collect::<String>());
+        }
+        if query.sql().lines().count() > max_sql_lines {
+            println!(
+                "  ... ({} more lines)",
+                query.sql().lines().count() - max_sql_lines
+            );
+        }
+        println!("───────────────────────────────────────────────────────────────");
+
+        // Benchmark DuckDB
+        print!("  DuckDB:     ");
+        let duckdb_metrics = metrics::benchmark(|| duckdb_runner.execute(query.sql()), iterations)?;
+        println!(
+            "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
+            duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
+        );
+
+        // Benchmark DataFusion
+        print!("  DataFusion: ");
+        let datafusion_metrics =
+            metrics::benchmark_async(|| datafusion_runner.execute(query.sql()), iterations).await?;
+        print!(
+            "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
+            datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
+        );
+        if let Some(phases) = &datafusion_metrics.phases {
+            println!(
+                "  (plan={:.1}ms, phys={:.1}ms, exec={:.1}ms)",
+                phases.plan_ms, phases.physical_ms, phases.exec_ms
+            );
+        } else {
+            println!();
+        }
+
+        // Show ratio
+        let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
+        let indicator = if ratio < 1.5 {
+            "★★★"
+        } else if ratio < 3.0 {
+            "★★"
+        } else if ratio < 5.0 {
+            "★"
+        } else {
+            ""
+        };
+        println!("  Ratio:      {:.2}x {}", ratio, indicator);
+
+        let query_name = if let Some(cat) = query.category() {
+            format!("{} [{}]", query.name(), cat)
+        } else {
+            query.name().to_string()
+        };
+
+        results.push(report::QueryResult {
+            query_name,
+            duckdb: duckdb_metrics,
+            datafusion: datafusion_metrics,
+        });
+    }
+
+    Ok(results)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -127,16 +236,16 @@ async fn main() -> Result<()> {
             println!("───────────────────────────────────────────────────────────────");
             println!("Warmup phase: running all queries once and verifying row counts...");
             for (i, query) in queries.iter().enumerate() {
-                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name);
+                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name());
                 let duckdb_result = duckdb_runner
-                    .execute(&query.sql)
-                    .with_context(|| format!("DuckDB failed on {}", query.name))?;
+                    .execute(query.sql())
+                    .with_context(|| format!("DuckDB failed on {}", query.name()))?;
                 let datafusion_result = datafusion_runner
-                    .execute(&query.sql)
+                    .execute(query.sql())
                     .await
-                    .with_context(|| format!("DataFusion failed on {}", query.name))?;
+                    .with_context(|| format!("DataFusion failed on {}", query.name()))?;
                 assert_results_match(
-                    &query.name,
+                    query.name(),
                     &duckdb_result,
                     "DuckDB",
                     &datafusion_result,
@@ -147,69 +256,16 @@ async fn main() -> Result<()> {
             println!("Warmup complete.\n");
         }
 
-        for query in &queries {
-            println!("═══════════════════════════════════════════════════════════════");
-            println!(
-                "{} [{}] - {}",
-                query.name, query.category, query.description
-            );
-            println!("───────────────────────────────────────────────────────────────");
-
-            // Show query (truncate long lines)
-            for line in query.sql.lines().take(12) {
-                println!("  {}", line.chars().take(65).collect::<String>());
-            }
-            if query.sql.lines().count() > 12 {
-                println!("  ... ({} more lines)", query.sql.lines().count() - 12);
-            }
-            println!("───────────────────────────────────────────────────────────────");
-
-            // Benchmark DuckDB
-            print!("  DuckDB:     ");
-            let duckdb_metrics =
-                metrics::benchmark(|| duckdb_runner.execute(&query.sql), args.iterations)?;
-            println!(
-                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
-                duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
-            );
-
-            // Benchmark DataFusion
-            print!("  DataFusion: ");
-            let datafusion_metrics =
-                metrics::benchmark_async(|| datafusion_runner.execute(&query.sql), args.iterations)
-                    .await?;
-            print!(
-                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
-                datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
-            );
-            if let Some(phases) = &datafusion_metrics.phases {
-                println!(
-                    "  (plan={:.1}ms, phys={:.1}ms, exec={:.1}ms)",
-                    phases.plan_ms, phases.physical_ms, phases.exec_ms
-                );
-            } else {
-                println!();
-            }
-
-            // Show ratio
-            let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
-            let indicator = if ratio < 1.5 {
-                "★★★"
-            } else if ratio < 3.0 {
-                "★★"
-            } else if ratio < 5.0 {
-                "★"
-            } else {
-                ""
-            };
-            println!("  Ratio:      {:.2}x {}", ratio, indicator);
-
-            all_results.push(report::QueryResult {
-                query_name: format!("{} [{}]", query.name, query.category),
-                duckdb: duckdb_metrics,
-                datafusion: datafusion_metrics,
-            });
-        }
+        let results = run_benchmark(
+            &queries,
+            &[],
+            &duckdb_runner,
+            &datafusion_runner,
+            args.iterations,
+            12,
+        )
+        .await?;
+        all_results.extend(results);
     } else if args.tpcds {
         println!("Queries:    TPC-DS (from DuckDB extension)");
         println!();
@@ -245,31 +301,33 @@ async fn main() -> Result<()> {
                 println!("Warmup phase: running all queries once and verifying row counts...");
             }
             for (i, query) in queries.iter().enumerate() {
-                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name);
+                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name());
 
                 let start = Instant::now();
-                let duckdb_result = duckdb_runner.execute(&query.sql);
-                let datafusion_result = datafusion_runner.execute(&query.sql).await;
+                let duckdb_result = duckdb_runner.execute(query.sql());
+                let datafusion_result = datafusion_runner.execute(query.sql()).await;
                 let elapsed_ms = start.elapsed().as_millis() as u64;
 
                 // Check timeout
-                if let Some(timeout) = args.timeout_ms {
-                    if elapsed_ms > timeout {
-                        println!("SKIP (too slow: {}ms > {}ms)", elapsed_ms, timeout);
-                        skipped_queries
-                            .push((query.name.clone(), format!("Timeout: {}ms", elapsed_ms)));
-                        continue;
-                    }
+                if let Some(timeout) = args.timeout_ms
+                    && elapsed_ms > timeout
+                {
+                    println!("SKIP (too slow: {}ms > {}ms)", elapsed_ms, timeout);
+                    skipped_queries.push((
+                        query.name().to_string(),
+                        format!("Timeout: {}ms", elapsed_ms),
+                    ));
+                    continue;
                 }
 
                 match (&duckdb_result, &datafusion_result) {
                     (Ok(duck), Ok(df)) => {
                         if let Err(e) =
-                            assert_results_match(&query.name, duck, "DuckDB", df, "DataFusion")
+                            assert_results_match(query.name(), duck, "DuckDB", df, "DataFusion")
                         {
                             if args.skip_errors {
                                 println!("SKIP (row mismatch)");
-                                skipped_queries.push((query.name.clone(), e.to_string()));
+                                skipped_queries.push((query.name().to_string(), e.to_string()));
                             } else {
                                 return Err(e);
                             }
@@ -280,20 +338,25 @@ async fn main() -> Result<()> {
                     (Err(e), _) => {
                         if args.skip_errors {
                             println!("SKIP (DuckDB error)");
-                            skipped_queries.push((query.name.clone(), format!("DuckDB: {}", e)));
+                            skipped_queries
+                                .push((query.name().to_string(), format!("DuckDB: {}", e)));
                         } else {
-                            return Err(anyhow::anyhow!("DuckDB failed on {}: {}", query.name, e));
+                            return Err(anyhow::anyhow!(
+                                "DuckDB failed on {}: {}",
+                                query.name(),
+                                e
+                            ));
                         }
                     },
                     (_, Err(e)) => {
                         if args.skip_errors {
                             println!("SKIP (DataFusion error)");
                             skipped_queries
-                                .push((query.name.clone(), format!("DataFusion: {}", e)));
+                                .push((query.name().to_string(), format!("DataFusion: {}", e)));
                         } else {
                             return Err(anyhow::anyhow!(
                                 "DataFusion failed on {}: {}",
-                                query.name,
+                                query.name(),
                                 e
                             ));
                         }
@@ -309,71 +372,16 @@ async fn main() -> Result<()> {
             println!("Warmup complete.\n");
         }
 
-        for query in &queries {
-            // Skip queries that failed during warmup
-            if skipped_queries.iter().any(|(name, _)| name == &query.name) {
-                continue;
-            }
-
-            println!("═══════════════════════════════════════════════════════════════");
-            println!("{}", query.name);
-            println!("───────────────────────────────────────────────────────────────");
-
-            // Show query (truncate long lines)
-            for line in query.sql.lines().take(8) {
-                println!("  {}", line.chars().take(65).collect::<String>());
-            }
-            if query.sql.lines().count() > 8 {
-                println!("  ... ({} more lines)", query.sql.lines().count() - 8);
-            }
-            println!("───────────────────────────────────────────────────────────────");
-
-            // Benchmark DuckDB
-            print!("  DuckDB:     ");
-            let duckdb_metrics =
-                metrics::benchmark(|| duckdb_runner.execute(&query.sql), args.iterations)?;
-            println!(
-                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
-                duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
-            );
-
-            // Benchmark DataFusion
-            print!("  DataFusion: ");
-            let datafusion_metrics =
-                metrics::benchmark_async(|| datafusion_runner.execute(&query.sql), args.iterations)
-                    .await?;
-            print!(
-                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
-                datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
-            );
-            if let Some(phases) = &datafusion_metrics.phases {
-                println!(
-                    "  (plan={:.1}ms, phys={:.1}ms, exec={:.1}ms)",
-                    phases.plan_ms, phases.physical_ms, phases.exec_ms
-                );
-            } else {
-                println!();
-            }
-
-            // Show ratio
-            let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
-            let indicator = if ratio < 1.5 {
-                "★★★"
-            } else if ratio < 3.0 {
-                "★★"
-            } else if ratio < 5.0 {
-                "★"
-            } else {
-                ""
-            };
-            println!("  Ratio:      {:.2}x {}", ratio, indicator);
-
-            all_results.push(report::QueryResult {
-                query_name: query.name.clone(),
-                duckdb: duckdb_metrics,
-                datafusion: datafusion_metrics,
-            });
-        }
+        let results = run_benchmark(
+            &queries,
+            &skipped_queries,
+            &duckdb_runner,
+            &datafusion_runner,
+            args.iterations,
+            8,
+        )
+        .await?;
+        all_results.extend(results);
 
         // Print skipped queries summary at the end
         if !skipped_queries.is_empty() {
@@ -395,17 +403,17 @@ async fn main() -> Result<()> {
         if !args.no_warmup {
             println!("───────────────────────────────────────────────────────────────");
             println!("Warmup phase: running all queries once and verifying row counts...");
-            for (i, (name, sql)) in queries.iter().enumerate() {
-                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), name);
+            for (i, query) in queries.iter().enumerate() {
+                print!("  [{:>2}/{}] {}... ", i + 1, queries.len(), query.name());
                 let duckdb_result = duckdb_runner
-                    .execute(sql)
-                    .with_context(|| format!("DuckDB failed on {}", name))?;
+                    .execute(query.sql())
+                    .with_context(|| format!("DuckDB failed on {}", query.name()))?;
                 let datafusion_result = datafusion_runner
-                    .execute(sql)
+                    .execute(query.sql())
                     .await
-                    .with_context(|| format!("DataFusion failed on {}", name))?;
+                    .with_context(|| format!("DataFusion failed on {}", query.name()))?;
                 assert_results_match(
-                    name,
+                    query.name(),
                     &duckdb_result,
                     "DuckDB",
                     &datafusion_result,
@@ -416,48 +424,16 @@ async fn main() -> Result<()> {
             println!("Warmup complete.\n");
         }
 
-        for (name, sql) in &queries {
-            println!("═══════════════════════════════════════════════════════════════");
-            println!("{}", name);
-            println!("───────────────────────────────────────────────────────────────");
-
-            // Benchmark DuckDB
-            print!("  DuckDB:     ");
-            let duckdb_metrics =
-                metrics::benchmark(|| duckdb_runner.execute(sql), args.iterations)?;
-            println!(
-                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
-                duckdb_metrics.avg_ms, duckdb_metrics.min_ms, duckdb_metrics.max_ms
-            );
-
-            // Benchmark DataFusion
-            print!("  DataFusion: ");
-            let datafusion_metrics =
-                metrics::benchmark_async(|| datafusion_runner.execute(sql), args.iterations)
-                    .await?;
-            print!(
-                "avg={:>8.2}ms  min={:>8.2}ms  max={:>8.2}ms",
-                datafusion_metrics.avg_ms, datafusion_metrics.min_ms, datafusion_metrics.max_ms
-            );
-            if let Some(phases) = &datafusion_metrics.phases {
-                println!(
-                    "  (plan={:.1}ms, phys={:.1}ms, exec={:.1}ms)",
-                    phases.plan_ms, phases.physical_ms, phases.exec_ms
-                );
-            } else {
-                println!();
-            }
-
-            // Show ratio
-            let ratio = datafusion_metrics.avg_ms / duckdb_metrics.avg_ms;
-            println!("  Ratio:      {:.2}x", ratio);
-
-            all_results.push(report::QueryResult {
-                query_name: name.clone(),
-                duckdb: duckdb_metrics,
-                datafusion: datafusion_metrics,
-            });
-        }
+        let results = run_benchmark(
+            &queries,
+            &[],
+            &duckdb_runner,
+            &datafusion_runner,
+            args.iterations,
+            8,
+        )
+        .await?;
+        all_results.extend(results);
     } else {
         println!("\nError: Specify --tpch, --tpcds, or --queries <dir>");
         std::process::exit(1);
@@ -511,7 +487,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_sql_queries(dir: &PathBuf) -> Result<Vec<(String, String)>> {
+fn load_sql_queries(dir: &PathBuf) -> Result<Vec<CustomQuery>> {
     let mut queries = Vec::new();
 
     if dir.is_dir() {
@@ -521,11 +497,14 @@ fn load_sql_queries(dir: &PathBuf) -> Result<Vec<(String, String)>> {
             if path.extension().is_some_and(|e| e == "sql") {
                 let name = path.file_stem().unwrap().to_string_lossy().to_string();
                 let sql = std::fs::read_to_string(&path)?;
-                queries.push((name, sql));
+                queries.push(CustomQuery {
+                    name,
+                    sql,
+                });
             }
         }
     }
 
-    queries.sort_by(|a, b| a.0.cmp(&b.0));
+    queries.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(queries)
 }

@@ -1,5 +1,21 @@
 use anyhow::Result;
 
+/// Trait for benchmark queries with a name and SQL
+pub trait Query {
+    /// Query name for display and reporting
+    fn name(&self) -> &str;
+    /// SQL statement to execute
+    fn sql(&self) -> &str;
+    /// Optional category (e.g., "Aggregation", "Join")
+    fn category(&self) -> Option<&str> {
+        None
+    }
+    /// Optional description
+    fn description(&self) -> Option<&str> {
+        None
+    }
+}
+
 /// Phase timing breakdown (in milliseconds)
 #[derive(Debug, Clone, Default)]
 pub struct PhaseTiming {

@@ -1,3 +1,4 @@
+use crate::runner::Query;
 use anyhow::Result;
 use duckdb::Connection;
 
@@ -6,6 +7,16 @@ use duckdb::Connection;
 pub struct TpcdsQuery {
     pub name: String,
     pub sql: String,
+}
+
+impl Query for TpcdsQuery {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sql(&self) -> &str {
+        &self.sql
+    }
 }
 
 /// TPC-DS tables (24 tables)
@@ -37,6 +48,7 @@ pub const TPCDS_TABLES: &[&str] = &[
 ];
 
 /// Fetch TPC-DS queries from DuckDB extension
+#[must_use = "queries should be used for benchmarking"]
 pub fn get_tpcds_queries() -> Result<Vec<TpcdsQuery>> {
     let conn = Connection::open_in_memory()?;
 
