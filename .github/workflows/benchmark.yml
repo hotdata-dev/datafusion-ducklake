@@ -2,7 +2,7 @@ name: Benchmark
 
 on:
   push:
-    branches: [main, shefeek/benchmark_on_merge]
+    branches: [main]
   workflow_dispatch: # Allow manual trigger
 
 env:
