@@ -1,0 +1,66 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  benchmark:
+    name: Run TPC-H Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-index-
+
+      - name: Cache TPC-H test data
+        id: cache-tpch
+        uses: actions/cache@v4
+        with:
+          path: |
+            benchmark/data/tpch.ducklake
+            benchmark/data/tpch_files
+          key: tpch-sf1-v1
+
+      - name: Generate TPC-H SF1 data
+        if: steps.cache-tpch.outputs.cache-hit != 'true'
+        run: cargo run --release --package ducklake-benchmark --bin generate-tpch -- --scale-factor 1
+
+      - name: Run TPC-H Benchmark
+        run: |
+          cargo run --release --package ducklake-benchmark --bin ducklake-benchmark -- \
+            --catalog benchmark/data/tpch.ducklake \
+            --tpch \
+            --iterations 3
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark/results/
