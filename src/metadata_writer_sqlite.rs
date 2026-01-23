@@ -1,10 +1,32 @@
 //! SQLite metadata writer for DuckLake catalogs.
+//!
+//! This module provides [`SqliteMetadataWriter`], an implementation of the
+//! [`MetadataWriter`] trait using SQLite as the catalog backend.
+//!
+//! # Runtime Requirements
+//!
+//! This implementation uses `tokio::task::block_in_place` internally, which requires
+//! a **multi-threaded Tokio runtime**. Using `#[tokio::test]` without
+//! `flavor = "multi_thread"` will panic.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use datafusion_ducklake::SqliteMetadataWriter;
+//!
+//! // Create and initialize a new catalog
+//! let writer = SqliteMetadataWriter::new_with_init("sqlite:catalog.db?mode=rwc").await?;
+//! writer.set_data_path("/path/to/data")?;
+//! ```
 
 use crate::Result;
 use crate::metadata_provider::block_on;
 use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter};
 use sqlx::Row;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+
+/// Default maximum number of connections in the pool.
+const DEFAULT_MAX_CONNECTIONS: u32 = 5;
 
 /// SQL to create DuckLake schema tables
 const SQL_CREATE_SCHEMA: &str = r#"
@@ -78,6 +100,19 @@ CREATE TABLE IF NOT EXISTS ducklake_delete_file (
 "#;
 
 /// SQLite-based metadata writer for DuckLake catalogs.
+///
+/// This writer manages DuckLake catalog metadata stored in a SQLite database,
+/// including snapshots, schemas, tables, columns, and data file registrations.
+///
+/// # Thread Safety
+///
+/// This type is `Clone`, `Send`, and `Sync`. The underlying connection pool
+/// handles concurrent access safely.
+///
+/// # Connection Pool
+///
+/// Uses a connection pool with configurable size (default: 5 connections).
+/// For embedded single-threaded use cases, consider using `with_max_connections(1)`.
 #[derive(Debug, Clone)]
 pub struct SqliteMetadataWriter {
     pool: SqlitePool,
@@ -86,11 +121,43 @@ pub struct SqliteMetadataWriter {
 impl SqliteMetadataWriter {
     /// Creates a new writer for a DuckLake catalog.
     ///
-    /// Connection string format: `sqlite:///path/to/catalog.db?mode=rwc`
-    /// Use `?mode=rwc` to create the file if it doesn't exist.
+    /// # Connection String Format
+    ///
+    /// - `sqlite:path/to/catalog.db` - Open existing database
+    /// - `sqlite:path/to/catalog.db?mode=rwc` - Create if not exists
+    /// - `sqlite::memory:` - In-memory database (for testing)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let writer = SqliteMetadataWriter::new("sqlite:catalog.db?mode=rwc").await?;
+    /// ```
     pub async fn new(connection_string: &str) -> Result<Self> {
+        Self::with_max_connections(connection_string, DEFAULT_MAX_CONNECTIONS).await
+    }
+
+    /// Creates a new writer with a custom connection pool size.
+    ///
+    /// # Arguments
+    ///
+    /// * `connection_string` - SQLite connection string
+    /// * `max_connections` - Maximum number of connections in the pool
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Single connection for embedded use
+    /// let writer = SqliteMetadataWriter::with_max_connections(
+    ///     "sqlite:catalog.db?mode=rwc",
+    ///     1
+    /// ).await?;
+    /// ```
+    pub async fn with_max_connections(
+        connection_string: &str,
+        max_connections: u32,
+    ) -> Result<Self> {
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            .max_connections(max_connections)
             .connect(connection_string)
             .await?;
 
@@ -99,7 +166,17 @@ impl SqliteMetadataWriter {
         })
     }
 
-    /// Creates a new writer and initializes the schema if needed.
+    /// Creates a new writer and initializes the DuckLake schema tables.
+    ///
+    /// This is a convenience method that combines `new()` and `initialize_schema()`.
+    /// Use this when creating a new catalog from scratch.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let writer = SqliteMetadataWriter::new_with_init("sqlite:catalog.db?mode=rwc").await?;
+    /// writer.set_data_path("/data/warehouse")?;
+    /// ```
     pub async fn new_with_init(connection_string: &str) -> Result<Self> {
         let writer = Self::new(connection_string).await?;
         writer.initialize_schema()?;

@@ -317,7 +317,7 @@ impl DuckLakeTableWriter {
 
 /// A streaming write session for writing batches incrementally to a DuckLake table.
 ///
-/// Created by `DuckLakeTableWriter::begin_write()` or `begin_write_to_path()`.
+/// Created by [`DuckLakeTableWriter::begin_write()`] or [`DuckLakeTableWriter::begin_write_to_path()`].
 ///
 /// The session holds the Parquet writer and catalog metadata. Batches are written
 /// incrementally via `write_batch()`, and the file is registered in the catalog
@@ -329,8 +329,29 @@ impl DuckLakeTableWriter {
 /// begin_write() → write_batch()* → finish()
 /// ```
 ///
-/// If the session is dropped without calling `finish()`, the file is written but
-/// NOT registered in the catalog (effectively discarded).
+/// # Error Handling and Cleanup
+///
+/// - **Dropped without `finish()`**: The Parquet file may be partially written but is
+///   NOT registered in the catalog. The orphaned file remains on disk and should be
+///   cleaned up by the caller or a separate garbage collection process.
+///
+/// - **Error during `write_batch()`**: The session remains valid and you can continue
+///   writing. The Parquet file may contain partial data.
+///
+/// - **Error during `finish()`**: The Parquet file is closed but may not be registered
+///   in the catalog. The file remains on disk.
+///
+/// For robust error handling in production, consider:
+/// 1. Wrapping writes in a try block
+/// 2. Implementing cleanup logic for orphaned files
+/// 3. Using the file path from `file_path()` to clean up on error
+///
+/// # Atomicity
+///
+/// The catalog registration in `finish()` is the commit point. Until `finish()`
+/// completes successfully, the data is not visible to readers. However, the
+/// snapshot, schema, table, and columns are created during `begin_write()`,
+/// so a failed write may leave empty catalog entries.
 #[derive(Debug)]
 pub struct TableWriteSession {
     metadata: Arc<dyn MetadataWriter>,
