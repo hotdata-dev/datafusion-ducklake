@@ -1,0 +1,561 @@
+//! Integration tests for write support.
+//!
+//! These tests verify that data written using DuckLakeTableWriter can be read back
+//! via the existing DuckLakeCatalog read path.
+
+#![cfg(all(feature = "write-sqlite", feature = "metadata-sqlite"))]
+
+use std::sync::Arc;
+
+use arrow::array::{
+    Array, BooleanArray, Date32Array, Float64Array, Int32Array, Int64Array, StringArray,
+    TimestampMicrosecondArray,
+};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow::record_batch::RecordBatch;
+use datafusion::prelude::*;
+use tempfile::TempDir;
+
+use datafusion_ducklake::{
+    DuckLakeCatalog, DuckLakeTableWriter, MetadataWriter, SqliteMetadataProvider,
+    SqliteMetadataWriter,
+};
+
+/// Helper to create a test environment with writer and data directory
+async fn create_test_env() -> (SqliteMetadataWriter, TempDir) {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+    let data_path = temp_dir.path().join("data");
+    std::fs::create_dir_all(&data_path).unwrap();
+
+    let conn_str = format!("sqlite:{}?mode=rwc", db_path.display());
+    let writer = SqliteMetadataWriter::new_with_init(&conn_str)
+        .await
+        .unwrap();
+    writer.set_data_path(data_path.to_str().unwrap()).unwrap();
+
+    (writer, temp_dir)
+}
+
+/// Helper to create a SessionContext with a DuckLakeCatalog
+async fn create_read_context(temp_dir: &TempDir) -> SessionContext {
+    let db_path = temp_dir.path().join("test.db");
+    let conn_str = format!("sqlite:{}", db_path.display());
+
+    let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
+    let catalog = DuckLakeCatalog::new(provider).unwrap();
+
+    let ctx = SessionContext::new();
+    ctx.register_catalog("test", Arc::new(catalog));
+    ctx
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_write_and_read_basic_types() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    // Create test data with various types
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("age", DataType::Int64, true),
+        Field::new("score", DataType::Float64, true),
+        Field::new("active", DataType::Boolean, true),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(StringArray::from(vec![Some("Alice"), Some("Bob"), None])),
+            Arc::new(Int64Array::from(vec![Some(25), Some(30), Some(35)])),
+            Arc::new(Float64Array::from(vec![Some(95.5), None, Some(88.0)])),
+            Arc::new(BooleanArray::from(vec![
+                Some(true),
+                Some(false),
+                Some(true),
+            ])),
+        ],
+    )
+    .unwrap();
+
+    // Write data
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer.write_table("main", "users", &[batch]).unwrap();
+
+    assert_eq!(result.records_written, 3);
+    assert_eq!(result.files_written, 1);
+    assert!(result.snapshot_id > 0);
+    assert!(result.table_id > 0);
+    assert!(result.schema_id > 0);
+
+    // Read back via DuckLakeCatalog
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT * FROM test.main.users ORDER BY id")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches.len(), 1);
+    assert_eq!(batches[0].num_rows(), 3);
+    assert_eq!(batches[0].num_columns(), 5);
+
+    // Verify data
+    let ids = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .unwrap();
+    assert_eq!(ids.values(), &[1, 2, 3]);
+
+    let names = batches[0]
+        .column(1)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert_eq!(names.value(0), "Alice");
+    assert_eq!(names.value(1), "Bob");
+    assert!(names.is_null(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_write_temporal_types() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("date", DataType::Date32, true),
+        Field::new(
+            "timestamp",
+            DataType::Timestamp(TimeUnit::Microsecond, None),
+            true,
+        ),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(Date32Array::from(vec![Some(19000), Some(19001)])), // Days since epoch
+            Arc::new(TimestampMicrosecondArray::from(vec![
+                Some(1640000000000000),
+                Some(1640000001000000),
+            ])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer
+        .write_table("main", "events", &[batch])
+        .unwrap();
+    assert_eq!(result.records_written, 2);
+
+    // Read back
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.events")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_write_multiple_batches() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Utf8, true),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2])), Arc::new(StringArray::from(vec!["a", "b"]))],
+    )
+    .unwrap();
+
+    let batch2 = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![3, 4])), Arc::new(StringArray::from(vec!["c", "d"]))],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer
+        .write_table("main", "data", &[batch1, batch2])
+        .unwrap();
+    assert_eq!(result.records_written, 4);
+
+    // Read back
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.data")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_replace_semantics() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, true),
+    ]));
+
+    // Write initial data
+    let batch1 = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2, 3])),
+            Arc::new(Int32Array::from(vec![100, 200, 300])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    table_writer
+        .write_table("main", "replace_test", &[batch1])
+        .unwrap();
+
+    // Write replacement data
+    let batch2 = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![4, 5])), Arc::new(Int32Array::from(vec![400, 500]))],
+    )
+    .unwrap();
+
+    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer2
+        .write_table("main", "replace_test", &[batch2])
+        .unwrap();
+    assert_eq!(result.records_written, 2);
+
+    // Read back - should only have the replacement data
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT id, value FROM test.main.replace_test ORDER BY id")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+
+    assert_eq!(batches[0].num_rows(), 2);
+
+    let ids = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .unwrap();
+    assert_eq!(ids.values(), &[4, 5]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_append_semantics() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, true),
+    ]));
+
+    // Write initial data
+    let batch1 = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2])), Arc::new(Int32Array::from(vec![100, 200]))],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    table_writer
+        .write_table("main", "append_test", &[batch1])
+        .unwrap();
+
+    // Append more data
+    let batch2 = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![3, 4])), Arc::new(Int32Array::from(vec![300, 400]))],
+    )
+    .unwrap();
+
+    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer2
+        .append_table("main", "append_test", &[batch2])
+        .unwrap();
+    assert_eq!(result.records_written, 2);
+
+    // Read back - should have all data
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.append_test")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multiple_tables_same_schema() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1])), Arc::new(StringArray::from(vec!["table1"]))],
+    )
+    .unwrap();
+
+    let batch2 = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![2])), Arc::new(StringArray::from(vec!["table2"]))],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    table_writer.write_table("main", "t1", &[batch1]).unwrap();
+    table_writer.write_table("main", "t2", &[batch2]).unwrap();
+
+    // Read back both tables
+    let ctx = create_read_context(&temp_dir).await;
+
+    let df1 = ctx.sql("SELECT name FROM test.main.t1").await.unwrap();
+    let batches1 = df1.collect().await.unwrap();
+    let names1 = batches1[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert_eq!(names1.value(0), "table1");
+
+    let df2 = ctx.sql("SELECT name FROM test.main.t2").await.unwrap();
+    let batches2 = df2.collect().await.unwrap();
+    let names2 = batches2[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert_eq!(names2.value(0), "table2");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_field_ids_preserved_on_roundtrip() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("col_a", DataType::Int32, false),
+        Field::new("col_b", DataType::Utf8, true),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![Arc::new(Int32Array::from(vec![1])), Arc::new(StringArray::from(vec!["test"]))],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    table_writer
+        .write_table("main", "field_id_test", &[batch])
+        .unwrap();
+
+    // Find the Parquet file and verify field_ids
+    let data_path = temp_dir
+        .path()
+        .join("data")
+        .join("main")
+        .join("field_id_test");
+    let parquet_files: Vec<_> = std::fs::read_dir(&data_path)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "parquet"))
+        .collect();
+
+    assert_eq!(parquet_files.len(), 1);
+
+    // Read Parquet file and check field_ids
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    let file = std::fs::File::open(parquet_files[0].path()).unwrap();
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+    let metadata = reader.metadata();
+
+    let schema_descr = metadata.file_metadata().schema_descr();
+    let mut field_ids = Vec::new();
+    for i in 0..schema_descr.num_columns() {
+        let column = schema_descr.column(i);
+        let basic_info = column.self_type().get_basic_info();
+        if basic_info.has_id() {
+            field_ids.push(basic_info.id());
+        }
+    }
+
+    // Should have field_ids for both columns
+    assert_eq!(field_ids.len(), 2);
+    // Field IDs should be sequential starting from 1
+    assert!(field_ids.contains(&1));
+    assert!(field_ids.contains(&2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_streaming_write_api() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Utf8, true),
+    ]));
+
+    // Use streaming API
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let mut session = table_writer
+        .begin_write("main", "streaming_test", &schema, true)
+        .unwrap();
+
+    // Write multiple batches incrementally
+    for i in 0..3 {
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(vec![i * 10, i * 10 + 1])),
+                Arc::new(StringArray::from(vec![
+                    format!("val_{}", i * 10),
+                    format!("val_{}", i * 10 + 1),
+                ])),
+            ],
+        )
+        .unwrap();
+        session.write_batch(&batch).unwrap();
+    }
+
+    assert_eq!(session.row_count(), 6); // 3 batches * 2 rows
+
+    let result = session.finish().unwrap();
+    assert_eq!(result.records_written, 6);
+    assert_eq!(result.files_written, 1);
+
+    // Read back via DuckLakeCatalog
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.streaming_test")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 6);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_streaming_write_to_custom_path() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+
+    // Use custom path (simulating external storage manager)
+    let custom_dir = temp_dir.path().join("data").join("custom").join("location");
+    let file_name = "my_data.parquet".to_string();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let mut session = table_writer
+        .begin_write_to_path(
+            "main",
+            "custom_path_test",
+            &schema,
+            custom_dir.clone(),
+            file_name.clone(),
+            true,
+        )
+        .unwrap();
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+    )
+    .unwrap();
+    session.write_batch(&batch).unwrap();
+
+    // Verify file path before finishing
+    assert_eq!(session.file_path(), custom_dir.join(&file_name));
+
+    let result = session.finish().unwrap();
+    assert_eq!(result.records_written, 3);
+
+    // Verify file exists at custom path
+    assert!(custom_dir.join(&file_name).exists());
+
+    // Read back via DuckLakeCatalog
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.custom_path_test")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_streaming_empty_write() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let session = table_writer
+        .begin_write("main", "empty_test", &schema, true)
+        .unwrap();
+
+    // Finish without writing any batches
+    let result = session.finish().unwrap();
+    assert_eq!(result.records_written, 0);
+    assert_eq!(result.files_written, 1);
+
+    // Read back - should have 0 rows
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.empty_test")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 0);
+}
