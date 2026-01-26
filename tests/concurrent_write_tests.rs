@@ -37,10 +37,7 @@ fn create_user_batch(ids: &[i32], names: &[&str]) -> RecordBatch {
     let schema = Arc::new(create_user_schema());
     RecordBatch::try_new(
         schema,
-        vec![
-            Arc::new(Int32Array::from(ids.to_vec())),
-            Arc::new(StringArray::from(names.to_vec())),
-        ],
+        vec![Arc::new(Int32Array::from(ids.to_vec())), Arc::new(StringArray::from(names.to_vec()))],
     )
     .unwrap()
 }
