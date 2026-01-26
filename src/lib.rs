@@ -91,7 +91,7 @@ pub use metadata_provider_sqlite::SqliteMetadataProvider;
 
 // Re-export write types (feature-gated)
 #[cfg(feature = "write")]
-pub use metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteResult};
+pub use metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteResult, WriteSetupResult};
 #[cfg(feature = "write-sqlite")]
 pub use metadata_writer_sqlite::SqliteMetadataWriter;
 #[cfg(feature = "write")]

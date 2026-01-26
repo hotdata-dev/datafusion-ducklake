@@ -179,6 +179,9 @@ impl DuckLakeTableWriter {
     }
 
     /// Internal method that handles the common write session setup.
+    ///
+    /// Uses a transactional write setup to ensure atomicity - if any step fails,
+    /// all catalog changes are rolled back, leaving no orphaned entries.
     #[allow(clippy::too_many_arguments)]
     fn begin_write_internal(
         &self,
@@ -191,36 +194,25 @@ impl DuckLakeTableWriter {
         path_is_relative: bool,
         replace: bool,
     ) -> Result<TableWriteSession> {
-        // 1. Create snapshot
-        let snapshot_id = self.metadata.create_snapshot()?;
-
-        // 2. Get or create schema
-        let (schema_id, _schema_created) =
-            self.metadata
-                .get_or_create_schema(schema_name, None, snapshot_id)?;
-
-        // 3. Get or create table
-        let (table_id, _table_created) =
-            self.metadata
-                .get_or_create_table(schema_id, table_name, None, snapshot_id)?;
-
-        // 4. Set columns (derive from Arrow schema)
+        // Convert Arrow schema to column definitions
         let columns = arrow_schema_to_column_defs(arrow_schema)?;
-        let column_ids = self.metadata.set_columns(table_id, &columns)?;
 
-        // 5. For replace semantics, end existing files
-        if replace {
-            self.metadata.end_table_files(table_id, snapshot_id)?;
-        }
+        // Use transactional write setup - all catalog operations are atomic
+        let setup = self.metadata.begin_write_transaction(
+            schema_name,
+            table_name,
+            &columns,
+            replace,
+        )?;
 
-        // 6. Build schema with field_ids for Parquet
-        let schema_with_ids = Arc::new(build_schema_with_field_ids(arrow_schema, &column_ids));
+        // Build schema with field_ids for Parquet
+        let schema_with_ids = Arc::new(build_schema_with_field_ids(arrow_schema, &setup.column_ids));
 
-        // 7. Create directory and file
+        // Create directory and file
         std::fs::create_dir_all(&file_dir)?;
         let file_path = file_dir.join(&file_name);
 
-        // 8. Create Parquet writer
+        // Create Parquet writer
         let props = WriterProperties::builder()
             .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_2_0)
             .build();
@@ -230,10 +222,10 @@ impl DuckLakeTableWriter {
 
         Ok(TableWriteSession {
             metadata: Arc::clone(&self.metadata),
-            snapshot_id,
-            schema_id,
-            table_id,
-            column_ids,
+            snapshot_id: setup.snapshot_id,
+            schema_id: setup.schema_id,
+            table_id: setup.table_id,
+            column_ids: setup.column_ids,
             schema_with_ids,
             writer: Some(writer),
             file_path,
@@ -331,27 +323,21 @@ impl DuckLakeTableWriter {
 ///
 /// # Error Handling and Cleanup
 ///
-/// - **Dropped without `finish()`**: The Parquet file may be partially written but is
-///   NOT registered in the catalog. The orphaned file remains on disk and should be
-///   cleaned up by the caller or a separate garbage collection process.
+/// - **Dropped without `finish()`**: The partially written Parquet file is automatically
+///   deleted by the `Drop` implementation. The catalog metadata (snapshot, schema, table,
+///   columns) remains but with no data files registered.
 ///
 /// - **Error during `write_batch()`**: The session remains valid and you can continue
 ///   writing. The Parquet file may contain partial data.
 ///
 /// - **Error during `finish()`**: The Parquet file is closed but may not be registered
-///   in the catalog. The file remains on disk.
-///
-/// For robust error handling in production, consider:
-/// 1. Wrapping writes in a try block
-/// 2. Implementing cleanup logic for orphaned files
-/// 3. Using the file path from `file_path()` to clean up on error
+///   in the catalog. The file remains on disk in this case.
 ///
 /// # Atomicity
 ///
-/// The catalog registration in `finish()` is the commit point. Until `finish()`
-/// completes successfully, the data is not visible to readers. However, the
-/// snapshot, schema, table, and columns are created during `begin_write()`,
-/// so a failed write may leave empty catalog entries.
+/// The catalog setup (snapshot, schema, table, columns) uses a transaction and is
+/// atomic. The catalog registration in `finish()` is the commit point for data visibility.
+/// Until `finish()` completes successfully, the data is not visible to readers.
 #[derive(Debug)]
 pub struct TableWriteSession {
     metadata: Arc<dyn MetadataWriter>,
@@ -373,18 +359,70 @@ pub struct TableWriteSession {
 impl TableWriteSession {
     /// Write a batch to the Parquet file.
     ///
-    /// The batch schema must match the schema provided when creating the session.
+    /// The batch schema must match the schema provided when creating the session:
+    /// - Same number of columns
+    /// - Same column data types
+    /// - Column names are not checked (field_ids handle column matching)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The writer was already closed
+    /// - Column count doesn't match
+    /// - Column types don't match
     pub fn write_batch(&mut self, batch: &RecordBatch) -> Result<()> {
-        let writer = self.writer.as_mut().ok_or_else(|| {
-            crate::error::DuckLakeError::Internal("Writer already closed".to_string())
-        })?;
+        // Check if writer exists before doing anything
+        if self.writer.is_none() {
+            return Err(crate::error::DuckLakeError::Internal(
+                "Writer already closed".to_string(),
+            ));
+        }
+
+        // Validate schema before writing
+        self.validate_batch_schema(batch)?;
 
         // Remap batch to use schema with field_ids
         let batch_with_ids =
             RecordBatch::try_new(self.schema_with_ids.clone(), batch.columns().to_vec())?;
 
+        // Now get mutable reference to writer and write
+        let writer = self.writer.as_mut().unwrap();
         writer.write(&batch_with_ids)?;
         self.row_count += batch.num_rows() as i64;
+
+        Ok(())
+    }
+
+    /// Validate that a batch's schema matches the session schema.
+    fn validate_batch_schema(&self, batch: &RecordBatch) -> Result<()> {
+        let batch_schema = batch.schema();
+        let expected_schema = &self.schema_with_ids;
+
+        // Check column count
+        if batch_schema.fields().len() != expected_schema.fields().len() {
+            return Err(crate::error::DuckLakeError::InvalidConfig(format!(
+                "Schema mismatch: batch has {} columns, expected {}",
+                batch_schema.fields().len(),
+                expected_schema.fields().len()
+            )));
+        }
+
+        // Check column types (ignore names since field_ids handle matching)
+        for (i, (batch_field, expected_field)) in batch_schema
+            .fields()
+            .iter()
+            .zip(expected_schema.fields().iter())
+            .enumerate()
+        {
+            if batch_field.data_type() != expected_field.data_type() {
+                return Err(crate::error::DuckLakeError::InvalidConfig(format!(
+                    "Schema mismatch at column {}: batch has type {:?}, expected {:?}",
+                    i,
+                    batch_field.data_type(),
+                    expected_field.data_type()
+                )));
+            }
+        }
 
         Ok(())
     }
@@ -442,6 +480,18 @@ impl TableWriteSession {
             files_written: 1,
             records_written: self.row_count,
         })
+    }
+}
+
+impl Drop for TableWriteSession {
+    fn drop(&mut self) {
+        // If the writer is still present, the session was dropped without calling finish()
+        // Clean up the orphaned Parquet file to prevent disk space leaks
+        if self.writer.is_some() {
+            // Attempt to remove the partially written file
+            // Ignore errors since we're in drop and can't propagate them
+            let _ = std::fs::remove_file(&self.file_path);
+        }
     }
 }
 

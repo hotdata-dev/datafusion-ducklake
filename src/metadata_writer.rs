@@ -105,6 +105,19 @@ pub struct WriteResult {
     pub records_written: i64,
 }
 
+/// Result of a transactional write setup operation.
+#[derive(Debug)]
+pub struct WriteSetupResult {
+    /// Snapshot ID created for this write
+    pub snapshot_id: i64,
+    /// Schema ID (may be newly created)
+    pub schema_id: i64,
+    /// Table ID (may be newly created)
+    pub table_id: i64,
+    /// Column IDs in order
+    pub column_ids: Vec<i64>,
+}
+
 /// Trait for writing metadata to DuckLake catalogs.
 ///
 /// Implementations must be thread-safe (`Send + Sync`) to support concurrent writes
@@ -115,26 +128,12 @@ pub struct WriteResult {
 /// ```ignore
 /// use datafusion_ducklake::metadata_writer::{MetadataWriter, ColumnDef, DataFileInfo};
 ///
-/// // Create a snapshot for this write operation
-/// let snapshot_id = writer.create_snapshot()?;
-///
-/// // Get or create schema and table
-/// let (schema_id, _) = writer.get_or_create_schema("main", None, snapshot_id)?;
-/// let (table_id, _) = writer.get_or_create_table(schema_id, "users", None, snapshot_id)?;
-///
-/// // Define columns
-/// let columns = vec![
-///     ColumnDef::new("id", "int64", false),
-///     ColumnDef::new("name", "varchar", true),
-/// ];
-/// let column_ids = writer.set_columns(table_id, &columns)?;
-///
-/// // End existing files (for replace semantics)
-/// writer.end_table_files(table_id, snapshot_id)?;
+/// // Use transactional write setup for atomicity
+/// let result = writer.begin_write_transaction("main", "users", &columns, true)?;
 ///
 /// // Register new data file
 /// let file_info = DataFileInfo::new("data.parquet", 1024, 100);
-/// writer.register_data_file(table_id, snapshot_id, &file_info)?;
+/// writer.register_data_file(result.table_id, result.snapshot_id, &file_info)?;
 /// ```
 pub trait MetadataWriter: Send + Sync + std::fmt::Debug {
     /// Create a new snapshot and return its ID.
@@ -178,13 +177,20 @@ pub trait MetadataWriter: Send + Sync + std::fmt::Debug {
 
     /// Set or update columns for a table, returning assigned column IDs.
     ///
-    /// This replaces all columns for the table. Column IDs are assigned sequentially
-    /// starting from the next available ID and returned in the same order as the input columns.
+    /// This ends existing columns (using end_snapshot pattern for time travel)
+    /// and creates new column definitions. Column IDs are assigned atomically
+    /// and returned in the same order as the input columns.
     ///
     /// # Arguments
     /// * `table_id` - Table to set columns for
     /// * `columns` - Column definitions in order
-    fn set_columns(&self, table_id: i64, columns: &[ColumnDef]) -> Result<Vec<i64>>;
+    /// * `snapshot_id` - Snapshot ID for begin_snapshot/end_snapshot tracking
+    fn set_columns(
+        &self,
+        table_id: i64,
+        columns: &[ColumnDef],
+        snapshot_id: i64,
+    ) -> Result<Vec<i64>>;
 
     /// Register a new data file for a table.
     ///
@@ -221,6 +227,34 @@ pub trait MetadataWriter: Send + Sync + std::fmt::Debug {
     ///
     /// This creates the `ducklake_*` tables needed for catalog operations.
     fn initialize_schema(&self) -> Result<()>;
+
+    /// Begin a write transaction that atomically sets up all catalog metadata.
+    ///
+    /// This method performs the following operations in a single transaction:
+    /// 1. Creates a new snapshot
+    /// 2. Gets or creates the schema
+    /// 3. Gets or creates the table
+    /// 4. Sets column definitions (ends existing columns, creates new ones)
+    /// 5. Optionally ends existing data files (for replace semantics)
+    ///
+    /// If any step fails, the entire transaction is rolled back, ensuring
+    /// no orphaned catalog entries remain.
+    ///
+    /// # Arguments
+    /// * `schema_name` - Target schema name (created if not exists)
+    /// * `table_name` - Target table name (created if not exists)
+    /// * `columns` - Column definitions for the table
+    /// * `replace` - If true, ends existing data files (replace semantics)
+    ///
+    /// # Returns
+    /// `WriteSetupResult` containing the snapshot_id, schema_id, table_id, and column_ids
+    fn begin_write_transaction(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        columns: &[ColumnDef],
+        replace: bool,
+    ) -> Result<WriteSetupResult>;
 }
 
 #[cfg(test)]
