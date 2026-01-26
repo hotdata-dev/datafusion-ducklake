@@ -1,23 +1,6 @@
-//! SQLite metadata writer for DuckLake catalogs.
+//! SQLite implementation of [`MetadataWriter`].
 //!
-//! This module provides [`SqliteMetadataWriter`], an implementation of the
-//! [`MetadataWriter`] trait using SQLite as the catalog backend.
-//!
-//! # Runtime Requirements
-//!
-//! This implementation uses `tokio::task::block_in_place` internally, which requires
-//! a **multi-threaded Tokio runtime**. Using `#[tokio::test]` without
-//! `flavor = "multi_thread"` will panic.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use datafusion_ducklake::SqliteMetadataWriter;
-//!
-//! // Create and initialize a new catalog
-//! let writer = SqliteMetadataWriter::new_with_init("sqlite:catalog.db?mode=rwc").await?;
-//! writer.set_data_path("/path/to/data")?;
-//! ```
+//! Requires multi-threaded Tokio runtime (`#[tokio::test(flavor = "multi_thread")]`).
 
 use crate::Result;
 use crate::metadata_provider::block_on;
@@ -25,10 +8,8 @@ use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteSetup
 use sqlx::Row;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
-/// Default maximum number of connections in the pool.
 const DEFAULT_MAX_CONNECTIONS: u32 = 5;
 
-/// SQL to create DuckLake schema tables
 const SQL_CREATE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS ducklake_metadata (
     key VARCHAR NOT NULL,
@@ -102,58 +83,16 @@ CREATE TABLE IF NOT EXISTS ducklake_delete_file (
 "#;
 
 /// SQLite-based metadata writer for DuckLake catalogs.
-///
-/// This writer manages DuckLake catalog metadata stored in a SQLite database,
-/// including snapshots, schemas, tables, columns, and data file registrations.
-///
-/// # Thread Safety
-///
-/// This type is `Clone`, `Send`, and `Sync`. The underlying connection pool
-/// handles concurrent access safely.
-///
-/// # Connection Pool
-///
-/// Uses a connection pool with configurable size (default: 5 connections).
-/// For embedded single-threaded use cases, consider using `with_max_connections(1)`.
 #[derive(Debug, Clone)]
 pub struct SqliteMetadataWriter {
     pool: SqlitePool,
 }
 
 impl SqliteMetadataWriter {
-    /// Creates a new writer for a DuckLake catalog.
-    ///
-    /// # Connection String Format
-    ///
-    /// - `sqlite:path/to/catalog.db` - Open existing database
-    /// - `sqlite:path/to/catalog.db?mode=rwc` - Create if not exists
-    /// - `sqlite::memory:` - In-memory database (for testing)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let writer = SqliteMetadataWriter::new("sqlite:catalog.db?mode=rwc").await?;
-    /// ```
     pub async fn new(connection_string: &str) -> Result<Self> {
         Self::with_max_connections(connection_string, DEFAULT_MAX_CONNECTIONS).await
     }
 
-    /// Creates a new writer with a custom connection pool size.
-    ///
-    /// # Arguments
-    ///
-    /// * `connection_string` - SQLite connection string
-    /// * `max_connections` - Maximum number of connections in the pool
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Single connection for embedded use
-    /// let writer = SqliteMetadataWriter::with_max_connections(
-    ///     "sqlite:catalog.db?mode=rwc",
-    ///     1
-    /// ).await?;
-    /// ```
     pub async fn with_max_connections(
         connection_string: &str,
         max_connections: u32,
@@ -162,23 +101,11 @@ impl SqliteMetadataWriter {
             .max_connections(max_connections)
             .connect(connection_string)
             .await?;
-
         Ok(Self {
             pool,
         })
     }
 
-    /// Creates a new writer and initializes the DuckLake schema tables.
-    ///
-    /// This is a convenience method that combines `new()` and `initialize_schema()`.
-    /// Use this when creating a new catalog from scratch.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let writer = SqliteMetadataWriter::new_with_init("sqlite:catalog.db?mode=rwc").await?;
-    /// writer.set_data_path("/data/warehouse")?;
-    /// ```
     pub async fn new_with_init(connection_string: &str) -> Result<Self> {
         let writer = Self::new(connection_string).await?;
         writer.initialize_schema()?;
@@ -276,7 +203,6 @@ impl MetadataWriter for SqliteMetadataWriter {
         snapshot_id: i64,
     ) -> Result<Vec<i64>> {
         block_on(async {
-            // End existing columns (preserves history for time-travel)
             sqlx::query(
                 "UPDATE ducklake_column SET end_snapshot = ?
                  WHERE table_id = ? AND end_snapshot IS NULL",
@@ -365,7 +291,6 @@ impl MetadataWriter for SqliteMetadataWriter {
 
     fn set_data_path(&self, path: &str) -> Result<()> {
         block_on(async {
-            // Delete existing data_path if present, then insert
             sqlx::query("DELETE FROM ducklake_metadata WHERE key = 'data_path' AND scope IS NULL")
                 .execute(&self.pool)
                 .await?;

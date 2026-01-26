@@ -91,7 +91,7 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
     }
 }
 
-    /// Convert an Arrow DataType to a DuckLake type string
+/// Convert an Arrow DataType to a DuckLake type string
 ///
 /// This is the reverse of `ducklake_to_arrow_type()`.
 pub fn arrow_to_ducklake_type(arrow_type: &DataType) -> Result<String> {

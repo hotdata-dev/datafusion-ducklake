@@ -1,29 +1,4 @@
 //! High-level table writer for DuckLake catalogs.
-//!
-//! This module provides `DuckLakeTableWriter`, which orchestrates the complete write process:
-//! creating snapshots, managing schemas and tables, writing Parquet files with field_id metadata,
-//! and registering files in the catalog.
-//!
-//! ## Streaming API
-//!
-//! For large tables, use the streaming API to avoid loading all data into memory:
-//!
-//! ```ignore
-//! let session = table_writer.begin_write("main", "users", &schema, true)?;
-//! session.write_batch(&batch1)?;
-//! session.write_batch(&batch2)?;
-//! let result = session.finish()?;
-//! ```
-//!
-//! ## Custom File Paths
-//!
-//! For integration with external storage managers (e.g., S3), use `begin_write_to_path`:
-//!
-//! ```ignore
-//! let session = table_writer.begin_write_to_path(
-//!     "main", "users", &schema, local_path, "data.parquet", true
-//! )?;
-//! ```
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -42,27 +17,6 @@ use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteResul
 use crate::types::arrow_to_ducklake_type;
 
 /// High-level writer for DuckLake tables.
-///
-/// Orchestrates the write process:
-/// 1. Creates a new snapshot
-/// 2. Gets or creates schema and table
-/// 3. Sets column definitions (with assigned column_ids)
-/// 4. Ends existing files (for replace semantics)
-/// 5. Writes Parquet files with field_id metadata embedded
-/// 6. Registers new data files in the catalog
-///
-/// # Example
-///
-/// ```ignore
-/// use std::sync::Arc;
-/// use datafusion_ducklake::{SqliteMetadataWriter, DuckLakeTableWriter};
-///
-/// let writer = SqliteMetadataWriter::new_with_init("sqlite:///catalog.db?mode=rwc").await?;
-/// writer.set_data_path("/data")?;
-///
-/// let table_writer = DuckLakeTableWriter::new(Arc::new(writer))?;
-/// let result = table_writer.write_table("main", "users", &[batch])?;
-/// ```
 #[derive(Debug)]
 pub struct DuckLakeTableWriter {
     metadata: Arc<dyn MetadataWriter>,
@@ -70,9 +24,6 @@ pub struct DuckLakeTableWriter {
 }
 
 impl DuckLakeTableWriter {
-    /// Create a new table writer with the given metadata writer.
-    ///
-    /// The data path is retrieved from the catalog metadata.
     pub fn new(metadata: Arc<dyn MetadataWriter>) -> Result<Self> {
         let data_path_str = metadata.get_data_path()?;
         let data_path = PathBuf::from(data_path_str);
@@ -83,27 +34,7 @@ impl DuckLakeTableWriter {
         })
     }
 
-    /// Begin a streaming write session to a table.
-    ///
-    /// This creates the snapshot, schema, table, and columns in the catalog,
-    /// but defers file registration until `finish()` is called on the session.
-    ///
-    /// Use this for large tables to avoid loading all data into memory.
-    ///
-    /// # Arguments
-    /// * `schema_name` - Target schema name (created if not exists)
-    /// * `table_name` - Target table name (created if not exists)
-    /// * `arrow_schema` - Arrow schema for the data
-    /// * `replace` - If true, ends existing files (replace semantics); if false, appends
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut session = table_writer.begin_write("main", "users", &schema, true)?;
-    /// session.write_batch(&batch1)?;
-    /// session.write_batch(&batch2)?;
-    /// let result = session.finish()?;
-    /// ```
+    /// Begin a streaming write session. If `replace` is true, ends existing files.
     pub fn begin_write(
         &self,
         schema_name: &str,
@@ -111,48 +42,21 @@ impl DuckLakeTableWriter {
         arrow_schema: &Schema,
         replace: bool,
     ) -> Result<TableWriteSession> {
-        // Generate file path in standard location
         let table_path = self.data_path.join(schema_name).join(table_name);
         let file_name = format!("{}.parquet", Uuid::new_v4());
-
         self.begin_write_internal(
             schema_name,
             table_name,
             arrow_schema,
             table_path,
             file_name.clone(),
-            file_name, // catalog_path is just the filename (relative)
-            true,      // path_is_relative
+            file_name,
+            true,
             replace,
         )
     }
 
-    /// Begin a streaming write session with a custom file path.
-    ///
-    /// Use this when integrating with external storage managers (e.g., S3) that
-    /// control where files are written. The file is registered in the catalog
-    /// with an absolute path.
-    ///
-    /// # Arguments
-    /// * `schema_name` - Target schema name (created if not exists)
-    /// * `table_name` - Target table name (created if not exists)
-    /// * `arrow_schema` - Arrow schema for the data
-    /// * `file_dir` - Directory where the Parquet file will be written
-    /// * `file_name` - Name of the Parquet file
-    /// * `replace` - If true, ends existing files (replace semantics); if false, appends
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Integration with external storage manager
-    /// let handle = storage.prepare_cache_write(conn_id, "schema", "table");
-    /// let mut session = table_writer.begin_write_to_path(
-    ///     "main", "users", &schema, handle.local_path, "data.parquet", true
-    /// )?;
-    /// session.write_batch(&batch)?;
-    /// let result = session.finish()?;
-    /// storage.finalize_cache_write(&handle).await?; // Upload to S3 if needed
-    /// ```
+    /// Begin a streaming write session with a custom file path (registered as absolute).
     pub fn begin_write_to_path(
         &self,
         schema_name: &str,
@@ -162,26 +66,20 @@ impl DuckLakeTableWriter {
         file_name: String,
         replace: bool,
     ) -> Result<TableWriteSession> {
-        // For custom paths, register with absolute path
         let file_path = file_dir.join(&file_name);
         let catalog_path = file_path.to_string_lossy().to_string();
-
         self.begin_write_internal(
             schema_name,
             table_name,
             arrow_schema,
             file_dir,
             file_name,
-            catalog_path, // absolute path
-            false,        // path_is_relative = false
+            catalog_path,
+            false,
             replace,
         )
     }
 
-    /// Internal method that handles the common write session setup.
-    ///
-    /// Uses a transactional write setup to ensure atomicity - if any step fails,
-    /// all catalog changes are rolled back, leaving no orphaned entries.
     #[allow(clippy::too_many_arguments)]
     fn begin_write_internal(
         &self,
@@ -194,29 +92,18 @@ impl DuckLakeTableWriter {
         path_is_relative: bool,
         replace: bool,
     ) -> Result<TableWriteSession> {
-        // Convert Arrow schema to column definitions
         let columns = arrow_schema_to_column_defs(arrow_schema)?;
+        let setup =
+            self.metadata
+                .begin_write_transaction(schema_name, table_name, &columns, replace)?;
+        let schema_with_ids =
+            Arc::new(build_schema_with_field_ids(arrow_schema, &setup.column_ids));
 
-        // Use transactional write setup - all catalog operations are atomic
-        let setup = self.metadata.begin_write_transaction(
-            schema_name,
-            table_name,
-            &columns,
-            replace,
-        )?;
-
-        // Build schema with field_ids for Parquet
-        let schema_with_ids = Arc::new(build_schema_with_field_ids(arrow_schema, &setup.column_ids));
-
-        // Create directory and file
         std::fs::create_dir_all(&file_dir)?;
         let file_path = file_dir.join(&file_name);
-
-        // Create Parquet writer
         let props = WriterProperties::builder()
             .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_2_0)
             .build();
-
         let file = File::create(&file_path)?;
         let writer = ArrowWriter::try_new(file, schema_with_ids.clone(), Some(props))?;
 
@@ -236,19 +123,6 @@ impl DuckLakeTableWriter {
     }
 
     /// Write batches to a table, replacing any existing data.
-    ///
-    /// This creates a new snapshot, ends all existing files for the table,
-    /// writes the new data, and registers the new files.
-    ///
-    /// For large tables, prefer `begin_write()` for streaming writes.
-    ///
-    /// # Arguments
-    /// * `schema_name` - Target schema name (created if not exists)
-    /// * `table_name` - Target table name (created if not exists)
-    /// * `batches` - Record batches to write
-    ///
-    /// # Returns
-    /// `WriteResult` with snapshot_id, table_id, and statistics
     pub fn write_table(
         &self,
         schema_name: &str,
@@ -272,18 +146,6 @@ impl DuckLakeTableWriter {
     }
 
     /// Write batches to a table, appending to existing data.
-    ///
-    /// This creates a new snapshot and registers new files without ending existing files.
-    ///
-    /// For large tables, prefer `begin_write()` for streaming writes.
-    ///
-    /// # Arguments
-    /// * `schema_name` - Target schema name (created if not exists)
-    /// * `table_name` - Target table name (created if not exists)
-    /// * `batches` - Record batches to write
-    ///
-    /// # Returns
-    /// `WriteResult` with snapshot_id, table_id, and statistics
     pub fn append_table(
         &self,
         schema_name: &str,
@@ -307,37 +169,7 @@ impl DuckLakeTableWriter {
     }
 }
 
-/// A streaming write session for writing batches incrementally to a DuckLake table.
-///
-/// Created by [`DuckLakeTableWriter::begin_write()`] or [`DuckLakeTableWriter::begin_write_to_path()`].
-///
-/// The session holds the Parquet writer and catalog metadata. Batches are written
-/// incrementally via `write_batch()`, and the file is registered in the catalog
-/// when `finish()` is called.
-///
-/// # Lifecycle
-///
-/// ```text
-/// begin_write() → write_batch()* → finish()
-/// ```
-///
-/// # Error Handling and Cleanup
-///
-/// - **Dropped without `finish()`**: The partially written Parquet file is automatically
-///   deleted by the `Drop` implementation. The catalog metadata (snapshot, schema, table,
-///   columns) remains but with no data files registered.
-///
-/// - **Error during `write_batch()`**: The session remains valid and you can continue
-///   writing. The Parquet file may contain partial data.
-///
-/// - **Error during `finish()`**: The Parquet file is closed but may not be registered
-///   in the catalog. The file remains on disk in this case.
-///
-/// # Atomicity
-///
-/// The catalog setup (snapshot, schema, table, columns) uses a transaction and is
-/// atomic. The catalog registration in `finish()` is the commit point for data visibility.
-/// Until `finish()` completes successfully, the data is not visible to readers.
+/// Streaming write session. Dropped sessions clean up orphaned files automatically.
 #[derive(Debug)]
 pub struct TableWriteSession {
     metadata: Arc<dyn MetadataWriter>,
@@ -357,48 +189,26 @@ pub struct TableWriteSession {
 }
 
 impl TableWriteSession {
-    /// Write a batch to the Parquet file.
-    ///
-    /// The batch schema must match the schema provided when creating the session:
-    /// - Same number of columns
-    /// - Same column data types
-    /// - Column names are not checked (field_ids handle column matching)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The writer was already closed
-    /// - Column count doesn't match
-    /// - Column types don't match
     pub fn write_batch(&mut self, batch: &RecordBatch) -> Result<()> {
-        // Check if writer exists before doing anything
         if self.writer.is_none() {
             return Err(crate::error::DuckLakeError::Internal(
                 "Writer already closed".to_string(),
             ));
         }
-
-        // Validate schema before writing
         self.validate_batch_schema(batch)?;
 
-        // Remap batch to use schema with field_ids
         let batch_with_ids =
             RecordBatch::try_new(self.schema_with_ids.clone(), batch.columns().to_vec())?;
-
-        // Now get mutable reference to writer and write
         let writer = self.writer.as_mut().unwrap();
         writer.write(&batch_with_ids)?;
         self.row_count += batch.num_rows() as i64;
-
         Ok(())
     }
 
-    /// Validate that a batch's schema matches the session schema.
     fn validate_batch_schema(&self, batch: &RecordBatch) -> Result<()> {
         let batch_schema = batch.schema();
         let expected_schema = &self.schema_with_ids;
 
-        // Check column count
         if batch_schema.fields().len() != expected_schema.fields().len() {
             return Err(crate::error::DuckLakeError::InvalidConfig(format!(
                 "Schema mismatch: batch has {} columns, expected {}",
@@ -407,7 +217,6 @@ impl TableWriteSession {
             )));
         }
 
-        // Check column types (ignore names since field_ids handle matching)
         for (i, (batch_field, expected_field)) in batch_schema
             .fields()
             .iter()
@@ -423,48 +232,30 @@ impl TableWriteSession {
                 )));
             }
         }
-
         Ok(())
     }
 
-    /// Returns the number of rows written so far.
     pub fn row_count(&self) -> i64 {
         self.row_count
     }
 
-    /// Returns the snapshot ID for this write session.
     pub fn snapshot_id(&self) -> i64 {
         self.snapshot_id
     }
 
-    /// Returns the path where the Parquet file is being written.
     pub fn file_path(&self) -> &std::path::Path {
         &self.file_path
     }
 
-    /// Finish the write session: close the Parquet file and register it in the catalog.
-    ///
-    /// Returns `WriteResult` with snapshot_id, table_id, and statistics.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the writer was already closed or if catalog registration fails.
     pub fn finish(mut self) -> Result<WriteResult> {
         let writer = self.writer.take().ok_or_else(|| {
             crate::error::DuckLakeError::Internal("Writer already closed".to_string())
         })?;
+        writer.close()?;
 
-        // Close writer to flush all data
-        let _file_metadata = writer.close()?;
-
-        // Get actual file size
         let file_size = std::fs::metadata(&self.file_path)?.len() as i64;
-
-        // Calculate actual footer size from Parquet metadata
-        // Footer = metadata length + 4 bytes (footer length) + 4 bytes (magic "PAR1")
         let footer_size = calculate_footer_size(&self.file_path)?;
 
-        // Register data file in catalog with appropriate path
         let mut file_info = DataFileInfo::new(&self.catalog_path, file_size, self.row_count)
             .with_footer_size(footer_size);
         if !self.path_is_relative {
@@ -485,17 +276,12 @@ impl TableWriteSession {
 
 impl Drop for TableWriteSession {
     fn drop(&mut self) {
-        // If the writer is still present, the session was dropped without calling finish()
-        // Clean up the orphaned Parquet file to prevent disk space leaks
         if self.writer.is_some() {
-            // Attempt to remove the partially written file
-            // Ignore errors since we're in drop and can't propagate them
             let _ = std::fs::remove_file(&self.file_path);
         }
     }
 }
 
-/// Convert an Arrow schema to a list of ColumnDefs.
 fn arrow_schema_to_column_defs(schema: &Schema) -> Result<Vec<ColumnDef>> {
     schema
         .fields()
@@ -511,10 +297,6 @@ fn arrow_schema_to_column_defs(schema: &Schema) -> Result<Vec<ColumnDef>> {
         .collect()
 }
 
-/// Build an Arrow schema with PARQUET:field_id metadata for DuckLake compatibility.
-///
-/// The parquet crate reads `PARQUET:field_id` from Arrow field metadata and uses it
-/// to set the Parquet schema field_id.
 fn build_schema_with_field_ids(schema: &Schema, column_ids: &[i64]) -> Schema {
     let fields: Vec<Field> = schema
         .fields()
@@ -531,48 +313,31 @@ fn build_schema_with_field_ids(schema: &Schema, column_ids: &[i64]) -> Schema {
     Schema::new_with_metadata(fields, schema.metadata().clone())
 }
 
-/// Calculate the actual footer size of a Parquet file.
-///
-/// Parquet footer structure:
-/// - Metadata (variable length)
-/// - 4 bytes: metadata length (little-endian i32)
-/// - 4 bytes: magic bytes "PAR1"
-///
-/// Footer size = metadata length + 8 bytes
 fn calculate_footer_size(path: &std::path::Path) -> Result<i64> {
     let mut file = File::open(path)?;
     let file_size = file.metadata()?.len();
-
     if file_size < 8 {
         return Err(crate::error::DuckLakeError::Internal(
             "Invalid Parquet file: too small".to_string(),
         ));
     }
 
-    // Read the last 8 bytes: 4 bytes metadata length + 4 bytes magic
     file.seek(SeekFrom::End(-8))?;
     let mut footer_bytes = [0u8; 8];
     std::io::Read::read_exact(&mut file, &mut footer_bytes)?;
 
-    // Verify magic bytes "PAR1"
     if &footer_bytes[4..8] != b"PAR1" {
         return Err(crate::error::DuckLakeError::Internal(
             "Invalid Parquet file: missing PAR1 magic".to_string(),
         ));
     }
 
-    // Read metadata length (little-endian i32)
     let metadata_len =
         i32::from_le_bytes([footer_bytes[0], footer_bytes[1], footer_bytes[2], footer_bytes[3]])
             as i64;
-
-    // Footer size = metadata + 4 bytes (length) + 4 bytes (magic)
     Ok(metadata_len + 8)
 }
 
-/// Write batches to a Parquet file with field_id metadata.
-///
-/// Returns (file_size_bytes, footer_size_bytes, record_count).
 #[allow(dead_code)]
 fn write_parquet_with_field_ids(
     path: &std::path::Path,
