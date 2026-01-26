@@ -189,16 +189,12 @@ impl SqliteMetadataWriter {
 impl MetadataWriter for SqliteMetadataWriter {
     fn create_snapshot(&self) -> Result<i64> {
         block_on(async {
-            // Use INSERT ... RETURNING to atomically insert and get the ID
-            // SQLite assigns snapshot_id via INTEGER PRIMARY KEY autoincrement
             let row = sqlx::query(
                 "INSERT INTO ducklake_snapshot (snapshot_time) VALUES (CURRENT_TIMESTAMP) RETURNING snapshot_id",
             )
             .fetch_one(&self.pool)
             .await?;
-            let snapshot_id: i64 = row.try_get(0)?;
-
-            Ok(snapshot_id)
+            Ok(row.try_get(0)?)
         })
     }
 
@@ -209,7 +205,6 @@ impl MetadataWriter for SqliteMetadataWriter {
         snapshot_id: i64,
     ) -> Result<(i64, bool)> {
         block_on(async {
-            // Check if schema exists
             let existing = sqlx::query(
                 "SELECT schema_id FROM ducklake_schema
                  WHERE schema_name = ? AND end_snapshot IS NULL",
@@ -219,11 +214,9 @@ impl MetadataWriter for SqliteMetadataWriter {
             .await?;
 
             if let Some(row) = existing {
-                let schema_id: i64 = row.try_get(0)?;
-                return Ok((schema_id, false));
+                return Ok((row.try_get(0)?, false));
             }
 
-            // Create schema using INSERT ... RETURNING for atomic ID generation
             let schema_path = path.unwrap_or(name);
             let row = sqlx::query(
                 "INSERT INTO ducklake_schema (schema_name, path, path_is_relative, begin_snapshot)
@@ -234,9 +227,8 @@ impl MetadataWriter for SqliteMetadataWriter {
             .bind(snapshot_id)
             .fetch_one(&self.pool)
             .await?;
-            let schema_id: i64 = row.try_get(0)?;
 
-            Ok((schema_id, true))
+            Ok((row.try_get(0)?, true))
         })
     }
 
@@ -248,7 +240,6 @@ impl MetadataWriter for SqliteMetadataWriter {
         snapshot_id: i64,
     ) -> Result<(i64, bool)> {
         block_on(async {
-            // Check if table exists
             let existing = sqlx::query(
                 "SELECT table_id FROM ducklake_table
                  WHERE schema_id = ? AND table_name = ? AND end_snapshot IS NULL",
@@ -259,11 +250,9 @@ impl MetadataWriter for SqliteMetadataWriter {
             .await?;
 
             if let Some(row) = existing {
-                let table_id: i64 = row.try_get(0)?;
-                return Ok((table_id, false));
+                return Ok((row.try_get(0)?, false));
             }
 
-            // Create table using INSERT ... RETURNING for atomic ID generation
             let table_path = path.unwrap_or(name);
             let row = sqlx::query(
                 "INSERT INTO ducklake_table (schema_id, table_name, path, path_is_relative, begin_snapshot)
@@ -275,9 +264,8 @@ impl MetadataWriter for SqliteMetadataWriter {
             .bind(snapshot_id)
             .fetch_one(&self.pool)
             .await?;
-            let table_id: i64 = row.try_get(0)?;
 
-            Ok((table_id, true))
+            Ok((row.try_get(0)?, true))
         })
     }
 
@@ -288,8 +276,7 @@ impl MetadataWriter for SqliteMetadataWriter {
         snapshot_id: i64,
     ) -> Result<Vec<i64>> {
         block_on(async {
-            // End existing columns for this table using end_snapshot pattern
-            // This preserves column history for time-travel queries
+            // End existing columns (preserves history for time-travel)
             sqlx::query(
                 "UPDATE ducklake_column SET end_snapshot = ?
                  WHERE table_id = ? AND end_snapshot IS NULL",
@@ -299,7 +286,6 @@ impl MetadataWriter for SqliteMetadataWriter {
             .execute(&self.pool)
             .await?;
 
-            // Insert new columns using INSERT ... RETURNING for atomic ID generation
             let mut column_ids = Vec::with_capacity(columns.len());
             for (order, col) in columns.iter().enumerate() {
                 let row = sqlx::query(
@@ -314,9 +300,7 @@ impl MetadataWriter for SqliteMetadataWriter {
                 .bind(snapshot_id)
                 .fetch_one(&self.pool)
                 .await?;
-                let column_id: i64 = row.try_get(0)?;
-
-                column_ids.push(column_id);
+                column_ids.push(row.try_get(0)?);
             }
 
             Ok(column_ids)
@@ -330,7 +314,6 @@ impl MetadataWriter for SqliteMetadataWriter {
         file: &DataFileInfo,
     ) -> Result<i64> {
         block_on(async {
-            // Insert data file using INSERT ... RETURNING for atomic ID generation
             let row = sqlx::query(
                 "INSERT INTO ducklake_data_file (table_id, path, path_is_relative, file_size_bytes, footer_size, record_count, begin_snapshot)
                  VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING data_file_id",
@@ -344,9 +327,7 @@ impl MetadataWriter for SqliteMetadataWriter {
             .bind(snapshot_id)
             .fetch_one(&self.pool)
             .await?;
-            let data_file_id: i64 = row.try_get(0)?;
-
-            Ok(data_file_id)
+            Ok(row.try_get(0)?)
         })
     }
 
@@ -416,10 +397,8 @@ impl MetadataWriter for SqliteMetadataWriter {
         replace: bool,
     ) -> Result<WriteSetupResult> {
         block_on(async {
-            // Start a transaction - all operations will be rolled back on error
             let mut tx = self.pool.begin().await?;
 
-            // 1. Create snapshot
             let row = sqlx::query(
                 "INSERT INTO ducklake_snapshot (snapshot_time) VALUES (CURRENT_TIMESTAMP) RETURNING snapshot_id",
             )
@@ -427,8 +406,7 @@ impl MetadataWriter for SqliteMetadataWriter {
             .await?;
             let snapshot_id: i64 = row.try_get(0)?;
 
-            // 2. Get or create schema
-            let schema_id = {
+            let schema_id: i64 = {
                 let existing = sqlx::query(
                     "SELECT schema_id FROM ducklake_schema
                      WHERE schema_name = ? AND end_snapshot IS NULL",
@@ -453,8 +431,7 @@ impl MetadataWriter for SqliteMetadataWriter {
                 }
             };
 
-            // 3. Get or create table
-            let table_id = {
+            let table_id: i64 = {
                 let existing = sqlx::query(
                     "SELECT table_id FROM ducklake_table
                      WHERE schema_id = ? AND table_name = ? AND end_snapshot IS NULL",
@@ -481,7 +458,6 @@ impl MetadataWriter for SqliteMetadataWriter {
                 }
             };
 
-            // 4. End existing columns and create new ones
             sqlx::query(
                 "UPDATE ducklake_column SET end_snapshot = ?
                  WHERE table_id = ? AND end_snapshot IS NULL",
@@ -505,11 +481,9 @@ impl MetadataWriter for SqliteMetadataWriter {
                 .bind(snapshot_id)
                 .fetch_one(&mut *tx)
                 .await?;
-                let column_id: i64 = row.try_get(0)?;
-                column_ids.push(column_id);
+                column_ids.push(row.try_get(0)?);
             }
 
-            // 5. End existing data files (for replace semantics)
             if replace {
                 sqlx::query(
                     "UPDATE ducklake_data_file SET end_snapshot = ?
@@ -521,7 +495,6 @@ impl MetadataWriter for SqliteMetadataWriter {
                 .await?;
             }
 
-            // Commit the transaction
             tx.commit().await?;
 
             Ok(WriteSetupResult {
