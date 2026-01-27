@@ -2,6 +2,9 @@
 
 use std::collections::HashMap;
 
+#[cfg(test)]
+use std::sync::Arc;
+
 use crate::metadata_provider::DuckLakeTableColumn;
 use crate::{DuckLakeError, Result};
 use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
@@ -85,6 +88,78 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
                 Err(DuckLakeError::UnsupportedType(ducklake_type.to_string()))
             }
         },
+    }
+}
+
+/// Convert an Arrow DataType to a DuckLake type string
+///
+/// This is the reverse of `ducklake_to_arrow_type()`.
+pub fn arrow_to_ducklake_type(arrow_type: &DataType) -> Result<String> {
+    match arrow_type {
+        // Boolean
+        DataType::Boolean => Ok("boolean".to_string()),
+
+        // Integers
+        DataType::Int8 => Ok("int8".to_string()),
+        DataType::Int16 => Ok("int16".to_string()),
+        DataType::Int32 => Ok("int32".to_string()),
+        DataType::Int64 => Ok("int64".to_string()),
+        DataType::UInt8 => Ok("uint8".to_string()),
+        DataType::UInt16 => Ok("uint16".to_string()),
+        DataType::UInt32 => Ok("uint32".to_string()),
+        DataType::UInt64 => Ok("uint64".to_string()),
+
+        // Floating point
+        DataType::Float32 => Ok("float32".to_string()),
+        DataType::Float64 => Ok("float64".to_string()),
+
+        // Temporal types
+        DataType::Date32 | DataType::Date64 => Ok("date".to_string()),
+        DataType::Time32(_) | DataType::Time64(_) => Ok("time".to_string()),
+        DataType::Timestamp(TimeUnit::Second, None) => Ok("timestamp_s".to_string()),
+        DataType::Timestamp(TimeUnit::Millisecond, None) => Ok("timestamp_ms".to_string()),
+        DataType::Timestamp(TimeUnit::Microsecond, None) => Ok("timestamp".to_string()),
+        DataType::Timestamp(TimeUnit::Nanosecond, None) => Ok("timestamp_ns".to_string()),
+        DataType::Timestamp(_, Some(_)) => Ok("timestamptz".to_string()),
+        DataType::Interval(_) => Ok("interval".to_string()),
+
+        // String types
+        DataType::Utf8 | DataType::LargeUtf8 => Ok("varchar".to_string()),
+
+        // Binary types
+        DataType::Binary | DataType::LargeBinary => Ok("blob".to_string()),
+        DataType::FixedSizeBinary(16) => Ok("uuid".to_string()),
+        DataType::FixedSizeBinary(_) => Ok("blob".to_string()),
+
+        // Decimal types
+        DataType::Decimal128(precision, scale) | DataType::Decimal256(precision, scale) => {
+            Ok(format!("decimal({}, {})", precision, scale))
+        },
+
+        // Null type - map to varchar as there's no direct equivalent
+        DataType::Null => Ok("varchar".to_string()),
+
+        // Complex types - not yet supported for writing
+        DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(_, _) => {
+            Err(DuckLakeError::UnsupportedType(format!(
+                "List type '{}' not yet supported for writing",
+                arrow_type
+            )))
+        },
+        DataType::Struct(_) => Err(DuckLakeError::UnsupportedType(format!(
+            "Struct type '{}' not yet supported for writing",
+            arrow_type
+        ))),
+        DataType::Map(_, _) => Err(DuckLakeError::UnsupportedType(format!(
+            "Map type '{}' not yet supported for writing",
+            arrow_type
+        ))),
+
+        // Other unsupported types
+        other => Err(DuckLakeError::UnsupportedType(format!(
+            "Arrow type '{}' has no DuckLake equivalent",
+            other
+        ))),
     }
 }
 
@@ -392,6 +467,129 @@ mod tests {
                 assert_eq!(msg, "completely_unknown_type");
             },
             _ => panic!("Expected UnsupportedType error for unknown type"),
+        }
+    }
+
+    #[test]
+    fn test_arrow_to_ducklake_basic_types() {
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Boolean).unwrap(),
+            "boolean"
+        );
+        assert_eq!(arrow_to_ducklake_type(&DataType::Int8).unwrap(), "int8");
+        assert_eq!(arrow_to_ducklake_type(&DataType::Int16).unwrap(), "int16");
+        assert_eq!(arrow_to_ducklake_type(&DataType::Int32).unwrap(), "int32");
+        assert_eq!(arrow_to_ducklake_type(&DataType::Int64).unwrap(), "int64");
+        assert_eq!(arrow_to_ducklake_type(&DataType::UInt8).unwrap(), "uint8");
+        assert_eq!(arrow_to_ducklake_type(&DataType::UInt16).unwrap(), "uint16");
+        assert_eq!(arrow_to_ducklake_type(&DataType::UInt32).unwrap(), "uint32");
+        assert_eq!(arrow_to_ducklake_type(&DataType::UInt64).unwrap(), "uint64");
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Float32).unwrap(),
+            "float32"
+        );
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Float64).unwrap(),
+            "float64"
+        );
+        assert_eq!(arrow_to_ducklake_type(&DataType::Utf8).unwrap(), "varchar");
+        assert_eq!(arrow_to_ducklake_type(&DataType::Binary).unwrap(), "blob");
+    }
+
+    #[test]
+    fn test_arrow_to_ducklake_temporal_types() {
+        assert_eq!(arrow_to_ducklake_type(&DataType::Date32).unwrap(), "date");
+        assert_eq!(arrow_to_ducklake_type(&DataType::Date64).unwrap(), "date");
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Time64(TimeUnit::Microsecond)).unwrap(),
+            "time"
+        );
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Timestamp(TimeUnit::Microsecond, None)).unwrap(),
+            "timestamp"
+        );
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Timestamp(
+                TimeUnit::Microsecond,
+                Some("UTC".into())
+            ))
+            .unwrap(),
+            "timestamptz"
+        );
+    }
+
+    #[test]
+    fn test_arrow_to_ducklake_decimal() {
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Decimal128(10, 2)).unwrap(),
+            "decimal(10, 2)"
+        );
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Decimal256(40, 5)).unwrap(),
+            "decimal(40, 5)"
+        );
+    }
+
+    #[test]
+    fn test_arrow_to_ducklake_uuid() {
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::FixedSizeBinary(16)).unwrap(),
+            "uuid"
+        );
+        // Non-16 byte fixed size binary becomes blob
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::FixedSizeBinary(32)).unwrap(),
+            "blob"
+        );
+    }
+
+    #[test]
+    fn test_arrow_to_ducklake_roundtrip() {
+        // Verify roundtrip: arrow -> ducklake -> arrow for common types
+        let test_types = vec![
+            DataType::Boolean,
+            DataType::Int32,
+            DataType::Int64,
+            DataType::Float64,
+            DataType::Utf8,
+            DataType::Binary,
+            DataType::Date32,
+            DataType::Timestamp(TimeUnit::Microsecond, None),
+            DataType::Decimal128(10, 2),
+        ];
+
+        for original in test_types {
+            let ducklake = arrow_to_ducklake_type(&original).unwrap();
+            let back = ducklake_to_arrow_type(&ducklake).unwrap();
+            assert_eq!(original, back, "Roundtrip failed for {:?}", original);
+        }
+    }
+
+    #[test]
+    fn test_arrow_to_ducklake_unsupported_list() {
+        let list_type = DataType::List(Arc::new(Field::new("item", DataType::Int32, true)));
+        let result = arrow_to_ducklake_type(&list_type);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(msg)) => {
+                assert!(msg.contains("List type"));
+                assert!(msg.contains("not yet supported"));
+            },
+            _ => panic!("Expected UnsupportedType error"),
+        }
+    }
+
+    #[test]
+    fn test_arrow_to_ducklake_unsupported_struct() {
+        let struct_type = DataType::Struct(vec![Field::new("a", DataType::Int32, true)].into());
+        let result = arrow_to_ducklake_type(&struct_type);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(msg)) => {
+                assert!(msg.contains("Struct type"));
+                assert!(msg.contains("not yet supported"));
+            },
+            _ => panic!("Expected UnsupportedType error"),
         }
     }
 

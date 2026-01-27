@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::Result;
 use crate::information_schema::InformationSchemaProvider;
 use crate::metadata_provider::MetadataProvider;
-use crate::path_resolver::parse_object_store_url;
+use crate::path_resolver::{parse_object_store_url, resolve_path};
 use crate::schema::DuckLakeSchema;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 use datafusion::datasource::object_store::ObjectStoreUrl;
@@ -116,14 +116,9 @@ impl CatalogProvider for DuckLakeCatalog {
         // Query database with the pinned snapshot_id for data schemas
         match self.provider.get_schema_by_name(name, self.snapshot_id) {
             Ok(Some(meta)) => {
-                // Resolve schema path hierarchically
-                let schema_path = if meta.path_is_relative {
-                    // Schema path is relative to catalog path
-                    format!("{}{}", self.catalog_path, meta.path)
-                } else {
-                    // Schema path is absolute
-                    meta.path
-                };
+                // Resolve schema path hierarchically using path_resolver utility
+                let schema_path =
+                    resolve_path(&self.catalog_path, &meta.path, meta.path_is_relative);
 
                 // Pass the pinned snapshot_id to schema
                 Some(Arc::new(DuckLakeSchema::new(

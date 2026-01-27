@@ -59,6 +59,10 @@ pub enum DuckLakeError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Parquet error
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
+
     /// Generic error
     #[error("Internal error: {0}")]
     Internal(String),
