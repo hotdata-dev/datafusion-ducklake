@@ -203,13 +203,17 @@ impl MetadataWriter for SqliteMetadataWriter {
         snapshot_id: i64,
     ) -> Result<Vec<i64>> {
         block_on(async {
+            // Use a transaction to ensure atomicity: if column insertion fails,
+            // we don't leave existing columns marked as ended
+            let mut tx = self.pool.begin().await?;
+
             sqlx::query(
                 "UPDATE ducklake_column SET end_snapshot = ?
                  WHERE table_id = ? AND end_snapshot IS NULL",
             )
             .bind(snapshot_id)
             .bind(table_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
 
             let mut column_ids = Vec::with_capacity(columns.len());
@@ -224,11 +228,12 @@ impl MetadataWriter for SqliteMetadataWriter {
                 .bind(order as i64)
                 .bind(col.is_nullable)
                 .bind(snapshot_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await?;
                 column_ids.push(row.try_get(0)?);
             }
 
+            tx.commit().await?;
             Ok(column_ids)
         })
     }
@@ -382,6 +387,54 @@ impl MetadataWriter for SqliteMetadataWriter {
                     row.try_get(0)?
                 }
             };
+
+            // Get existing columns to check schema compatibility for appends
+            let existing_columns: Vec<(String, String, bool)> = sqlx::query(
+                "SELECT column_name, column_type, nulls_allowed
+                 FROM ducklake_column
+                 WHERE table_id = ? AND end_snapshot IS NULL
+                 ORDER BY column_order",
+            )
+            .bind(table_id)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|row| {
+                let name: String = row.try_get(0).unwrap_or_default();
+                let col_type: String = row.try_get(1).unwrap_or_default();
+                let nullable: bool = row.try_get::<Option<bool>, _>(2).ok().flatten().unwrap_or(true);
+                (name, col_type, nullable)
+            })
+            .collect();
+
+            // For append mode (replace=false), validate schema compatibility
+            if !replace && !existing_columns.is_empty() {
+                if existing_columns.len() != columns.len() {
+                    return Err(crate::error::DuckLakeError::InvalidConfig(format!(
+                        "Schema mismatch on append: existing table has {} columns, but write has {} columns",
+                        existing_columns.len(),
+                        columns.len()
+                    )));
+                }
+
+                for (i, ((existing_name, existing_type, _existing_nullable), new_col)) in
+                    existing_columns.iter().zip(columns.iter()).enumerate()
+                {
+                    if existing_name != &new_col.name {
+                        return Err(crate::error::DuckLakeError::InvalidConfig(format!(
+                            "Schema mismatch on append: column {} is '{}' in existing table but '{}' in write",
+                            i, existing_name, new_col.name
+                        )));
+                    }
+                    if existing_type != &new_col.ducklake_type {
+                        return Err(crate::error::DuckLakeError::InvalidConfig(format!(
+                            "Schema mismatch on append: column '{}' has type '{}' in existing table but '{}' in write",
+                            existing_name, existing_type, new_col.ducklake_type
+                        )));
+                    }
+                    // Note: We allow nullable changes (strict -> nullable is safe, nullable -> strict requires validation)
+                }
+            }
 
             sqlx::query(
                 "UPDATE ducklake_column SET end_snapshot = ?
