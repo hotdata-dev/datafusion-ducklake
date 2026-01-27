@@ -402,38 +402,52 @@ impl MetadataWriter for SqliteMetadataWriter {
             .map(|row| {
                 let name: String = row.try_get(0).unwrap_or_default();
                 let col_type: String = row.try_get(1).unwrap_or_default();
-                let nullable: bool = row.try_get::<Option<bool>, _>(2).ok().flatten().unwrap_or(true);
+                let nullable: bool = row
+                    .try_get::<Option<bool>, _>(2)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(true);
                 (name, col_type, nullable)
             })
             .collect();
 
-            // For append mode (replace=false), validate schema compatibility
+            // For append mode (replace=false), validate schema compatibility with evolution rules:
+            // - Allowed: add nullable columns, remove columns, reorder columns
+            // - Disallowed: add non-nullable columns, type changes for existing columns
             if !replace && !existing_columns.is_empty() {
-                if existing_columns.len() != columns.len() {
-                    return Err(crate::error::DuckLakeError::InvalidConfig(format!(
-                        "Schema mismatch on append: existing table has {} columns, but write has {} columns",
-                        existing_columns.len(),
-                        columns.len()
-                    )));
-                }
+                use std::collections::HashMap;
 
-                for (i, ((existing_name, existing_type, _existing_nullable), new_col)) in
-                    existing_columns.iter().zip(columns.iter()).enumerate()
-                {
-                    if existing_name != &new_col.name {
-                        return Err(crate::error::DuckLakeError::InvalidConfig(format!(
-                            "Schema mismatch on append: column {} is '{}' in existing table but '{}' in write",
-                            i, existing_name, new_col.name
-                        )));
+                // Build map of existing columns: name -> (type, nullable)
+                let existing_map: HashMap<&str, (&str, bool)> = existing_columns
+                    .iter()
+                    .map(|(name, col_type, nullable)| {
+                        (name.as_str(), (col_type.as_str(), *nullable))
+                    })
+                    .collect();
+
+                for new_col in columns.iter() {
+                    if let Some((existing_type, _existing_nullable)) =
+                        existing_map.get(new_col.name.as_str())
+                    {
+                        // Column exists - check type matches
+                        if *existing_type != new_col.ducklake_type {
+                            return Err(crate::error::DuckLakeError::InvalidConfig(format!(
+                                "Schema evolution error: column '{}' has type '{}' in existing table but '{}' in new schema. Type changes are not allowed.",
+                                new_col.name, existing_type, new_col.ducklake_type
+                            )));
+                        }
+                        // Note: We allow nullable changes (strict -> nullable is safe for reads)
+                    } else {
+                        // New column - must be nullable
+                        if !new_col.is_nullable {
+                            return Err(crate::error::DuckLakeError::InvalidConfig(format!(
+                                "Schema evolution error: new column '{}' must be nullable. Adding non-nullable columns is not allowed.",
+                                new_col.name
+                            )));
+                        }
                     }
-                    if existing_type != &new_col.ducklake_type {
-                        return Err(crate::error::DuckLakeError::InvalidConfig(format!(
-                            "Schema mismatch on append: column '{}' has type '{}' in existing table but '{}' in write",
-                            existing_name, existing_type, new_col.ducklake_type
-                        )));
-                    }
-                    // Note: We allow nullable changes (strict -> nullable is safe, nullable -> strict requires validation)
                 }
+                // Columns in existing but not in new schema are implicitly removed - this is allowed
             }
 
             sqlx::query(
