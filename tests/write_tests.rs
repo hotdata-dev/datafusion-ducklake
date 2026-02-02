@@ -559,3 +559,289 @@ async fn test_streaming_empty_write() {
         .value(0);
     assert_eq!(count, 0);
 }
+
+// Schema Evolution Tests
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_append_add_nullable_column() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    // Initial schema with 2 columns
+    let schema1 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema1.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    table_writer
+        .write_table("main", "evolve_add", &[batch1])
+        .unwrap();
+
+    // Append with new nullable column
+    let schema2 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("age", DataType::Int32, true), // New nullable column
+    ]));
+
+    let batch2 = RecordBatch::try_new(
+        schema2.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![3, 4])),
+            Arc::new(StringArray::from(vec!["Charlie", "Diana"])),
+            Arc::new(Int32Array::from(vec![30, 40])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer2.append_table("main", "evolve_add", &[batch2]);
+    assert!(result.is_ok(), "Adding nullable column should succeed");
+    assert_eq!(result.unwrap().records_written, 2);
+
+    // Read back - should have all 4 rows
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.evolve_add")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_append_remove_column() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    // Initial schema with 3 columns
+    let schema1 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("extra", DataType::Utf8, true),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema1.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+            Arc::new(StringArray::from(vec!["x", "y"])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    table_writer
+        .write_table("main", "evolve_remove", &[batch1])
+        .unwrap();
+
+    // Append without the 'extra' column
+    let schema2 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+    ]));
+
+    let batch2 = RecordBatch::try_new(
+        schema2.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![3, 4])),
+            Arc::new(StringArray::from(vec!["Charlie", "Diana"])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer2.append_table("main", "evolve_remove", &[batch2]);
+    assert!(result.is_ok(), "Removing column should succeed");
+    assert_eq!(result.unwrap().records_written, 2);
+
+    // Read back - should have all 4 rows
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.evolve_remove")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_append_type_mismatch_fails() {
+    let (writer, _temp_dir) = create_test_env().await;
+
+    // Initial schema
+    let schema1 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Int32, true),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema1.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2])), Arc::new(Int32Array::from(vec![100, 200]))],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    table_writer
+        .write_table("main", "evolve_type", &[batch1])
+        .unwrap();
+
+    // Try to append with different type for 'value'
+    let schema2 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("value", DataType::Utf8, true), // Changed from Int32 to Utf8
+    ]));
+
+    let batch2 = RecordBatch::try_new(
+        schema2.clone(),
+        vec![Arc::new(Int32Array::from(vec![3])), Arc::new(StringArray::from(vec!["text"]))],
+    )
+    .unwrap();
+
+    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer2.append_table("main", "evolve_type", &[batch2]);
+    assert!(result.is_err(), "Type mismatch should fail");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("type") && err.contains("value"),
+        "Error should mention type mismatch for 'value' column: {}",
+        err
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_append_non_nullable_column_fails() {
+    let (writer, _temp_dir) = create_test_env().await;
+
+    // Initial schema
+    let schema1 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema1.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    table_writer
+        .write_table("main", "evolve_nonnull", &[batch1])
+        .unwrap();
+
+    // Try to add a non-nullable column
+    let schema2 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("required_field", DataType::Int32, false), // New non-nullable column
+    ]));
+
+    let batch2 = RecordBatch::try_new(
+        schema2.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![3])),
+            Arc::new(StringArray::from(vec!["Charlie"])),
+            Arc::new(Int32Array::from(vec![999])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer2.append_table("main", "evolve_nonnull", &[batch2]);
+    assert!(result.is_err(), "Adding non-nullable column should fail");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("nullable") && err.contains("required_field"),
+        "Error should mention that new column must be nullable: {}",
+        err
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_append_reorder_columns() {
+    let (writer, temp_dir) = create_test_env().await;
+
+    // Initial schema: id, name, value
+    let schema1 = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("value", DataType::Int32, true),
+    ]));
+
+    let batch1 = RecordBatch::try_new(
+        schema1.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![1, 2])),
+            Arc::new(StringArray::from(vec!["Alice", "Bob"])),
+            Arc::new(Int32Array::from(vec![100, 200])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    table_writer
+        .write_table("main", "evolve_reorder", &[batch1])
+        .unwrap();
+
+    // Append with reordered columns: value, id, name
+    let schema2 = Arc::new(Schema::new(vec![
+        Field::new("value", DataType::Int32, true),
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+    ]));
+
+    let batch2 = RecordBatch::try_new(
+        schema2.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![300, 400])),
+            Arc::new(Int32Array::from(vec![3, 4])),
+            Arc::new(StringArray::from(vec!["Charlie", "Diana"])),
+        ],
+    )
+    .unwrap();
+
+    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let result = table_writer2.append_table("main", "evolve_reorder", &[batch2]);
+    assert!(result.is_ok(), "Reordering columns should succeed");
+    assert_eq!(result.unwrap().records_written, 2);
+
+    // Read back - should have all 4 rows
+    let ctx = create_read_context(&temp_dir).await;
+    let df = ctx
+        .sql("SELECT COUNT(*) as cnt FROM test.main.evolve_reorder")
+        .await
+        .unwrap();
+    let batches = df.collect().await.unwrap();
+    let count = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .unwrap()
+        .value(0);
+    assert_eq!(count, 4);
+}

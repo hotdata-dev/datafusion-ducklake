@@ -389,7 +389,7 @@ impl MetadataWriter for SqliteMetadataWriter {
             };
 
             // Get existing columns to check schema compatibility for appends
-            let existing_columns: Vec<(String, String, bool)> = sqlx::query(
+            let rows = sqlx::query(
                 "SELECT column_name, column_type, nulls_allowed
                  FROM ducklake_column
                  WHERE table_id = ? AND end_snapshot IS NULL
@@ -397,19 +397,15 @@ impl MetadataWriter for SqliteMetadataWriter {
             )
             .bind(table_id)
             .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .map(|row| {
-                let name: String = row.try_get(0).unwrap_or_default();
-                let col_type: String = row.try_get(1).unwrap_or_default();
-                let nullable: bool = row
-                    .try_get::<Option<bool>, _>(2)
-                    .ok()
-                    .flatten()
-                    .unwrap_or(true);
-                (name, col_type, nullable)
-            })
-            .collect();
+            .await?;
+
+            let mut existing_columns: Vec<(String, String, bool)> = Vec::with_capacity(rows.len());
+            for row in rows {
+                let name: String = row.try_get(0)?;
+                let col_type: String = row.try_get(1)?;
+                let nullable: bool = row.try_get::<Option<bool>, _>(2)?.unwrap_or(true);
+                existing_columns.push((name, col_type, nullable));
+            }
 
             // For append mode (replace=false), validate schema compatibility with evolution rules:
             // - Allowed: add nullable columns, remove columns, reorder columns
