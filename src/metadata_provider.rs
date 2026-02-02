@@ -19,7 +19,7 @@ pub const SQL_LIST_TABLES: &str =
 
 pub const SQL_GET_TABLE_COLUMNS: &str = "SELECT column_id, column_name, column_type, nulls_allowed
      FROM ducklake_column
-     WHERE table_id = ?
+     WHERE table_id = ? AND end_snapshot IS NULL
      ORDER BY column_order";
 
 pub const SQL_GET_DATA_FILES: &str = "

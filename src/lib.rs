@@ -60,6 +60,14 @@ pub mod metadata_provider_postgres;
 #[cfg(feature = "metadata-sqlite")]
 pub mod metadata_provider_sqlite;
 
+// Write support (feature-gated)
+#[cfg(feature = "write")]
+pub mod metadata_writer;
+#[cfg(feature = "write-sqlite")]
+pub mod metadata_writer_sqlite;
+#[cfg(feature = "write")]
+pub mod table_writer;
+
 // Result type for DuckLake operations
 pub type Result<T> = std::result::Result<T, DuckLakeError>;
 
@@ -80,3 +88,13 @@ pub use metadata_provider_mysql::MySqlMetadataProvider;
 pub use metadata_provider_postgres::PostgresMetadataProvider;
 #[cfg(feature = "metadata-sqlite")]
 pub use metadata_provider_sqlite::SqliteMetadataProvider;
+
+// Re-export write types (feature-gated)
+#[cfg(feature = "write")]
+pub use metadata_writer::{
+    ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteResult, WriteSetupResult,
+};
+#[cfg(feature = "write-sqlite")]
+pub use metadata_writer_sqlite::SqliteMetadataWriter;
+#[cfg(feature = "write")]
+pub use table_writer::{DuckLakeTableWriter, TableWriteSession};
