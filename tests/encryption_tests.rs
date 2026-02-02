@@ -18,6 +18,7 @@ use parquet::encryption::encrypt::FileEncryptionProperties;
 use parquet::file::properties::WriterProperties;
 use tempfile::TempDir;
 
+use datafusion_ducklake::MetadataProvider;
 use datafusion_ducklake::catalog::DuckLakeCatalog;
 use datafusion_ducklake::metadata_provider_duckdb::DuckdbMetadataProvider;
 
@@ -111,7 +112,10 @@ fn create_catalog_with_encrypted_file(
             table_id BIGINT NOT NULL,
             column_name VARCHAR NOT NULL,
             column_type VARCHAR NOT NULL,
-            column_order INTEGER NOT NULL
+            column_order INTEGER NOT NULL,
+            nulls_allowed BOOLEAN DEFAULT true,
+            begin_snapshot BIGINT NOT NULL,
+            end_snapshot BIGINT
         );
 
         -- Data file table
@@ -178,13 +182,13 @@ fn create_catalog_with_encrypted_file(
 
     // Insert columns
     conn.execute(
-        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES (1, 1, 'id', 'INTEGER', 0)",
+        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order, begin_snapshot)
+         VALUES (1, 1, 'id', 'INTEGER', 0, 1)",
         [],
     )?;
     conn.execute(
-        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order)
-         VALUES (2, 1, 'name', 'VARCHAR', 1)",
+        "INSERT INTO ducklake_column (column_id, table_id, column_name, column_type, column_order, begin_snapshot)
+         VALUES (2, 1, 'name', 'VARCHAR', 1, 1)",
         [],
     )?;
 
@@ -219,10 +223,45 @@ async fn test_read_pme_encrypted_parquet() -> anyhow::Result<()> {
     create_catalog_with_encrypted_file(&catalog_path, &parquet_path, file_size, key_str)?;
     println!("Created DuckLake catalog at: {}", catalog_path.display());
 
+    // Debug: Query the catalog to see what's stored
+    {
+        let debug_conn = duckdb::Connection::open(&catalog_path)?;
+        let mut stmt = debug_conn.prepare("SELECT path, encryption_key FROM ducklake_data_file")?;
+        let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let key: Option<String> = row.get(1)?;
+            Ok((path, key))
+        })?;
+        for row in rows {
+            let (path, key) = row?;
+            println!("DEBUG: Data file path={}, encryption_key={:?}", path, key);
+        }
+    }
+
     // Step 3: Create DataFusion context and register DuckLake catalog
     let ctx = SessionContext::new();
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+
+    // Debug: Check what files are returned by the provider
+    let snapshot_id = provider.get_current_snapshot()?;
+    println!("DEBUG: Current snapshot_id={}", snapshot_id);
+
+    // Debug: Get table files directly from provider
+    // First need to get table_id
+    let schemas = provider.list_schemas(snapshot_id)?;
+    println!("DEBUG: Schemas={:?}", schemas);
+    let tables = provider.list_tables(schemas[0].schema_id, snapshot_id)?;
+    println!("DEBUG: Tables={:?}", tables);
+    let table_files = provider.get_table_files_for_select(tables[0].table_id, snapshot_id)?;
+    println!("DEBUG: Table files count={}", table_files.len());
+    for tf in &table_files {
+        println!(
+            "DEBUG: File path={}, encryption_key={:?}",
+            tf.file.path, tf.file.encryption_key
+        );
+    }
+
     let catalog = DuckLakeCatalog::new(provider)?;
     ctx.register_catalog("ducklake", Arc::new(catalog));
 

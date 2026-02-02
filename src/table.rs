@@ -164,10 +164,8 @@ impl DuckLakeTable {
     /// Create a ParquetSource with encryption support if enabled and needed
     fn create_parquet_source(&self) -> ParquetSource {
         #[cfg(feature = "encryption")]
-        {
-            if let Some(ref factory) = self.encryption_factory {
-                return ParquetSource::default().with_encryption_factory(Arc::clone(factory));
-            }
+        if let Some(ref factory) = self.encryption_factory {
+            return ParquetSource::default().with_encryption_factory(Arc::clone(factory));
         }
         ParquetSource::default()
     }
@@ -192,6 +190,43 @@ impl DuckLakeTable {
                 let object_path = ObjectPath::from(resolved_path.as_str());
 
                 let reader = ParquetObjectReader::new(object_store, object_path);
+
+                // Build the ParquetRecordBatchStreamBuilder with decryption if needed
+                #[cfg(feature = "encryption")]
+                let builder = {
+                    use parquet::arrow::arrow_reader::ArrowReaderOptions;
+
+                    // Check if file has encryption key
+                    let options = if let Some(ref key) = first_file.file.encryption_key {
+                        if !key.is_empty() {
+                            let key_bytes =
+                                crate::encryption::DuckLakeEncryptionFactory::decode_key(key)?;
+                            let decryption_props =
+                                parquet::encryption::decrypt::FileDecryptionProperties::builder(
+                                    key_bytes,
+                                )
+                                .build()
+                                .map_err(|e| {
+                                    DataFusionError::Execution(format!(
+                                        "Failed to create decryption properties: {}",
+                                        e
+                                    ))
+                                })?;
+                            ArrowReaderOptions::new()
+                                .with_file_decryption_properties(decryption_props)
+                        } else {
+                            ArrowReaderOptions::new()
+                        }
+                    } else {
+                        ArrowReaderOptions::new()
+                    };
+
+                    ParquetRecordBatchStreamBuilder::new_with_options(reader, options)
+                        .await
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?
+                };
+
+                #[cfg(not(feature = "encryption"))]
                 let builder = ParquetRecordBatchStreamBuilder::new(reader)
                     .await
                     .map_err(|e| DataFusionError::External(Box::new(e)))?;

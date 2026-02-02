@@ -126,7 +126,7 @@ impl DuckLakeEncryptionFactory {
     /// 2. Hex (if decodes to valid AES length)
     /// 3. Raw bytes (if exactly 16, 24, or 32 chars)
     #[cfg(feature = "encryption")]
-    fn decode_key(key: &str) -> Result<Vec<u8>> {
+    pub fn decode_key(key: &str) -> Result<Vec<u8>> {
         use base64::Engine;
         use datafusion::error::DataFusionError;
 
