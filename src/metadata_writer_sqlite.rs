@@ -4,7 +4,9 @@
 
 use crate::Result;
 use crate::metadata_provider::block_on;
-use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteSetupResult};
+use crate::metadata_writer::{
+    ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteSetupResult,
+};
 use sqlx::Row;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
@@ -324,7 +326,7 @@ impl MetadataWriter for SqliteMetadataWriter {
         schema_name: &str,
         table_name: &str,
         columns: &[ColumnDef],
-        replace: bool,
+        mode: WriteMode,
     ) -> Result<WriteSetupResult> {
         block_on(async {
             let mut tx = self.pool.begin().await?;
@@ -407,10 +409,10 @@ impl MetadataWriter for SqliteMetadataWriter {
                 existing_columns.push((name, col_type, nullable));
             }
 
-            // For append mode (replace=false), validate schema compatibility with evolution rules:
+            // For append mode, validate schema compatibility with evolution rules:
             // - Allowed: add nullable columns, remove columns, reorder columns
             // - Disallowed: add non-nullable columns, type changes for existing columns
-            if !replace && !existing_columns.is_empty() {
+            if mode == WriteMode::Append && !existing_columns.is_empty() {
                 use std::collections::HashMap;
 
                 // Build map of existing columns: name -> (type, nullable)
@@ -472,7 +474,7 @@ impl MetadataWriter for SqliteMetadataWriter {
                 column_ids.push(row.try_get(0)?);
             }
 
-            if replace {
+            if mode == WriteMode::Replace {
                 sqlx::query(
                     "UPDATE ducklake_data_file SET end_snapshot = ?
                      WHERE table_id = ? AND end_snapshot IS NULL",

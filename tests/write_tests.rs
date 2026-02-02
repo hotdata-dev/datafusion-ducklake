@@ -18,7 +18,7 @@ use tempfile::TempDir;
 
 use datafusion_ducklake::{
     DuckLakeCatalog, DuckLakeTableWriter, MetadataWriter, SqliteMetadataProvider,
-    SqliteMetadataWriter,
+    SqliteMetadataWriter, WriteMode,
 };
 
 /// Helper to create a test environment with writer and data directory
@@ -433,7 +433,7 @@ async fn test_streaming_write_api() {
     // Use streaming API
     let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     let mut session = table_writer
-        .begin_write("main", "streaming_test", &schema, true)
+        .begin_write("main", "streaming_test", &schema, WriteMode::Replace)
         .unwrap();
 
     // Write multiple batches incrementally
@@ -492,7 +492,7 @@ async fn test_streaming_write_to_custom_path() {
             &schema,
             custom_dir.clone(),
             file_name.clone(),
-            true,
+            WriteMode::Replace,
         )
         .unwrap();
 
@@ -536,7 +536,7 @@ async fn test_streaming_empty_write() {
 
     let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     let session = table_writer
-        .begin_write("main", "empty_test", &schema, true)
+        .begin_write("main", "empty_test", &schema, WriteMode::Replace)
         .unwrap();
 
     // Finish without writing any batches

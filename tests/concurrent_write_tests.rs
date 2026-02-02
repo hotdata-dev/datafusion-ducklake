@@ -7,7 +7,7 @@ use arrow::array::{Int32Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion_ducklake::metadata_writer::MetadataWriter;
-use datafusion_ducklake::{DuckLakeTableWriter, SqliteMetadataWriter};
+use datafusion_ducklake::{DuckLakeTableWriter, SqliteMetadataWriter, WriteMode};
 use tempfile::TempDir;
 
 async fn create_test_writer(temp_dir: &TempDir) -> (SqliteMetadataWriter, std::path::PathBuf) {
@@ -151,7 +151,7 @@ async fn test_write_session_cleanup_on_drop() {
     let file_path = {
         let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
         let mut session = table_writer
-            .begin_write("main", "dropped_table", &schema, true)
+            .begin_write("main", "dropped_table", &schema, WriteMode::Replace)
             .unwrap();
         let batch = create_user_batch(&[1, 2, 3], &["a", "b", "c"]);
         session.write_batch(&batch).unwrap();
@@ -166,7 +166,7 @@ async fn test_write_session_cleanup_on_drop() {
     let finished_path = {
         let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
         let mut session = table_writer
-            .begin_write("main", "finished_table", &schema, true)
+            .begin_write("main", "finished_table", &schema, WriteMode::Replace)
             .unwrap();
         let batch = create_user_batch(&[1, 2, 3], &["a", "b", "c"]);
         session.write_batch(&batch).unwrap();
@@ -186,7 +186,7 @@ async fn test_write_batch_schema_validation() {
     let schema = create_user_schema();
     let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
     let mut session = table_writer
-        .begin_write("main", "validation_test", &schema, true)
+        .begin_write("main", "validation_test", &schema, WriteMode::Replace)
         .unwrap();
 
     // Valid batch succeeds

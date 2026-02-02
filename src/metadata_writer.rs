@@ -4,6 +4,15 @@
 //! along with helper types for column definitions and data file registration.
 
 use crate::Result;
+
+/// Write mode for table operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteMode {
+    /// Drop existing data and replace with new data
+    Replace,
+    /// Keep existing data and append new records
+    Append,
+}
 use crate::types::arrow_to_ducklake_type;
 use arrow::datatypes::DataType;
 
@@ -173,13 +182,13 @@ pub trait MetadataWriter: Send + Sync + std::fmt::Debug {
 
     /// Atomically set up catalog metadata for a write operation.
     /// Creates snapshot, schema, table, columns in a single transaction.
-    /// If `replace` is true, ends existing data files.
+    /// If mode is `WriteMode::Replace`, ends existing data files.
     fn begin_write_transaction(
         &self,
         schema_name: &str,
         table_name: &str,
         columns: &[ColumnDef],
-        replace: bool,
+        mode: WriteMode,
     ) -> Result<WriteSetupResult>;
 }
 

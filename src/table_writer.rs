@@ -13,7 +13,7 @@ use parquet::file::properties::WriterProperties;
 use uuid::Uuid;
 
 use crate::Result;
-use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteResult};
+use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteResult};
 use crate::types::arrow_to_ducklake_type;
 
 /// High-level writer for DuckLake tables.
@@ -34,13 +34,14 @@ impl DuckLakeTableWriter {
         })
     }
 
-    /// Begin a streaming write session. If `replace` is true, ends existing files.
+    /// Begin a streaming write session.
+    /// If mode is `WriteMode::Replace`, ends existing files.
     pub fn begin_write(
         &self,
         schema_name: &str,
         table_name: &str,
         arrow_schema: &Schema,
-        replace: bool,
+        mode: WriteMode,
     ) -> Result<TableWriteSession> {
         let table_path = self.data_path.join(schema_name).join(table_name);
         let file_name = format!("{}.parquet", Uuid::new_v4());
@@ -52,7 +53,7 @@ impl DuckLakeTableWriter {
             file_name.clone(),
             file_name,
             true,
-            replace,
+            mode,
         )
     }
 
@@ -64,7 +65,7 @@ impl DuckLakeTableWriter {
         arrow_schema: &Schema,
         file_dir: PathBuf,
         file_name: String,
-        replace: bool,
+        mode: WriteMode,
     ) -> Result<TableWriteSession> {
         let file_path = file_dir.join(&file_name);
         let catalog_path = file_path.to_string_lossy().to_string();
@@ -76,7 +77,7 @@ impl DuckLakeTableWriter {
             file_name,
             catalog_path,
             false,
-            replace,
+            mode,
         )
     }
 
@@ -90,12 +91,12 @@ impl DuckLakeTableWriter {
         file_name: String,
         catalog_path: String,
         path_is_relative: bool,
-        replace: bool,
+        mode: WriteMode,
     ) -> Result<TableWriteSession> {
         let columns = arrow_schema_to_column_defs(arrow_schema)?;
         let setup =
             self.metadata
-                .begin_write_transaction(schema_name, table_name, &columns, replace)?;
+                .begin_write_transaction(schema_name, table_name, &columns, mode)?;
         let schema_with_ids =
             Arc::new(build_schema_with_field_ids(arrow_schema, &setup.column_ids));
 
@@ -136,7 +137,8 @@ impl DuckLakeTableWriter {
         }
 
         let arrow_schema = batches[0].schema();
-        let mut session = self.begin_write(schema_name, table_name, &arrow_schema, true)?;
+        let mut session =
+            self.begin_write(schema_name, table_name, &arrow_schema, WriteMode::Replace)?;
 
         for batch in batches {
             session.write_batch(batch)?;
@@ -159,7 +161,8 @@ impl DuckLakeTableWriter {
         }
 
         let arrow_schema = batches[0].schema();
-        let mut session = self.begin_write(schema_name, table_name, &arrow_schema, false)?;
+        let mut session =
+            self.begin_write(schema_name, table_name, &arrow_schema, WriteMode::Append)?;
 
         for batch in batches {
             session.write_batch(batch)?;
