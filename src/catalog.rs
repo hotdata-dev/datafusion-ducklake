@@ -11,6 +11,21 @@ use crate::schema::DuckLakeSchema;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 
+#[cfg(feature = "write")]
+use crate::metadata_writer::MetadataWriter;
+#[cfg(feature = "write")]
+use std::path::PathBuf;
+
+/// Configuration for write operations (when write feature is enabled)
+#[cfg(feature = "write")]
+#[derive(Debug, Clone)]
+struct WriteConfig {
+    /// Metadata writer for catalog operations
+    writer: Arc<dyn MetadataWriter>,
+    /// Base data path for writing files
+    data_path: PathBuf,
+}
+
 /// DuckLake catalog provider
 ///
 /// Connects to a DuckLake catalog database and provides access to schemas and tables.
@@ -26,6 +41,9 @@ pub struct DuckLakeCatalog {
     object_store_url: Arc<ObjectStoreUrl>,
     /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
     catalog_path: String,
+    /// Write configuration (when write feature is enabled)
+    #[cfg(feature = "write")]
+    write_config: Option<WriteConfig>,
 }
 
 impl DuckLakeCatalog {
@@ -44,6 +62,8 @@ impl DuckLakeCatalog {
             snapshot_id,
             object_store_url: Arc::new(object_store_url),
             catalog_path,
+            #[cfg(feature = "write")]
+            write_config: None,
         })
     }
 
@@ -61,6 +81,52 @@ impl DuckLakeCatalog {
             snapshot_id,
             object_store_url: Arc::new(object_store_url),
             catalog_path,
+            #[cfg(feature = "write")]
+            write_config: None,
+        })
+    }
+
+    /// Create a catalog with write support.
+    ///
+    /// This constructor enables write operations (INSERT INTO, CREATE TABLE AS)
+    /// by attaching a metadata writer. The catalog will pass the writer to all
+    /// schemas and tables it creates.
+    ///
+    /// # Arguments
+    /// * `provider` - Metadata provider for reading catalog metadata
+    /// * `writer` - Metadata writer for write operations
+    ///
+    /// # Example
+    /// ```no_run
+    /// # async fn example() -> datafusion_ducklake::Result<()> {
+    /// use datafusion_ducklake::{DuckLakeCatalog, SqliteMetadataProvider, SqliteMetadataWriter};
+    /// use std::sync::Arc;
+    ///
+    /// let provider = SqliteMetadataProvider::new("sqlite:catalog.db?mode=rwc").await?;
+    /// let writer = SqliteMetadataWriter::new("sqlite:catalog.db?mode=rwc").await?;
+    ///
+    /// let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer))?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "write")]
+    pub fn with_writer(
+        provider: Arc<dyn MetadataProvider>,
+        writer: Arc<dyn MetadataWriter>,
+    ) -> Result<Self> {
+        let snapshot_id = provider.get_current_snapshot()?;
+        let data_path_str = provider.get_data_path()?;
+        let (object_store_url, catalog_path) = parse_object_store_url(&data_path_str)?;
+
+        Ok(Self {
+            provider,
+            snapshot_id,
+            object_store_url: Arc::new(object_store_url),
+            catalog_path,
+            write_config: Some(WriteConfig {
+                writer,
+                data_path: PathBuf::from(&data_path_str),
+            }),
         })
     }
 
@@ -121,14 +187,24 @@ impl CatalogProvider for DuckLakeCatalog {
                     resolve_path(&self.catalog_path, &meta.path, meta.path_is_relative);
 
                 // Pass the pinned snapshot_id to schema
-                Some(Arc::new(DuckLakeSchema::new(
+                let schema = DuckLakeSchema::new(
                     meta.schema_id,
                     meta.schema_name,
                     Arc::clone(&self.provider),
                     self.snapshot_id, // Propagate pinned snapshot_id
                     self.object_store_url.clone(),
                     schema_path,
-                )) as Arc<dyn SchemaProvider>)
+                );
+
+                // Configure writer if this catalog is writable
+                #[cfg(feature = "write")]
+                let schema = if let Some(ref config) = self.write_config {
+                    schema.with_writer(Arc::clone(&config.writer), config.data_path.clone())
+                } else {
+                    schema
+                };
+
+                Some(Arc::new(schema) as Arc<dyn SchemaProvider>)
             },
             _ => None,
         }
