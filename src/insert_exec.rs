@@ -1,20 +1,8 @@
-//! DuckLake INSERT execution plan implementation
+//! DuckLake INSERT execution plan.
 //!
-//! This module provides `DuckLakeInsertExec`, a custom execution plan that writes
-//! data from an input plan to Parquet files and registers them in the DuckLake catalog.
-//!
-//! ## Current Limitations
-//!
-//! - **Memory**: Currently collects all input batches into memory before writing.
-//!   For very large inserts, this could cause OOM. Future improvement: stream batches
-//!   directly to Parquet writer.
-//!
-//! - **Single partition**: Only partition 0 is supported. Parallel writes from
-//!   multiple partitions would require coordination to avoid file conflicts.
-//!
-//! - **Cleanup**: If write succeeds but metadata registration fails, orphaned
-//!   Parquet files may remain. The WriteSession uses temp files that are renamed
-//!   on success, which mitigates but doesn't eliminate this risk.
+//! Limitations:
+//! - Collects all batches into memory before writing (no streaming yet)
+//! - Single partition only (partition 0)
 
 use std::any::Any;
 use std::fmt::{self, Debug};
@@ -42,29 +30,15 @@ fn make_insert_count_schema() -> SchemaRef {
     )]))
 }
 
-/// Execution plan that writes input data to DuckLake table via Parquet files.
-///
-/// This execution plan:
-/// 1. Streams data from the input plan
-/// 2. Writes batches to Parquet files using `DuckLakeTableWriter`
-/// 3. Registers the files in the DuckLake catalog metadata
-/// 4. Returns a single batch with the count of rows inserted
+/// Execution plan that writes input data to a DuckLake table.
 pub struct DuckLakeInsertExec {
-    /// The input execution plan providing data to insert
     input: Arc<dyn ExecutionPlan>,
-    /// Metadata writer for catalog operations
     writer: Arc<dyn MetadataWriter>,
-    /// Schema name in the DuckLake catalog
     schema_name: String,
-    /// Table name in the DuckLake catalog
     table_name: String,
-    /// Arrow schema of the data being inserted
     arrow_schema: SchemaRef,
-    /// Write mode (Append or Replace)
     write_mode: WriteMode,
-    /// Base data path for the catalog
     data_path: PathBuf,
-    /// Cached plan properties
     cache: PlanProperties,
 }
 
@@ -171,11 +145,6 @@ impl ExecutionPlan for DuckLakeInsertExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> DataFusionResult<SendableRecordBatchStream> {
-        // Currently only single-partition writes are supported.
-        // Multi-partition parallel writes would require coordination to:
-        // 1. Write to separate files per partition
-        // 2. Register all files atomically in a single transaction
-        // TODO: Add parallel write support for better performance on partitioned inputs
         if partition != 0 {
             return Err(DataFusionError::Internal(format!(
                 "DuckLakeInsertExec only supports partition 0, got {}",
@@ -183,7 +152,6 @@ impl ExecutionPlan for DuckLakeInsertExec {
             )));
         }
 
-        // Clone necessary data for the async block
         let input = Arc::clone(&self.input);
         let writer = Arc::clone(&self.writer);
         let schema_name = self.schema_name.clone();
@@ -193,26 +161,18 @@ impl ExecutionPlan for DuckLakeInsertExec {
         let data_path = self.data_path.clone();
         let output_schema = make_insert_count_schema();
 
-        // Create an async stream that performs the write
         let stream = stream::once(async move {
-            // Execute input and collect batches into memory.
-            // TODO: Stream batches directly to Parquet writer to reduce memory usage.
-            // This requires making WriteSession async-compatible or using a separate
-            // writing task with a channel.
             let input_stream = input.execute(0, context)?;
             let batches: Vec<RecordBatch> = input_stream.try_collect().await?;
 
             if batches.is_empty() {
-                // No data to insert, return count of 0
                 let count_array: ArrayRef = Arc::new(UInt64Array::from(vec![0u64]));
                 return Ok(RecordBatch::try_new(output_schema, vec![count_array])?);
             }
 
-            // Create table writer and begin write session
             let table_writer = DuckLakeTableWriter::new(writer)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            // Strip metadata from schema for comparison (Arrow metadata shouldn't affect writes)
             let schema_without_metadata =
                 Schema::new(arrow_schema.fields().iter().cloned().collect::<Vec<_>>());
 
@@ -225,26 +185,20 @@ impl ExecutionPlan for DuckLakeInsertExec {
                 )
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            // Ensure write goes to the correct data path
-            // Note: begin_write already uses the writer's data_path internally
-            let _ = data_path; // Silence unused warning - data_path is used by writer internally
+            let _ = data_path;
 
-            // Write all batches
             for batch in &batches {
                 session
                     .write_batch(batch)
                     .map_err(|e| DataFusionError::External(Box::new(e)))?;
             }
 
-            // Get row count before finishing
             let row_count = session.row_count() as u64;
 
-            // Finish the write session (this registers the file in metadata)
             session
                 .finish()
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            // Return a batch with the count of rows inserted
             let count_array: ArrayRef = Arc::new(UInt64Array::from(vec![row_count]));
             Ok(RecordBatch::try_new(output_schema, vec![count_array])?)
         });
