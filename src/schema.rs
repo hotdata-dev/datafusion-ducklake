@@ -19,6 +19,32 @@ use datafusion::error::DataFusionError;
 #[cfg(feature = "write")]
 use std::path::PathBuf;
 
+/// Validate table name to prevent path traversal attacks.
+/// Table names are used to construct file paths, so we must ensure they
+/// don't contain path separators or parent directory references.
+#[cfg(feature = "write")]
+fn validate_table_name(name: &str) -> DataFusionResult<()> {
+    if name.is_empty() {
+        return Err(DataFusionError::Plan(
+            "Table name cannot be empty".to_string(),
+        ));
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(DataFusionError::Plan(format!(
+            "Invalid table name '{}': must not contain path separators or '..'",
+            name
+        )));
+    }
+    // Also reject names that are just dots
+    if name.chars().all(|c| c == '.') {
+        return Err(DataFusionError::Plan(format!(
+            "Invalid table name '{}': must not be only dots",
+            name
+        )));
+    }
+    Ok(())
+}
+
 /// DuckLake schema provider
 ///
 /// Represents a schema within a DuckLake catalog and provides access to tables.
@@ -167,6 +193,9 @@ impl SchemaProvider for DuckLakeSchema {
         name: String,
         table: Arc<dyn TableProvider>,
     ) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
+        // Validate table name to prevent path traversal attacks
+        validate_table_name(&name)?;
+
         let writer = self.writer.as_ref().ok_or_else(|| {
             DataFusionError::Plan(
                 "Schema is read-only. Use DuckLakeCatalog::with_writer() to enable writes."
@@ -214,5 +243,52 @@ impl SchemaProvider for DuckLakeSchema {
         );
 
         Ok(Some(Arc::new(writable_table) as Arc<dyn TableProvider>))
+    }
+}
+
+#[cfg(all(test, feature = "write"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_table_name_valid() {
+        assert!(validate_table_name("users").is_ok());
+        assert!(validate_table_name("my_table").is_ok());
+        assert!(validate_table_name("Table123").is_ok());
+        assert!(validate_table_name("a").is_ok());
+    }
+
+    #[test]
+    fn test_validate_table_name_empty() {
+        let result = validate_table_name("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_table_name_path_traversal() {
+        // Forward slash
+        let result = validate_table_name("../etc/passwd");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("path separators"));
+
+        // Backslash
+        let result = validate_table_name("..\\windows\\system32");
+        assert!(result.is_err());
+
+        // Double dot
+        let result = validate_table_name("foo..bar");
+        assert!(result.is_err());
+
+        // Just slashes
+        let result = validate_table_name("foo/bar");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_table_name_only_dots() {
+        assert!(validate_table_name(".").is_err());
+        assert!(validate_table_name("..").is_err());
+        assert!(validate_table_name("...").is_err());
     }
 }

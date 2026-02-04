@@ -37,8 +37,7 @@ async fn create_writable_catalog() -> (SessionContext, TempDir) {
 
     // Create provider and catalog with writer
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog =
-        DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -102,11 +101,11 @@ async fn test_create_table_as_select() {
             assert!(!result_batches.is_empty());
             let total_rows: usize = result_batches.iter().map(|b| b.num_rows()).sum();
             assert_eq!(total_rows, 3);
-        }
+        },
         Err(e) => {
             // CTAS may not be fully supported yet - this is expected
             println!("CREATE TABLE AS SELECT not yet fully supported: {}", e);
-        }
+        },
     }
 }
 
@@ -126,16 +125,12 @@ async fn test_insert_into_existing_table() {
 
     let batch = RecordBatch::try_new(
         schema.clone(),
-        vec![
-            Arc::new(Int32Array::from(vec![1, 2])),
-            Arc::new(Int32Array::from(vec![100, 200])),
-        ],
+        vec![Arc::new(Int32Array::from(vec![1, 2])), Arc::new(Int32Array::from(vec![100, 200]))],
     )
     .unwrap();
 
     // Write initial data using table writer
-    let table_writer =
-        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     table_writer
         .write_table("main", "values_table", &[batch])
         .unwrap();
@@ -144,10 +139,7 @@ async fn test_insert_into_existing_table() {
     // First create source data in memory
     let insert_batch = RecordBatch::try_new(
         schema.clone(),
-        vec![
-            Arc::new(Int32Array::from(vec![3, 4])),
-            Arc::new(Int32Array::from(vec![300, 400])),
-        ],
+        vec![Arc::new(Int32Array::from(vec![3, 4])), Arc::new(Int32Array::from(vec![300, 400]))],
     )
     .unwrap();
 
@@ -160,8 +152,7 @@ async fn test_insert_into_existing_table() {
 
         let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
         let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-        let catalog =
-            DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+        let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
 
         let ctx = SessionContext::new();
         ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -171,10 +162,7 @@ async fn test_insert_into_existing_table() {
     // Register source again
     let insert_batch2 = RecordBatch::try_new(
         schema.clone(),
-        vec![
-            Arc::new(Int32Array::from(vec![3, 4])),
-            Arc::new(Int32Array::from(vec![300, 400])),
-        ],
+        vec![Arc::new(Int32Array::from(vec![3, 4])), Arc::new(Int32Array::from(vec![300, 400]))],
     )
     .unwrap();
     ctx2.register_batch("insert_source", insert_batch2).unwrap();
@@ -218,10 +206,10 @@ async fn test_insert_into_existing_table() {
 
             // Should have 4 rows (2 original + 2 inserted)
             assert_eq!(total_count, 4);
-        }
+        },
         Err(e) => {
             println!("INSERT INTO not yet fully supported: {}", e);
-        }
+        },
     }
 }
 
@@ -243,11 +231,10 @@ async fn test_insert_into_read_only_fails() {
 
     // Write some initial data
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
-    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1]))])
-        .unwrap();
+    let batch =
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
 
-    let table_writer =
-        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     table_writer
         .write_table("main", "readonly_test", &[batch])
         .unwrap();
@@ -260,8 +247,8 @@ async fn test_insert_into_read_only_fails() {
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
     // Register source data
-    let insert_batch = RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![2]))])
-        .unwrap();
+    let insert_batch =
+        RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![2]))]).unwrap();
     ctx.register_batch("source", insert_batch).unwrap();
 
     // Try INSERT INTO - should fail because table is read-only
@@ -281,13 +268,13 @@ async fn test_insert_into_read_only_fails() {
                         "Expected read-only error, got: {}",
                         e
                     );
-                }
+                },
                 Ok(_) => {
                     // If insert_into is not implemented, it might just return empty
                     // This is acceptable behavior during development
-                }
+                },
             }
-        }
+        },
         Err(e) => {
             // Planning might fail early with read-only error
             let msg = e.to_string().to_lowercase();
@@ -298,7 +285,7 @@ async fn test_insert_into_read_only_fails() {
                 "Expected read-only or not supported error, got: {}",
                 e
             );
-        }
+        },
     }
 }
 
@@ -325,8 +312,7 @@ async fn test_insert_overwrite() {
     )
     .unwrap();
 
-    let table_writer =
-        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     table_writer
         .write_table("main", "overwrite_test", &[batch])
         .unwrap();
@@ -337,8 +323,7 @@ async fn test_insert_overwrite() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog =
-        DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));
@@ -346,10 +331,7 @@ async fn test_insert_overwrite() {
     // Register overwrite source
     let overwrite_batch = RecordBatch::try_new(
         schema.clone(),
-        vec![
-            Arc::new(Int32Array::from(vec![10, 20])),
-            Arc::new(StringArray::from(vec!["x", "y"])),
-        ],
+        vec![Arc::new(Int32Array::from(vec![10, 20])), Arc::new(StringArray::from(vec!["x", "y"]))],
     )
     .unwrap();
     ctx2.register_batch("overwrite_source", overwrite_batch)
@@ -382,10 +364,10 @@ async fn test_insert_overwrite() {
 
             // Should have only 2 rows (overwritten)
             assert_eq!(count, 2);
-        }
+        },
         Err(e) => {
             println!("INSERT OVERWRITE not yet supported: {}", e);
-        }
+        },
     }
 }
 
@@ -403,12 +385,13 @@ async fn test_sql_insert_values() {
         Field::new("name", DataType::Utf8, true),
     ]));
 
-    let batch =
-        RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![1])), Arc::new(StringArray::from(vec!["initial"]))])
-            .unwrap();
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![Arc::new(Int32Array::from(vec![1])), Arc::new(StringArray::from(vec!["initial"]))],
+    )
+    .unwrap();
 
-    let table_writer =
-        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     table_writer
         .write_table("main", "values_test", &[batch])
         .unwrap();
@@ -418,8 +401,7 @@ async fn test_sql_insert_values() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog =
-        DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));
@@ -450,10 +432,10 @@ async fn test_sql_insert_values() {
 
             // Should have 3 rows total
             assert_eq!(count, 3);
-        }
+        },
         Err(e) => {
             println!("INSERT INTO ... VALUES not yet supported: {}", e);
-        }
+        },
     }
 }
 
@@ -480,8 +462,7 @@ async fn test_schema_evolution_via_sql() {
     )
     .unwrap();
 
-    let table_writer =
-        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     table_writer
         .write_table("main", "evolve_table", &[batch])
         .unwrap();
@@ -491,8 +472,7 @@ async fn test_schema_evolution_via_sql() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog =
-        DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));
@@ -514,7 +494,8 @@ async fn test_schema_evolution_via_sql() {
     )
     .unwrap();
 
-    ctx2.register_batch("evolved_source", evolved_batch).unwrap();
+    ctx2.register_batch("evolved_source", evolved_batch)
+        .unwrap();
 
     // Insert with evolved schema
     let result = ctx2
@@ -542,15 +523,15 @@ async fn test_schema_evolution_via_sql() {
                         .value(0);
 
                     assert_eq!(count, 4);
-                }
+                },
                 Err(e) => {
                     println!("Schema evolution insert execution failed: {}", e);
-                }
+                },
             }
-        }
+        },
         Err(e) => {
             println!("Schema evolution via SQL not supported: {}", e);
-        }
+        },
     }
 }
 
@@ -571,15 +552,11 @@ async fn test_insert_from_query_with_filter() {
     // Create table with initial placeholder data (will be replaced)
     let batch = RecordBatch::try_new(
         schema.clone(),
-        vec![
-            Arc::new(Int32Array::from(vec![0])),
-            Arc::new(StringArray::from(vec!["placeholder"])),
-        ],
+        vec![Arc::new(Int32Array::from(vec![0])), Arc::new(StringArray::from(vec!["placeholder"]))],
     )
     .unwrap();
 
-    let table_writer =
-        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
     table_writer
         .write_table("main", "filtered_users", &[batch])
         .unwrap();
@@ -589,8 +566,7 @@ async fn test_insert_from_query_with_filter() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog =
-        DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));
@@ -600,7 +576,9 @@ async fn test_insert_from_query_with_filter() {
         schema.clone(),
         vec![
             Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5])),
-            Arc::new(StringArray::from(vec!["Alice", "Bob", "Charlie", "Diana", "Eve"])),
+            Arc::new(StringArray::from(vec![
+                "Alice", "Bob", "Charlie", "Diana", "Eve",
+            ])),
         ],
     )
     .unwrap();
@@ -623,9 +601,7 @@ async fn test_insert_from_query_with_filter() {
                     // Verify filtered results
                     let read_ctx = create_read_context(&temp_dir).await;
                     let df = read_ctx
-                        .sql(
-                            "SELECT id, name FROM ducklake.main.filtered_users ORDER BY id",
-                        )
+                        .sql("SELECT id, name FROM ducklake.main.filtered_users ORDER BY id")
                         .await
                         .unwrap();
                     let result_batches = df.collect().await.unwrap();
@@ -634,14 +610,14 @@ async fn test_insert_from_query_with_filter() {
                     // Should have 3 rows (id > 2: Charlie, Diana, Eve)
                     let total_rows: usize = result_batches.iter().map(|b| b.num_rows()).sum();
                     assert_eq!(total_rows, 3);
-                }
+                },
                 Err(e) => {
                     println!("Filtered insert execution failed: {}", e);
-                }
+                },
             }
-        }
+        },
         Err(e) => {
             println!("INSERT with filter not supported: {}", e);
-        }
+        },
     }
 }

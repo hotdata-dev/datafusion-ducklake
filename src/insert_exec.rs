@@ -2,6 +2,19 @@
 //!
 //! This module provides `DuckLakeInsertExec`, a custom execution plan that writes
 //! data from an input plan to Parquet files and registers them in the DuckLake catalog.
+//!
+//! ## Current Limitations
+//!
+//! - **Memory**: Currently collects all input batches into memory before writing.
+//!   For very large inserts, this could cause OOM. Future improvement: stream batches
+//!   directly to Parquet writer.
+//!
+//! - **Single partition**: Only partition 0 is supported. Parallel writes from
+//!   multiple partitions would require coordination to avoid file conflicts.
+//!
+//! - **Cleanup**: If write succeeds but metadata registration fails, orphaned
+//!   Parquet files may remain. The WriteSession uses temp files that are renamed
+//!   on success, which mitigates but doesn't eliminate this risk.
 
 use std::any::Any;
 use std::fmt::{self, Debug};
@@ -22,7 +35,11 @@ use crate::table_writer::DuckLakeTableWriter;
 
 /// Schema for the output of insert operations (count of rows inserted)
 fn make_insert_count_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![Field::new("count", DataType::UInt64, false)]))
+    Arc::new(Schema::new(vec![Field::new(
+        "count",
+        DataType::UInt64,
+        false,
+    )]))
 }
 
 /// Execution plan that writes input data to DuckLake table via Parquet files.
@@ -99,7 +116,9 @@ impl Debug for DuckLakeInsertExec {
 impl DisplayAs for DuckLakeInsertExec {
     fn fmt_as(&self, t: DisplayFormatType, f: &mut fmt::Formatter) -> fmt::Result {
         match t {
-            DisplayFormatType::Default | DisplayFormatType::Verbose | DisplayFormatType::TreeRender => {
+            DisplayFormatType::Default
+            | DisplayFormatType::Verbose
+            | DisplayFormatType::TreeRender => {
                 write!(
                     f,
                     "DuckLakeInsertExec: schema={}, table={}, mode={:?}",
@@ -152,6 +171,11 @@ impl ExecutionPlan for DuckLakeInsertExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> DataFusionResult<SendableRecordBatchStream> {
+        // Currently only single-partition writes are supported.
+        // Multi-partition parallel writes would require coordination to:
+        // 1. Write to separate files per partition
+        // 2. Register all files atomically in a single transaction
+        // TODO: Add parallel write support for better performance on partitioned inputs
         if partition != 0 {
             return Err(DataFusionError::Internal(format!(
                 "DuckLakeInsertExec only supports partition 0, got {}",
@@ -171,8 +195,10 @@ impl ExecutionPlan for DuckLakeInsertExec {
 
         // Create an async stream that performs the write
         let stream = stream::once(async move {
-            // Execute input and collect batches
-            // We execute partition 0 since we're in a single partition context
+            // Execute input and collect batches into memory.
+            // TODO: Stream batches directly to Parquet writer to reduce memory usage.
+            // This requires making WriteSession async-compatible or using a separate
+            // writing task with a channel.
             let input_stream = input.execute(0, context)?;
             let batches: Vec<RecordBatch> = input_stream.try_collect().await?;
 
@@ -191,7 +217,12 @@ impl ExecutionPlan for DuckLakeInsertExec {
                 Schema::new(arrow_schema.fields().iter().cloned().collect::<Vec<_>>());
 
             let mut session = table_writer
-                .begin_write(&schema_name, &table_name, &schema_without_metadata, write_mode)
+                .begin_write(
+                    &schema_name,
+                    &table_name,
+                    &schema_without_metadata,
+                    write_mode,
+                )
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
             // Ensure write goes to the correct data path

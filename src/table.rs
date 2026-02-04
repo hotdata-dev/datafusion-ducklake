@@ -34,10 +34,10 @@ use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, Pa
 use datafusion::datasource::source::DataSourceExec;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::object_store::ObjectStoreUrl;
-use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
-use datafusion::physical_plan::ExecutionPlan;
 #[cfg(feature = "write")]
 use datafusion::logical_expr::dml::InsertOp;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
+use datafusion::physical_plan::ExecutionPlan;
 use futures::StreamExt;
 use object_store::path::Path as ObjectPath;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;

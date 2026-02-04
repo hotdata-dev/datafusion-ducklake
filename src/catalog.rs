@@ -16,6 +16,16 @@ use crate::metadata_writer::MetadataWriter;
 #[cfg(feature = "write")]
 use std::path::PathBuf;
 
+/// Configuration for write operations (when write feature is enabled)
+#[cfg(feature = "write")]
+#[derive(Debug, Clone)]
+struct WriteConfig {
+    /// Metadata writer for catalog operations
+    writer: Arc<dyn MetadataWriter>,
+    /// Base data path for writing files
+    data_path: PathBuf,
+}
+
 /// DuckLake catalog provider
 ///
 /// Connects to a DuckLake catalog database and provides access to schemas and tables.
@@ -31,12 +41,9 @@ pub struct DuckLakeCatalog {
     object_store_url: Arc<ObjectStoreUrl>,
     /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
     catalog_path: String,
-    /// Metadata writer for write operations (when write feature is enabled)
+    /// Write configuration (when write feature is enabled)
     #[cfg(feature = "write")]
-    writer: Option<Arc<dyn MetadataWriter>>,
-    /// Data path for write operations (when write feature is enabled)
-    #[cfg(feature = "write")]
-    data_path: Option<PathBuf>,
+    write_config: Option<WriteConfig>,
 }
 
 impl DuckLakeCatalog {
@@ -56,9 +63,7 @@ impl DuckLakeCatalog {
             object_store_url: Arc::new(object_store_url),
             catalog_path,
             #[cfg(feature = "write")]
-            writer: None,
-            #[cfg(feature = "write")]
-            data_path: None,
+            write_config: None,
         })
     }
 
@@ -77,9 +82,7 @@ impl DuckLakeCatalog {
             object_store_url: Arc::new(object_store_url),
             catalog_path,
             #[cfg(feature = "write")]
-            writer: None,
-            #[cfg(feature = "write")]
-            data_path: None,
+            write_config: None,
         })
     }
 
@@ -120,8 +123,10 @@ impl DuckLakeCatalog {
             snapshot_id,
             object_store_url: Arc::new(object_store_url),
             catalog_path,
-            writer: Some(writer),
-            data_path: Some(PathBuf::from(&data_path_str)),
+            write_config: Some(WriteConfig {
+                writer,
+                data_path: PathBuf::from(&data_path_str),
+            }),
         })
     }
 
@@ -193,10 +198,8 @@ impl CatalogProvider for DuckLakeCatalog {
 
                 // Configure writer if this catalog is writable
                 #[cfg(feature = "write")]
-                let schema = if let (Some(writer), Some(data_path)) =
-                    (self.writer.as_ref(), self.data_path.as_ref())
-                {
-                    schema.with_writer(Arc::clone(writer), data_path.clone())
+                let schema = if let Some(ref config) = self.write_config {
+                    schema.with_writer(Arc::clone(&config.writer), config.data_path.clone())
                 } else {
                     schema
                 };
