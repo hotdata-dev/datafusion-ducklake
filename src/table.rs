@@ -15,6 +15,13 @@ use crate::types::{
     build_arrow_schema, build_read_schema_with_field_id_mapping, extract_parquet_field_ids,
 };
 
+#[cfg(feature = "write")]
+use crate::insert_exec::DuckLakeInsertExec;
+#[cfg(feature = "write")]
+use crate::metadata_writer::{MetadataWriter, WriteMode};
+#[cfg(feature = "write")]
+use std::path::PathBuf;
+
 #[cfg(feature = "encryption")]
 use crate::encryption::EncryptionFactoryBuilder;
 use arrow::array::{Array, Int64Array};
@@ -29,6 +36,8 @@ use datafusion::error::{DataFusionError, Result as DataFusionResult};
 use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
 use datafusion::physical_plan::ExecutionPlan;
+#[cfg(feature = "write")]
+use datafusion::logical_expr::dml::InsertOp;
 use futures::StreamExt;
 use object_store::path::Path as ObjectPath;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
@@ -64,7 +73,6 @@ type SchemaMappingCache = (SchemaRef, HashMap<String, String>);
 pub struct DuckLakeTable {
     #[allow(dead_code)]
     table_id: i64,
-    #[allow(dead_code)]
     table_name: String,
     #[allow(dead_code)]
     provider: Arc<dyn MetadataProvider>,
@@ -83,6 +91,15 @@ pub struct DuckLakeTable {
     /// Encryption factory for decrypting encrypted Parquet files (when encryption feature is enabled)
     #[cfg(feature = "encryption")]
     encryption_factory: Option<Arc<dyn EncryptionFactory>>,
+    /// Schema name (needed for write operations)
+    #[cfg(feature = "write")]
+    schema_name: Option<String>,
+    /// Metadata writer for write operations (when write feature is enabled)
+    #[cfg(feature = "write")]
+    writer: Option<Arc<dyn MetadataWriter>>,
+    /// Data path for write operations (when write feature is enabled)
+    #[cfg(feature = "write")]
+    data_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for DuckLakeTable {
@@ -153,6 +170,12 @@ impl DuckLakeTable {
             #[cfg(feature = "encryption")]
             encryption_factory,
             schema_mapping_cache: OnceCell::new(),
+            #[cfg(feature = "write")]
+            schema_name: None,
+            #[cfg(feature = "write")]
+            writer: None,
+            #[cfg(feature = "write")]
+            data_path: None,
         })
     }
 
@@ -366,6 +389,28 @@ impl DuckLakeTable {
         }
     }
 
+    /// Configure this table for write operations.
+    ///
+    /// This method enables write support by attaching a metadata writer and data path.
+    /// Once configured, the table can handle INSERT INTO operations.
+    ///
+    /// # Arguments
+    /// * `schema_name` - Name of the schema this table belongs to
+    /// * `writer` - Metadata writer for catalog operations
+    /// * `data_path` - Base path for data files
+    #[cfg(feature = "write")]
+    pub fn with_writer(
+        mut self,
+        schema_name: String,
+        writer: Arc<dyn MetadataWriter>,
+        data_path: PathBuf,
+    ) -> Self {
+        self.schema_name = Some(schema_name);
+        self.writer = Some(writer);
+        self.data_path = Some(data_path);
+        self
+    }
+
     /// Build an execution plan for a single file with delete filtering
     ///
     /// Creates a Parquet scan wrapped with a delete filter to exclude deleted rows.
@@ -525,6 +570,44 @@ impl TableProvider for DuckLakeTable {
 
         // Combine execution plans
         combine_execution_plans(execs)
+    }
+
+    #[cfg(feature = "write")]
+    async fn insert_into(
+        &self,
+        _state: &dyn Session,
+        input: Arc<dyn ExecutionPlan>,
+        insert_op: InsertOp,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        let writer = self.writer.as_ref().ok_or_else(|| {
+            DataFusionError::Plan(
+                "Table is read-only. Use DuckLakeCatalog::with_writer() to enable writes."
+                    .to_string(),
+            )
+        })?;
+
+        let schema_name = self.schema_name.as_ref().ok_or_else(|| {
+            DataFusionError::Internal("Schema name not set for writable table".to_string())
+        })?;
+
+        let data_path = self.data_path.as_ref().ok_or_else(|| {
+            DataFusionError::Internal("Data path not set for writable table".to_string())
+        })?;
+
+        let write_mode = match insert_op {
+            InsertOp::Append => WriteMode::Append,
+            InsertOp::Overwrite | InsertOp::Replace => WriteMode::Replace,
+        };
+
+        Ok(Arc::new(DuckLakeInsertExec::new(
+            input,
+            Arc::clone(writer),
+            schema_name.clone(),
+            self.table_name.clone(),
+            self.schema(),
+            write_mode,
+            data_path.clone(),
+        )))
     }
 }
 
