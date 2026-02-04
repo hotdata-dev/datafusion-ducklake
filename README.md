@@ -10,7 +10,7 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 
 ## Currently Supported
 
-- Read-only queries against DuckLake catalogs
+- Read and write queries against DuckLake catalogs (INSERT INTO support)
 - DuckDB, PostgreSQL, MySQL, and SQLite catalog backends
 - Local filesystem and S3-compatible object stores (MinIO, S3)
 - Snapshot-based consistency
@@ -29,7 +29,6 @@ The goal of this project is to make DuckLake a first-class, Arrow-native lakehou
 ## Known Limitations
 
 - Complex types (nested lists, structs, maps) have minimal support
-- No write operations
 - No partition-based file pruning
 - No time travel support
 - DuckDB-encrypted Parquet files (non-PME) are not supported
@@ -55,7 +54,8 @@ This project is under active development. The roadmap below reflects major areas
 
 ### Write Support
 
-- Initial write support for DuckLake tables
+- ~~Initial write support for DuckLake tables~~ (Done in v0.0.5)
+- UPDATE and DELETE operations
 
 ### Time Travel & Versioning
 
@@ -87,6 +87,7 @@ This project is under active development. The roadmap below reflects major areas
 | `metadata-mysql` | MySQL catalog backend | |
 | `metadata-sqlite` | SQLite catalog backend | |
 | `encryption` | Parquet Modular Encryption (PME) support | |
+| `write` | Write support (INSERT INTO) | |
 
 ```bash
 # DuckDB only (default)

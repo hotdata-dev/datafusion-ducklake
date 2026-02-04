@@ -1096,8 +1096,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1695,7 +1697,7 @@ checksum = "b71f8c2c0d5c57620003c3bf1ee577b738404a7fd9642f6cf73d10e44ffaa70f"
 
 [[package]]
 name = "datafusion-ducklake"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1718,6 +1720,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2184,6 +2187,25 @@ dependencies = [
  "num-integer",
  "rust_decimal",
  "strum 0.27.2",
+]
+
+[[package]]
+name = "ducklake-benchmark"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "csv",
+ "datafusion",
+ "datafusion-ducklake",
+ "duckdb",
+ "futures",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "walkdir",
 ]
 
 [[package]]
