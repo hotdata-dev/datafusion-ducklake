@@ -55,6 +55,7 @@ This project is under active development. The roadmap below reflects major areas
 ### Write Support
 
 - ~~Initial write support for DuckLake tables~~ (Done in v0.0.5)
+- ~~S3/ObjectStore write support~~ (Done in v0.0.6)
 - UPDATE and DELETE operations
 
 ### Time Travel & Versioning
