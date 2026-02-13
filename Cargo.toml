@@ -17,9 +17,9 @@ categories = ["database", "filesystem"]
 exclude = ["datafusion-ducklake.iml", "target", "tests/test_data"]
 
 [dependencies]
-datafusion = "50.1.0"
-arrow = "56.2.0"
-parquet = "56.2.0"
+datafusion = "51.0"
+arrow = "57"
+parquet = "57"
 object_store = { version = "0.12.4", features = ["aws"] }
 url = "2.5"
 async-trait = "0.1"

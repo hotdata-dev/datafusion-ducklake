@@ -194,7 +194,7 @@ impl EncryptionFactory for DuckLakeEncryptionFactory {
         _config: &EncryptionFactoryOptions,
         _schema: &SchemaRef,
         _file_path: &Path,
-    ) -> Result<Option<FileEncryptionProperties>> {
+    ) -> Result<Option<Arc<FileEncryptionProperties>>> {
         // DuckLake is read-only for now, so we don't support writing encrypted files
         Ok(None)
     }
@@ -203,7 +203,7 @@ impl EncryptionFactory for DuckLakeEncryptionFactory {
         &self,
         _config: &EncryptionFactoryOptions,
         file_path: &Path,
-    ) -> Result<Option<FileDecryptionProperties>> {
+    ) -> Result<Option<Arc<FileDecryptionProperties>>> {
         let path_str = file_path.to_string();
 
         // Try to find the key for this file path

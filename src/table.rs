@@ -358,7 +358,7 @@ impl DuckLakeTable {
 
         // Apply projection if provided
         if let Some(proj) = projection {
-            builder = builder.with_projection(Some(proj.clone()));
+            builder = builder.with_projection_indices(Some(proj.clone()));
         }
 
         let file_scan_config = builder.build();
@@ -429,7 +429,7 @@ impl DuckLakeTable {
 
         // Apply projection if provided
         if let Some(proj) = projection {
-            builder = builder.with_projection(Some(proj.clone()));
+            builder = builder.with_projection_indices(Some(proj.clone()));
         }
 
         let file_scan_config = builder.build();
@@ -601,7 +601,7 @@ fn combine_execution_plans(
         Ok(execs.into_iter().next().unwrap())
     } else {
         use datafusion::physical_plan::union::UnionExec;
-        Ok(Arc::new(UnionExec::new(execs)))
+        UnionExec::try_new(execs)
     }
 }
 
