@@ -16,8 +16,6 @@ use crate::table::DuckLakeTable;
 use crate::metadata_writer::{ColumnDef, MetadataWriter, WriteMode};
 #[cfg(feature = "write")]
 use datafusion::error::DataFusionError;
-#[cfg(feature = "write")]
-use std::path::PathBuf;
 
 /// Validate table name to prevent path traversal attacks.
 /// Table names are used to construct file paths, so we must ensure they
@@ -66,7 +64,7 @@ pub struct DuckLakeSchema {
     writer: Option<Arc<dyn MetadataWriter>>,
     /// Data path for write operations (when write feature is enabled)
     #[cfg(feature = "write")]
-    data_path: Option<PathBuf>,
+    data_path: Option<String>,
 }
 
 impl DuckLakeSchema {
@@ -102,7 +100,7 @@ impl DuckLakeSchema {
     /// * `writer` - Metadata writer for catalog operations
     /// * `data_path` - Base path for data files
     #[cfg(feature = "write")]
-    pub fn with_writer(mut self, writer: Arc<dyn MetadataWriter>, data_path: PathBuf) -> Self {
+    pub fn with_writer(mut self, writer: Arc<dyn MetadataWriter>, data_path: String) -> Self {
         self.writer = Some(writer);
         self.data_path = Some(data_path);
         self

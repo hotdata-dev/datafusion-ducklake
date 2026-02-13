@@ -13,8 +13,6 @@ use datafusion::datasource::object_store::ObjectStoreUrl;
 
 #[cfg(feature = "write")]
 use crate::metadata_writer::MetadataWriter;
-#[cfg(feature = "write")]
-use std::path::PathBuf;
 
 /// Configuration for write operations (when write feature is enabled)
 #[cfg(feature = "write")]
@@ -23,7 +21,7 @@ struct WriteConfig {
     /// Metadata writer for catalog operations
     writer: Arc<dyn MetadataWriter>,
     /// Base data path for writing files
-    data_path: PathBuf,
+    data_path: String,
 }
 
 /// DuckLake catalog provider
@@ -125,7 +123,7 @@ impl DuckLakeCatalog {
             catalog_path,
             write_config: Some(WriteConfig {
                 writer,
-                data_path: PathBuf::from(&data_path_str),
+                data_path: data_path_str,
             }),
         })
     }

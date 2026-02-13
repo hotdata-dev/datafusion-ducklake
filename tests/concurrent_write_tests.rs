@@ -8,7 +8,12 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion_ducklake::metadata_writer::MetadataWriter;
 use datafusion_ducklake::{DuckLakeTableWriter, SqliteMetadataWriter, WriteMode};
+use object_store::local::LocalFileSystem;
 use tempfile::TempDir;
+
+fn create_object_store() -> Arc<dyn object_store::ObjectStore> {
+    Arc::new(LocalFileSystem::new())
+}
 
 async fn create_test_writer(temp_dir: &TempDir) -> (SqliteMetadataWriter, std::path::PathBuf) {
     let db_path = temp_dir.path().join("test.db");
@@ -82,9 +87,12 @@ async fn test_concurrent_writes_different_tables() {
         let table_name = format!("table_{}", i);
 
         let task = tokio::spawn(async move {
-            let table_writer = DuckLakeTableWriter::new(writer_clone).unwrap();
+            let table_writer =
+                DuckLakeTableWriter::new(writer_clone, create_object_store()).unwrap();
             let batch = create_user_batch(&[i], &[&format!("user_{}", i)]);
-            let result = table_writer.write_table("main", &table_name, &[batch]);
+            let result = table_writer
+                .write_table("main", &table_name, &[batch])
+                .await;
             (i, table_name, result)
         });
 
@@ -116,10 +124,12 @@ async fn test_concurrent_writes_same_table_append() {
     let writer: Arc<dyn MetadataWriter> = Arc::new(writer);
 
     {
-        let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
+        let table_writer =
+            DuckLakeTableWriter::new(Arc::clone(&writer), create_object_store()).unwrap();
         let batch = create_user_batch(&[0], &["initial"]);
         table_writer
             .write_table("main", "shared_table", &[batch])
+            .await
             .unwrap();
     }
 
@@ -127,9 +137,12 @@ async fn test_concurrent_writes_same_table_append() {
     for i in 1..=10 {
         let writer_clone = Arc::clone(&writer);
         let task = tokio::spawn(async move {
-            let table_writer = DuckLakeTableWriter::new(writer_clone).unwrap();
+            let table_writer =
+                DuckLakeTableWriter::new(writer_clone, create_object_store()).unwrap();
             let batch = create_user_batch(&[i], &[&format!("user_{}", i)]);
-            table_writer.append_table("main", "shared_table", &[batch])
+            table_writer
+                .append_table("main", "shared_table", &[batch])
+                .await
         });
         tasks.push(task);
     }
@@ -147,33 +160,40 @@ async fn test_write_session_cleanup_on_drop() {
     let writer: Arc<dyn MetadataWriter> = Arc::new(writer);
     let schema = create_user_schema();
 
-    // Dropped session should clean up orphaned file
-    let file_path = {
-        let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
+    // Dropped session should NOT upload data (buffer is just dropped)
+    let file_path_str = {
+        let table_writer =
+            DuckLakeTableWriter::new(Arc::clone(&writer), create_object_store()).unwrap();
         let mut session = table_writer
             .begin_write("main", "dropped_table", &schema, WriteMode::Replace)
             .unwrap();
         let batch = create_user_batch(&[1, 2, 3], &["a", "b", "c"]);
         session.write_batch(&batch).unwrap();
-        session.file_path().to_path_buf()
+        session.file_path().to_string()
     };
+    // With buffer approach, no file is created until finish() is called
+    let path = std::path::Path::new(&file_path_str);
     assert!(
-        !file_path.exists(),
-        "Orphaned file should be deleted on drop"
+        !path.exists(),
+        "No file should exist since session was dropped without finish()"
     );
 
-    // Finished session should keep file
-    let finished_path = {
-        let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
+    // Finished session should upload and keep file
+    let finished_path_str = {
+        let table_writer =
+            DuckLakeTableWriter::new(Arc::clone(&writer), create_object_store()).unwrap();
         let mut session = table_writer
             .begin_write("main", "finished_table", &schema, WriteMode::Replace)
             .unwrap();
         let batch = create_user_batch(&[1, 2, 3], &["a", "b", "c"]);
         session.write_batch(&batch).unwrap();
-        let path = session.file_path().to_path_buf();
-        session.finish().unwrap();
-        path
+        let p = session.file_path().to_string();
+        session.finish().await.unwrap();
+        p
     };
+    // LocalFileSystem stores files at /<object_path>, so prepend /
+    let finished_fs_path = format!("/{}", finished_path_str);
+    let finished_path = std::path::Path::new(&finished_fs_path);
     assert!(finished_path.exists(), "Finished file should exist");
 }
 
@@ -184,7 +204,8 @@ async fn test_write_batch_schema_validation() {
     let writer: Arc<dyn MetadataWriter> = Arc::new(writer);
 
     let schema = create_user_schema();
-    let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::clone(&writer), create_object_store()).unwrap();
     let mut session = table_writer
         .begin_write("main", "validation_test", &schema, WriteMode::Replace)
         .unwrap();
@@ -234,11 +255,13 @@ async fn test_transaction_atomicity() {
     let initial_snapshot = writer.create_snapshot().unwrap();
 
     let writer: Arc<dyn MetadataWriter> = Arc::new(writer);
-    let table_writer = DuckLakeTableWriter::new(Arc::clone(&writer)).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::clone(&writer), create_object_store()).unwrap();
 
     let batch = create_user_batch(&[1], &["test"]);
     let result = table_writer
         .write_table("main", "atomic_test", &[batch])
+        .await
         .unwrap();
     assert!(result.snapshot_id > initial_snapshot);
 }
@@ -253,10 +276,13 @@ async fn test_stress_concurrent_writes() {
     for i in 0..50 {
         let writer_clone = Arc::clone(&writer);
         let task = tokio::spawn(async move {
-            let table_writer = DuckLakeTableWriter::new(writer_clone).unwrap();
+            let table_writer =
+                DuckLakeTableWriter::new(writer_clone, create_object_store()).unwrap();
             let batch = create_user_batch(&[i], &[&format!("stress_{}", i)]);
             let table_name = format!("stress_table_{}", i % 10);
-            table_writer.append_table("main", &table_name, &[batch])
+            table_writer
+                .append_table("main", &table_name, &[batch])
+                .await
         });
         tasks.push(task);
     }

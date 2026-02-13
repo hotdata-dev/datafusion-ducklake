@@ -19,8 +19,6 @@ use crate::types::{
 use crate::insert_exec::DuckLakeInsertExec;
 #[cfg(feature = "write")]
 use crate::metadata_writer::{MetadataWriter, WriteMode};
-#[cfg(feature = "write")]
-use std::path::PathBuf;
 
 #[cfg(feature = "encryption")]
 use crate::encryption::EncryptionFactoryBuilder;
@@ -99,7 +97,7 @@ pub struct DuckLakeTable {
     writer: Option<Arc<dyn MetadataWriter>>,
     /// Data path for write operations (when write feature is enabled)
     #[cfg(feature = "write")]
-    data_path: Option<PathBuf>,
+    data_path: Option<String>,
 }
 
 impl std::fmt::Debug for DuckLakeTable {
@@ -403,7 +401,7 @@ impl DuckLakeTable {
         mut self,
         schema_name: String,
         writer: Arc<dyn MetadataWriter>,
-        data_path: PathBuf,
+        data_path: String,
     ) -> Self {
         self.schema_name = Some(schema_name);
         self.writer = Some(writer);
@@ -606,6 +604,7 @@ impl TableProvider for DuckLakeTable {
             self.table_name.clone(),
             self.schema(),
             write_mode,
+            self.object_store_url.clone(),
             data_path.clone(),
         )))
     }

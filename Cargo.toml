@@ -40,6 +40,7 @@ duckdb = { version = "1.4.1", features = ["bundled"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio"], optional = true }
 
 [dev-dependencies]
+bytes = "1"
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["minio", "postgres", "mysql"] }
 tempfile = "3.14"
