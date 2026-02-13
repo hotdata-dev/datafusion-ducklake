@@ -464,7 +464,7 @@ impl TableChangesTable {
         .with_file_group(FileGroup::new(vec![pf]));
 
         if let Some(proj) = parquet_projection {
-            builder = builder.with_projection(Some(proj));
+            builder = builder.with_projection_indices(Some(proj));
         }
 
         let file_scan_config = builder.build();
@@ -585,7 +585,7 @@ impl TableProvider for TableChangesTable {
         if execs.len() == 1 {
             Ok(execs.into_iter().next().unwrap())
         } else {
-            Ok(Arc::new(UnionExec::new(execs)))
+            UnionExec::try_new(execs)
         }
     }
 }

@@ -257,7 +257,7 @@ impl TableProvider for TableDeletionsTable {
         if execs.len() == 1 {
             Ok(execs.into_iter().next().unwrap())
         } else {
-            Ok(Arc::new(UnionExec::new(execs)))
+            UnionExec::try_new(execs)
         }
     }
 }
