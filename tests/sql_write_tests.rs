@@ -11,11 +11,17 @@ use arrow::array::{Array, Int32Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion::prelude::*;
+use object_store::local::LocalFileSystem;
 use tempfile::TempDir;
 
 use datafusion_ducklake::{
     DuckLakeCatalog, MetadataWriter, SqliteMetadataProvider, SqliteMetadataWriter,
 };
+
+/// Create a local filesystem object store
+fn create_object_store() -> Arc<dyn object_store::ObjectStore> {
+    Arc::new(LocalFileSystem::new())
+}
 
 /// Helper to create a test environment with a writable catalog
 async fn create_writable_catalog() -> (SessionContext, TempDir) {
@@ -112,6 +118,7 @@ async fn test_create_table_as_select() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insert_into_existing_table() {
     let (ctx, temp_dir) = create_writable_catalog().await;
+    let object_store = create_object_store();
 
     // First create a table using the lower-level API
     let db_path = temp_dir.path().join("test.db");
@@ -130,9 +137,11 @@ async fn test_insert_into_existing_table() {
     .unwrap();
 
     // Write initial data using table writer
-    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer =
+        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     table_writer
         .write_table("main", "values_table", &[batch])
+        .await
         .unwrap();
 
     // Now try INSERT INTO with SQL
@@ -222,6 +231,7 @@ async fn test_insert_into_read_only_fails() {
     std::fs::create_dir_all(&data_path).unwrap();
 
     let conn_str = format!("sqlite:{}?mode=rwc", db_path.display());
+    let object_store = create_object_store();
 
     // Initialize the database
     let writer = SqliteMetadataWriter::new_with_init(&conn_str)
@@ -234,9 +244,11 @@ async fn test_insert_into_read_only_fails() {
     let batch =
         RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
 
-    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer =
+        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     table_writer
         .write_table("main", "readonly_test", &[batch])
+        .await
         .unwrap();
 
     // Create read-only catalog (no writer)
@@ -292,6 +304,7 @@ async fn test_insert_into_read_only_fails() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insert_overwrite() {
     let (_ctx, temp_dir) = create_writable_catalog().await;
+    let object_store = create_object_store();
 
     // Create initial table
     let db_path = temp_dir.path().join("test.db");
@@ -312,9 +325,11 @@ async fn test_insert_overwrite() {
     )
     .unwrap();
 
-    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer =
+        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     table_writer
         .write_table("main", "overwrite_test", &[batch])
+        .await
         .unwrap();
 
     // Recreate context with fresh catalog
@@ -374,6 +389,7 @@ async fn test_insert_overwrite() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sql_insert_values() {
     let (_ctx, temp_dir) = create_writable_catalog().await;
+    let object_store = create_object_store();
 
     // Create initial table
     let db_path = temp_dir.path().join("test.db");
@@ -391,9 +407,11 @@ async fn test_sql_insert_values() {
     )
     .unwrap();
 
-    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer =
+        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     table_writer
         .write_table("main", "values_test", &[batch])
+        .await
         .unwrap();
 
     // Recreate context with fresh catalog
@@ -442,6 +460,7 @@ async fn test_sql_insert_values() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_schema_evolution_via_sql() {
     let (_ctx, temp_dir) = create_writable_catalog().await;
+    let object_store = create_object_store();
 
     // Create initial table with 2 columns
     let db_path = temp_dir.path().join("test.db");
@@ -462,9 +481,11 @@ async fn test_schema_evolution_via_sql() {
     )
     .unwrap();
 
-    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer =
+        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     table_writer
         .write_table("main", "evolve_table", &[batch])
+        .await
         .unwrap();
 
     // Recreate context
@@ -538,6 +559,7 @@ async fn test_schema_evolution_via_sql() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_insert_from_query_with_filter() {
     let (_ctx, temp_dir) = create_writable_catalog().await;
+    let object_store = create_object_store();
 
     // Create target table with initial data
     let db_path = temp_dir.path().join("test.db");
@@ -556,9 +578,11 @@ async fn test_insert_from_query_with_filter() {
     )
     .unwrap();
 
-    let table_writer = datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer =
+        datafusion_ducklake::DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     table_writer
         .write_table("main", "filtered_users", &[batch])
+        .await
         .unwrap();
 
     // Recreate context

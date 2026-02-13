@@ -14,12 +14,18 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
 use datafusion::prelude::*;
+use object_store::local::LocalFileSystem;
 use tempfile::TempDir;
 
 use datafusion_ducklake::{
     DuckLakeCatalog, DuckLakeTableWriter, MetadataWriter, SqliteMetadataProvider,
     SqliteMetadataWriter, WriteMode,
 };
+
+/// Create a local filesystem object store
+fn create_object_store() -> Arc<dyn object_store::ObjectStore> {
+    Arc::new(LocalFileSystem::new())
+}
 
 /// Helper to create a test environment with writer and data directory
 async fn create_test_env() -> (SqliteMetadataWriter, TempDir) {
@@ -53,6 +59,7 @@ async fn create_read_context(temp_dir: &TempDir) -> SessionContext {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_write_and_read_basic_types() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     // Create test data with various types
     let schema = Arc::new(Schema::new(vec![
@@ -80,8 +87,11 @@ async fn test_write_and_read_basic_types() {
     .unwrap();
 
     // Write data
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
-    let result = table_writer.write_table("main", "users", &[batch]).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
+    let result = table_writer
+        .write_table("main", "users", &[batch])
+        .await
+        .unwrap();
 
     assert_eq!(result.records_written, 3);
     assert_eq!(result.files_written, 1);
@@ -122,6 +132,7 @@ async fn test_write_and_read_basic_types() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_write_temporal_types() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -146,9 +157,10 @@ async fn test_write_temporal_types() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     let result = table_writer
         .write_table("main", "events", &[batch])
+        .await
         .unwrap();
     assert_eq!(result.records_written, 2);
 
@@ -171,6 +183,7 @@ async fn test_write_temporal_types() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_write_multiple_batches() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -189,9 +202,10 @@ async fn test_write_multiple_batches() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     let result = table_writer
         .write_table("main", "data", &[batch1, batch2])
+        .await
         .unwrap();
     assert_eq!(result.records_written, 4);
 
@@ -214,6 +228,7 @@ async fn test_write_multiple_batches() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_replace_semantics() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -230,9 +245,11 @@ async fn test_replace_semantics() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::new(writer.clone()), Arc::clone(&object_store)).unwrap();
     table_writer
         .write_table("main", "replace_test", &[batch1])
+        .await
         .unwrap();
 
     // Write replacement data
@@ -242,9 +259,11 @@ async fn test_replace_semantics() {
     )
     .unwrap();
 
-    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer2 =
+        DuckLakeTableWriter::new(Arc::new(writer), Arc::clone(&object_store)).unwrap();
     let result = table_writer2
         .write_table("main", "replace_test", &[batch2])
+        .await
         .unwrap();
     assert_eq!(result.records_written, 2);
 
@@ -269,6 +288,7 @@ async fn test_replace_semantics() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_append_semantics() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -282,9 +302,11 @@ async fn test_append_semantics() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::new(writer.clone()), Arc::clone(&object_store)).unwrap();
     table_writer
         .write_table("main", "append_test", &[batch1])
+        .await
         .unwrap();
 
     // Append more data
@@ -294,9 +316,11 @@ async fn test_append_semantics() {
     )
     .unwrap();
 
-    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer2 =
+        DuckLakeTableWriter::new(Arc::new(writer), Arc::clone(&object_store)).unwrap();
     let result = table_writer2
         .append_table("main", "append_test", &[batch2])
+        .await
         .unwrap();
     assert_eq!(result.records_written, 2);
 
@@ -320,6 +344,7 @@ async fn test_append_semantics() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multiple_tables_same_schema() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -338,9 +363,15 @@ async fn test_multiple_tables_same_schema() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
-    table_writer.write_table("main", "t1", &[batch1]).unwrap();
-    table_writer.write_table("main", "t2", &[batch2]).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
+    table_writer
+        .write_table("main", "t1", &[batch1])
+        .await
+        .unwrap();
+    table_writer
+        .write_table("main", "t2", &[batch2])
+        .await
+        .unwrap();
 
     // Read back both tables
     let ctx = create_read_context(&temp_dir).await;
@@ -367,6 +398,7 @@ async fn test_multiple_tables_same_schema() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_field_ids_preserved_on_roundtrip() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("col_a", DataType::Int32, false),
@@ -379,9 +411,10 @@ async fn test_field_ids_preserved_on_roundtrip() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     table_writer
         .write_table("main", "field_id_test", &[batch])
+        .await
         .unwrap();
 
     // Find the Parquet file and verify field_ids
@@ -424,6 +457,7 @@ async fn test_field_ids_preserved_on_roundtrip() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_streaming_write_api() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
@@ -431,7 +465,7 @@ async fn test_streaming_write_api() {
     ]));
 
     // Use streaming API
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     let mut session = table_writer
         .begin_write("main", "streaming_test", &schema, WriteMode::Replace)
         .unwrap();
@@ -454,7 +488,7 @@ async fn test_streaming_write_api() {
 
     assert_eq!(session.row_count(), 6); // 3 batches * 2 rows
 
-    let result = session.finish().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(result.records_written, 6);
     assert_eq!(result.files_written, 1);
 
@@ -477,20 +511,22 @@ async fn test_streaming_write_api() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_streaming_write_to_custom_path() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
     // Use custom path (simulating external storage manager)
     let custom_dir = temp_dir.path().join("data").join("custom").join("location");
+    let custom_dir_str = custom_dir.to_str().unwrap().to_string();
     let file_name = "my_data.parquet".to_string();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     let mut session = table_writer
         .begin_write_to_path(
             "main",
             "custom_path_test",
             &schema,
-            custom_dir.clone(),
+            &custom_dir_str,
             file_name.clone(),
             WriteMode::Replace,
         )
@@ -503,10 +539,7 @@ async fn test_streaming_write_to_custom_path() {
     .unwrap();
     session.write_batch(&batch).unwrap();
 
-    // Verify file path before finishing
-    assert_eq!(session.file_path(), custom_dir.join(&file_name));
-
-    let result = session.finish().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(result.records_written, 3);
 
     // Verify file exists at custom path
@@ -531,16 +564,17 @@ async fn test_streaming_write_to_custom_path() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_streaming_empty_write() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
+    let table_writer = DuckLakeTableWriter::new(Arc::new(writer), object_store).unwrap();
     let session = table_writer
         .begin_write("main", "empty_test", &schema, WriteMode::Replace)
         .unwrap();
 
     // Finish without writing any batches
-    let result = session.finish().unwrap();
+    let result = session.finish().await.unwrap();
     assert_eq!(result.records_written, 0);
     assert_eq!(result.files_written, 1);
 
@@ -565,6 +599,7 @@ async fn test_streaming_empty_write() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_append_add_nullable_column() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     // Initial schema with 2 columns
     let schema1 = Arc::new(Schema::new(vec![
@@ -581,9 +616,11 @@ async fn test_append_add_nullable_column() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::new(writer.clone()), Arc::clone(&object_store)).unwrap();
     table_writer
         .write_table("main", "evolve_add", &[batch1])
+        .await
         .unwrap();
 
     // Append with new nullable column
@@ -603,8 +640,11 @@ async fn test_append_add_nullable_column() {
     )
     .unwrap();
 
-    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
-    let result = table_writer2.append_table("main", "evolve_add", &[batch2]);
+    let table_writer2 =
+        DuckLakeTableWriter::new(Arc::new(writer), Arc::clone(&object_store)).unwrap();
+    let result = table_writer2
+        .append_table("main", "evolve_add", &[batch2])
+        .await;
     assert!(result.is_ok(), "Adding nullable column should succeed");
     assert_eq!(result.unwrap().records_written, 2);
 
@@ -627,6 +667,7 @@ async fn test_append_add_nullable_column() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_append_remove_column() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     // Initial schema with 3 columns
     let schema1 = Arc::new(Schema::new(vec![
@@ -645,9 +686,11 @@ async fn test_append_remove_column() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::new(writer.clone()), Arc::clone(&object_store)).unwrap();
     table_writer
         .write_table("main", "evolve_remove", &[batch1])
+        .await
         .unwrap();
 
     // Append without the 'extra' column
@@ -665,8 +708,11 @@ async fn test_append_remove_column() {
     )
     .unwrap();
 
-    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
-    let result = table_writer2.append_table("main", "evolve_remove", &[batch2]);
+    let table_writer2 =
+        DuckLakeTableWriter::new(Arc::new(writer), Arc::clone(&object_store)).unwrap();
+    let result = table_writer2
+        .append_table("main", "evolve_remove", &[batch2])
+        .await;
     assert!(result.is_ok(), "Removing column should succeed");
     assert_eq!(result.unwrap().records_written, 2);
 
@@ -689,6 +735,7 @@ async fn test_append_remove_column() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_append_type_mismatch_fails() {
     let (writer, _temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     // Initial schema
     let schema1 = Arc::new(Schema::new(vec![
@@ -702,9 +749,11 @@ async fn test_append_type_mismatch_fails() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::new(writer.clone()), Arc::clone(&object_store)).unwrap();
     table_writer
         .write_table("main", "evolve_type", &[batch1])
+        .await
         .unwrap();
 
     // Try to append with different type for 'value'
@@ -719,8 +768,11 @@ async fn test_append_type_mismatch_fails() {
     )
     .unwrap();
 
-    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
-    let result = table_writer2.append_table("main", "evolve_type", &[batch2]);
+    let table_writer2 =
+        DuckLakeTableWriter::new(Arc::new(writer), Arc::clone(&object_store)).unwrap();
+    let result = table_writer2
+        .append_table("main", "evolve_type", &[batch2])
+        .await;
     assert!(result.is_err(), "Type mismatch should fail");
     let err = result.unwrap_err().to_string();
     assert!(
@@ -733,6 +785,7 @@ async fn test_append_type_mismatch_fails() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_append_non_nullable_column_fails() {
     let (writer, _temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     // Initial schema
     let schema1 = Arc::new(Schema::new(vec![
@@ -749,9 +802,11 @@ async fn test_append_non_nullable_column_fails() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::new(writer.clone()), Arc::clone(&object_store)).unwrap();
     table_writer
         .write_table("main", "evolve_nonnull", &[batch1])
+        .await
         .unwrap();
 
     // Try to add a non-nullable column
@@ -771,8 +826,11 @@ async fn test_append_non_nullable_column_fails() {
     )
     .unwrap();
 
-    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
-    let result = table_writer2.append_table("main", "evolve_nonnull", &[batch2]);
+    let table_writer2 =
+        DuckLakeTableWriter::new(Arc::new(writer), Arc::clone(&object_store)).unwrap();
+    let result = table_writer2
+        .append_table("main", "evolve_nonnull", &[batch2])
+        .await;
     assert!(result.is_err(), "Adding non-nullable column should fail");
     let err = result.unwrap_err().to_string();
     assert!(
@@ -785,6 +843,7 @@ async fn test_append_non_nullable_column_fails() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_append_reorder_columns() {
     let (writer, temp_dir) = create_test_env().await;
+    let object_store = create_object_store();
 
     // Initial schema: id, name, value
     let schema1 = Arc::new(Schema::new(vec![
@@ -803,9 +862,11 @@ async fn test_append_reorder_columns() {
     )
     .unwrap();
 
-    let table_writer = DuckLakeTableWriter::new(Arc::new(writer.clone())).unwrap();
+    let table_writer =
+        DuckLakeTableWriter::new(Arc::new(writer.clone()), Arc::clone(&object_store)).unwrap();
     table_writer
         .write_table("main", "evolve_reorder", &[batch1])
+        .await
         .unwrap();
 
     // Append with reordered columns: value, id, name
@@ -825,8 +886,11 @@ async fn test_append_reorder_columns() {
     )
     .unwrap();
 
-    let table_writer2 = DuckLakeTableWriter::new(Arc::new(writer)).unwrap();
-    let result = table_writer2.append_table("main", "evolve_reorder", &[batch2]);
+    let table_writer2 =
+        DuckLakeTableWriter::new(Arc::new(writer), Arc::clone(&object_store)).unwrap();
+    let result = table_writer2
+        .append_table("main", "evolve_reorder", &[batch2])
+        .await;
     assert!(result.is_ok(), "Reordering columns should succeed");
     assert_eq!(result.unwrap().records_written, 2);
 

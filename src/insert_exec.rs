@@ -6,12 +6,12 @@
 
 use std::any::Any;
 use std::fmt::{self, Debug};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, RecordBatch, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
+use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
@@ -38,7 +38,7 @@ pub struct DuckLakeInsertExec {
     table_name: String,
     arrow_schema: SchemaRef,
     write_mode: WriteMode,
-    data_path: PathBuf,
+    object_store_url: Arc<ObjectStoreUrl>,
     cache: PlanProperties,
 }
 
@@ -51,7 +51,7 @@ impl DuckLakeInsertExec {
         table_name: String,
         arrow_schema: SchemaRef,
         write_mode: WriteMode,
-        data_path: PathBuf,
+        object_store_url: Arc<ObjectStoreUrl>,
     ) -> Self {
         let cache = Self::compute_properties();
         Self {
@@ -61,7 +61,7 @@ impl DuckLakeInsertExec {
             table_name,
             arrow_schema,
             write_mode,
-            data_path,
+            object_store_url,
             cache,
         }
     }
@@ -82,7 +82,6 @@ impl Debug for DuckLakeInsertExec {
             .field("schema_name", &self.schema_name)
             .field("table_name", &self.table_name)
             .field("write_mode", &self.write_mode)
-            .field("data_path", &self.data_path)
             .finish_non_exhaustive()
     }
 }
@@ -136,7 +135,7 @@ impl ExecutionPlan for DuckLakeInsertExec {
             self.table_name.clone(),
             Arc::clone(&self.arrow_schema),
             self.write_mode,
-            self.data_path.clone(),
+            self.object_store_url.clone(),
         )))
     }
 
@@ -158,11 +157,11 @@ impl ExecutionPlan for DuckLakeInsertExec {
         let table_name = self.table_name.clone();
         let arrow_schema = Arc::clone(&self.arrow_schema);
         let write_mode = self.write_mode;
-        let data_path = self.data_path.clone();
+        let object_store_url = self.object_store_url.clone();
         let output_schema = make_insert_count_schema();
 
         let stream = stream::once(async move {
-            let input_stream = input.execute(0, context)?;
+            let input_stream = input.execute(0, Arc::clone(&context))?;
             let batches: Vec<RecordBatch> = input_stream.try_collect().await?;
 
             if batches.is_empty() {
@@ -170,7 +169,12 @@ impl ExecutionPlan for DuckLakeInsertExec {
                 return Ok(RecordBatch::try_new(output_schema, vec![count_array])?);
             }
 
-            let table_writer = DuckLakeTableWriter::new(writer)
+            // Get object store from runtime environment
+            let object_store = context
+                .runtime_env()
+                .object_store(object_store_url.as_ref())?;
+
+            let table_writer = DuckLakeTableWriter::new(writer, object_store)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
             let schema_without_metadata =
@@ -185,8 +189,6 @@ impl ExecutionPlan for DuckLakeInsertExec {
                 )
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            let _ = data_path;
-
             for batch in &batches {
                 session
                     .write_batch(batch)
@@ -197,6 +199,7 @@ impl ExecutionPlan for DuckLakeInsertExec {
 
             session
                 .finish()
+                .await
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
             let count_array: ArrayRef = Arc::new(UInt64Array::from(vec![row_count]));

@@ -55,6 +55,10 @@ pub enum DuckLakeError {
     #[error("Unsupported feature: {0}")]
     Unsupported(String),
 
+    /// ObjectStore error
+    #[error("ObjectStore error: {0}")]
+    ObjectStore(#[from] object_store::Error),
+
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

@@ -1,36 +1,42 @@
 //! High-level table writer for DuckLake catalogs.
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Seek, SeekFrom};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
+use object_store::path::Path as ObjectPath;
+use object_store::{ObjectStore, PutPayload};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use uuid::Uuid;
 
 use crate::Result;
 use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteResult};
+use crate::path_resolver::join_paths;
 use crate::types::arrow_to_ducklake_type;
 
 /// High-level writer for DuckLake tables.
 #[derive(Debug)]
 pub struct DuckLakeTableWriter {
     metadata: Arc<dyn MetadataWriter>,
-    data_path: PathBuf,
+    object_store: Arc<dyn ObjectStore>,
+    /// The key path portion of the data_path (e.g., "/prefix/data/")
+    base_key_path: String,
 }
 
 impl DuckLakeTableWriter {
-    pub fn new(metadata: Arc<dyn MetadataWriter>) -> Result<Self> {
+    pub fn new(
+        metadata: Arc<dyn MetadataWriter>,
+        object_store: Arc<dyn ObjectStore>,
+    ) -> Result<Self> {
         let data_path_str = metadata.get_data_path()?;
-        let data_path = PathBuf::from(data_path_str);
+        let (_, key_path) = crate::path_resolver::parse_object_store_url(&data_path_str)?;
 
         Ok(Self {
             metadata,
-            data_path,
+            object_store,
+            base_key_path: key_path,
         })
     }
 
@@ -43,13 +49,13 @@ impl DuckLakeTableWriter {
         arrow_schema: &Schema,
         mode: WriteMode,
     ) -> Result<TableWriteSession> {
-        let table_path = self.data_path.join(schema_name).join(table_name);
+        let table_key = join_paths(&join_paths(&self.base_key_path, schema_name), table_name);
         let file_name = format!("{}.parquet", Uuid::new_v4());
         self.begin_write_internal(
             schema_name,
             table_name,
             arrow_schema,
-            table_path,
+            table_key,
             file_name.clone(),
             file_name,
             true,
@@ -63,19 +69,18 @@ impl DuckLakeTableWriter {
         schema_name: &str,
         table_name: &str,
         arrow_schema: &Schema,
-        file_dir: PathBuf,
+        file_dir: &str,
         file_name: String,
         mode: WriteMode,
     ) -> Result<TableWriteSession> {
-        let file_path = file_dir.join(&file_name);
-        let catalog_path = file_path.to_string_lossy().to_string();
+        let full_path = join_paths(file_dir, &file_name);
         self.begin_write_internal(
             schema_name,
             table_name,
             arrow_schema,
-            file_dir,
+            file_dir.to_string(),
             file_name,
-            catalog_path,
+            full_path,
             false,
             mode,
         )
@@ -87,7 +92,7 @@ impl DuckLakeTableWriter {
         schema_name: &str,
         table_name: &str,
         arrow_schema: &Schema,
-        file_dir: PathBuf,
+        file_dir: String,
         file_name: String,
         catalog_path: String,
         path_is_relative: bool,
@@ -100,23 +105,25 @@ impl DuckLakeTableWriter {
         let schema_with_ids =
             Arc::new(build_schema_with_field_ids(arrow_schema, &setup.column_ids));
 
-        std::fs::create_dir_all(&file_dir)?;
-        let file_path = file_dir.join(&file_name);
+        let object_path_str = join_paths(&file_dir, &file_name);
+        // Strip leading slash for object_store Path (it expects relative keys)
+        let object_path = ObjectPath::from(object_path_str.trim_start_matches('/'));
+
         let props = WriterProperties::builder()
             .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_2_0)
             .build();
-        let file = File::create(&file_path)?;
-        let writer = ArrowWriter::try_new(file, schema_with_ids.clone(), Some(props))?;
+        let writer = ArrowWriter::try_new(Vec::new(), schema_with_ids.clone(), Some(props))?;
 
         Ok(TableWriteSession {
             metadata: Arc::clone(&self.metadata),
+            object_store: Arc::clone(&self.object_store),
+            object_path,
             snapshot_id: setup.snapshot_id,
             schema_id: setup.schema_id,
             table_id: setup.table_id,
             column_ids: setup.column_ids,
             schema_with_ids,
             writer: Some(writer),
-            file_path,
             catalog_path,
             path_is_relative,
             row_count: 0,
@@ -124,7 +131,7 @@ impl DuckLakeTableWriter {
     }
 
     /// Write batches to a table, replacing any existing data.
-    pub fn write_table(
+    pub async fn write_table(
         &self,
         schema_name: &str,
         table_name: &str,
@@ -144,11 +151,11 @@ impl DuckLakeTableWriter {
             session.write_batch(batch)?;
         }
 
-        session.finish()
+        session.finish().await
     }
 
     /// Write batches to a table, appending to existing data.
-    pub fn append_table(
+    pub async fn append_table(
         &self,
         schema_name: &str,
         table_name: &str,
@@ -168,22 +175,23 @@ impl DuckLakeTableWriter {
             session.write_batch(batch)?;
         }
 
-        session.finish()
+        session.finish().await
     }
 }
 
-/// Streaming write session. Dropped sessions clean up orphaned files automatically.
+/// Streaming write session. Buffer is dropped if not finished (no data uploaded).
 #[derive(Debug)]
 pub struct TableWriteSession {
     metadata: Arc<dyn MetadataWriter>,
+    object_store: Arc<dyn ObjectStore>,
+    object_path: ObjectPath,
     snapshot_id: i64,
     schema_id: i64,
     table_id: i64,
     #[allow(dead_code)]
     column_ids: Vec<i64>,
     schema_with_ids: SchemaRef,
-    writer: Option<ArrowWriter<File>>,
-    file_path: PathBuf,
+    writer: Option<ArrowWriter<Vec<u8>>>,
     /// Path to register in catalog (may be relative filename or absolute path)
     catalog_path: String,
     /// Whether the catalog_path is relative to table path
@@ -246,18 +254,24 @@ impl TableWriteSession {
         self.snapshot_id
     }
 
-    pub fn file_path(&self) -> &std::path::Path {
-        &self.file_path
+    /// Returns the object path that will be written to
+    pub fn file_path(&self) -> &str {
+        self.object_path.as_ref()
     }
 
-    pub fn finish(mut self) -> Result<WriteResult> {
+    pub async fn finish(mut self) -> Result<WriteResult> {
         let writer = self.writer.take().ok_or_else(|| {
             crate::error::DuckLakeError::Internal("Writer already closed".to_string())
         })?;
-        writer.close()?;
+        let buffer = writer.into_inner()?;
 
-        let file_size = std::fs::metadata(&self.file_path)?.len() as i64;
-        let footer_size = calculate_footer_size(&self.file_path)?;
+        let file_size = buffer.len() as i64;
+        let footer_size = calculate_footer_size_from_bytes(&buffer)?;
+
+        // Upload via object_store
+        self.object_store
+            .put(&self.object_path, PutPayload::from(buffer))
+            .await?;
 
         let mut file_info = DataFileInfo::new(&self.catalog_path, file_size, self.row_count)
             .with_footer_size(footer_size);
@@ -277,13 +291,7 @@ impl TableWriteSession {
     }
 }
 
-impl Drop for TableWriteSession {
-    fn drop(&mut self) {
-        if self.writer.is_some() {
-            let _ = std::fs::remove_file(&self.file_path);
-        }
-    }
-}
+// Drop is a no-op: buffer is simply dropped, nothing was uploaded to the store.
 
 fn arrow_schema_to_column_defs(schema: &Schema) -> Result<Vec<ColumnDef>> {
     schema
@@ -316,18 +324,14 @@ fn build_schema_with_field_ids(schema: &Schema, column_ids: &[i64]) -> Schema {
     Schema::new_with_metadata(fields, schema.metadata().clone())
 }
 
-fn calculate_footer_size(path: &std::path::Path) -> Result<i64> {
-    let mut file = File::open(path)?;
-    let file_size = file.metadata()?.len();
-    if file_size < 8 {
+fn calculate_footer_size_from_bytes(buffer: &[u8]) -> Result<i64> {
+    if buffer.len() < 8 {
         return Err(crate::error::DuckLakeError::Internal(
             "Invalid Parquet file: too small".to_string(),
         ));
     }
 
-    file.seek(SeekFrom::End(-8))?;
-    let mut footer_bytes = [0u8; 8];
-    std::io::Read::read_exact(&mut file, &mut footer_bytes)?;
+    let footer_bytes = &buffer[buffer.len() - 8..];
 
     if &footer_bytes[4..8] != b"PAR1" {
         return Err(crate::error::DuckLakeError::Internal(
@@ -339,48 +343,6 @@ fn calculate_footer_size(path: &std::path::Path) -> Result<i64> {
         i32::from_le_bytes([footer_bytes[0], footer_bytes[1], footer_bytes[2], footer_bytes[3]])
             as i64;
     Ok(metadata_len + 8)
-}
-
-#[allow(dead_code)]
-fn write_parquet_with_field_ids(
-    path: &std::path::Path,
-    batches: &[RecordBatch],
-    column_ids: &[i64],
-) -> Result<(i64, i64, i64)> {
-    let original_schema = batches[0].schema();
-
-    // Build schema with field_id metadata
-    let schema_with_ids = build_schema_with_field_ids(&original_schema, column_ids);
-    let schema_ref: SchemaRef = Arc::new(schema_with_ids);
-
-    // Create writer properties
-    let props = WriterProperties::builder()
-        .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_2_0)
-        .build();
-
-    // Create file and writer
-    let file = File::create(path)?;
-    let mut writer = ArrowWriter::try_new(file, schema_ref.clone(), Some(props))?;
-
-    // Write all batches
-    let mut total_rows = 0i64;
-    for batch in batches {
-        // Remap batch to use schema with field_ids
-        let batch_with_ids = RecordBatch::try_new(schema_ref.clone(), batch.columns().to_vec())?;
-        writer.write(&batch_with_ids)?;
-        total_rows += batch.num_rows() as i64;
-    }
-
-    // Close writer
-    let _ = writer.close()?;
-
-    // Get file size
-    let file_size = std::fs::metadata(path)?.len() as i64;
-
-    // Calculate actual footer size
-    let footer_size = calculate_footer_size(path)?;
-
-    Ok((file_size, footer_size, total_rows))
 }
 
 #[cfg(test)]
@@ -431,14 +393,14 @@ mod tests {
     }
 
     #[test]
-    fn test_write_parquet_with_field_ids() {
+    fn test_write_parquet_to_buffer_with_field_ids() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             Field::new("name", DataType::Utf8, true),
         ]));
 
         let batch = RecordBatch::try_new(
-            schema,
+            schema.clone(),
             vec![
                 Arc::new(Int32Array::from(vec![1, 2, 3])),
                 Arc::new(StringArray::from(vec!["a", "b", "c"])),
@@ -446,49 +408,51 @@ mod tests {
         )
         .unwrap();
 
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.parquet");
-
         let column_ids = vec![10, 20];
-        let (file_size, footer_size, record_count) =
-            write_parquet_with_field_ids(&file_path, &[batch], &column_ids).unwrap();
+        let schema_with_ids = Arc::new(build_schema_with_field_ids(&schema, &column_ids));
+
+        let props = WriterProperties::builder()
+            .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_2_0)
+            .build();
+        let mut writer =
+            ArrowWriter::try_new(Vec::new(), schema_with_ids.clone(), Some(props)).unwrap();
+
+        let batch_with_ids =
+            RecordBatch::try_new(schema_with_ids, batch.columns().to_vec()).unwrap();
+        writer.write(&batch_with_ids).unwrap();
+        let buffer = writer.into_inner().unwrap();
+
+        let file_size = buffer.len() as i64;
+        let footer_size = calculate_footer_size_from_bytes(&buffer).unwrap();
 
         assert!(file_size > 0);
         assert!(footer_size > 0);
-        assert!(footer_size < file_size); // Footer should be smaller than file
-        assert_eq!(record_count, 3);
-
-        // Verify field_ids by reading back
-        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-        let file = File::open(&file_path).unwrap();
-        let reader = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
-        let metadata = reader.metadata();
-
-        let schema_descr = metadata.file_metadata().schema_descr();
-        for i in 0..schema_descr.num_columns() {
-            let column = schema_descr.column(i);
-            let basic_info = column.self_type().get_basic_info();
-            assert!(basic_info.has_id(), "Column {} should have field_id", i);
-        }
+        assert!(footer_size < file_size);
     }
 
     #[test]
-    fn test_calculate_footer_size() {
+    fn test_calculate_footer_size_from_bytes() {
         let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
 
         let batch =
             RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![1, 2, 3]))]).unwrap();
 
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("footer_test.parquet");
+        let props = WriterProperties::builder()
+            .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_2_0)
+            .build();
+        let schema_with_ids = Arc::new(build_schema_with_field_ids(&batch.schema(), &[1]));
+        let mut writer =
+            ArrowWriter::try_new(Vec::new(), schema_with_ids.clone(), Some(props)).unwrap();
 
-        let column_ids = vec![1];
-        write_parquet_with_field_ids(&file_path, &[batch], &column_ids).unwrap();
+        let batch_with_ids =
+            RecordBatch::try_new(schema_with_ids, batch.columns().to_vec()).unwrap();
+        writer.write(&batch_with_ids).unwrap();
+        let buffer = writer.into_inner().unwrap();
 
-        let footer_size = calculate_footer_size(&file_path).unwrap();
+        let footer_size = calculate_footer_size_from_bytes(&buffer).unwrap();
 
         // Footer should be reasonable size (metadata + 8 bytes)
         assert!(footer_size >= 8);
-        assert!(footer_size < 10000); // Shouldn't be huge for a simple file
+        assert!(footer_size < 10000);
     }
 }
