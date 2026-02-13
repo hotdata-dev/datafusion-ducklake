@@ -95,9 +95,6 @@ pub struct DuckLakeTable {
     /// Metadata writer for write operations (when write feature is enabled)
     #[cfg(feature = "write")]
     writer: Option<Arc<dyn MetadataWriter>>,
-    /// Data path for write operations (when write feature is enabled)
-    #[cfg(feature = "write")]
-    data_path: Option<String>,
 }
 
 impl std::fmt::Debug for DuckLakeTable {
@@ -172,8 +169,6 @@ impl DuckLakeTable {
             schema_name: None,
             #[cfg(feature = "write")]
             writer: None,
-            #[cfg(feature = "write")]
-            data_path: None,
         })
     }
 
@@ -395,17 +390,10 @@ impl DuckLakeTable {
     /// # Arguments
     /// * `schema_name` - Name of the schema this table belongs to
     /// * `writer` - Metadata writer for catalog operations
-    /// * `data_path` - Base path for data files
     #[cfg(feature = "write")]
-    pub fn with_writer(
-        mut self,
-        schema_name: String,
-        writer: Arc<dyn MetadataWriter>,
-        data_path: String,
-    ) -> Self {
+    pub fn with_writer(mut self, schema_name: String, writer: Arc<dyn MetadataWriter>) -> Self {
         self.schema_name = Some(schema_name);
         self.writer = Some(writer);
-        self.data_path = Some(data_path);
         self
     }
 
@@ -588,10 +576,6 @@ impl TableProvider for DuckLakeTable {
             DataFusionError::Internal("Schema name not set for writable table".to_string())
         })?;
 
-        let data_path = self.data_path.as_ref().ok_or_else(|| {
-            DataFusionError::Internal("Data path not set for writable table".to_string())
-        })?;
-
         let write_mode = match insert_op {
             InsertOp::Append => WriteMode::Append,
             InsertOp::Overwrite | InsertOp::Replace => WriteMode::Replace,
@@ -605,7 +589,6 @@ impl TableProvider for DuckLakeTable {
             self.schema(),
             write_mode,
             self.object_store_url.clone(),
-            data_path.clone(),
         )))
     }
 }

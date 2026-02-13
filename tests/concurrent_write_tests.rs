@@ -159,11 +159,12 @@ async fn test_write_session_cleanup_on_drop() {
     let (writer, _): (SqliteMetadataWriter, _) = create_test_writer(&temp_dir).await;
     let writer: Arc<dyn MetadataWriter> = Arc::new(writer);
     let schema = create_user_schema();
+    let object_store = create_object_store();
 
     // Dropped session should NOT upload data (buffer is just dropped)
     let file_path_str = {
         let table_writer =
-            DuckLakeTableWriter::new(Arc::clone(&writer), create_object_store()).unwrap();
+            DuckLakeTableWriter::new(Arc::clone(&writer), Arc::clone(&object_store)).unwrap();
         let mut session = table_writer
             .begin_write("main", "dropped_table", &schema, WriteMode::Replace)
             .unwrap();
@@ -172,16 +173,16 @@ async fn test_write_session_cleanup_on_drop() {
         session.file_path().to_string()
     };
     // With buffer approach, no file is created until finish() is called
-    let path = std::path::Path::new(&file_path_str);
+    let dropped_path = object_store::path::Path::from(file_path_str);
     assert!(
-        !path.exists(),
-        "No file should exist since session was dropped without finish()"
+        object_store.get(&dropped_path).await.is_err(),
+        "No object should exist since session was dropped without finish()"
     );
 
-    // Finished session should upload and keep file
+    // Finished session should upload the file
     let finished_path_str = {
         let table_writer =
-            DuckLakeTableWriter::new(Arc::clone(&writer), create_object_store()).unwrap();
+            DuckLakeTableWriter::new(Arc::clone(&writer), Arc::clone(&object_store)).unwrap();
         let mut session = table_writer
             .begin_write("main", "finished_table", &schema, WriteMode::Replace)
             .unwrap();
@@ -191,10 +192,11 @@ async fn test_write_session_cleanup_on_drop() {
         session.finish().await.unwrap();
         p
     };
-    // LocalFileSystem stores files at /<object_path>, so prepend /
-    let finished_fs_path = format!("/{}", finished_path_str);
-    let finished_path = std::path::Path::new(&finished_fs_path);
-    assert!(finished_path.exists(), "Finished file should exist");
+    let finished_path = object_store::path::Path::from(finished_path_str);
+    assert!(
+        object_store.get(&finished_path).await.is_ok(),
+        "Finished file should exist in object store"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

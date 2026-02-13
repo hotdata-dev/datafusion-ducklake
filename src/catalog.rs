@@ -20,8 +20,6 @@ use crate::metadata_writer::MetadataWriter;
 struct WriteConfig {
     /// Metadata writer for catalog operations
     writer: Arc<dyn MetadataWriter>,
-    /// Base data path for writing files
-    data_path: String,
 }
 
 /// DuckLake catalog provider
@@ -123,7 +121,6 @@ impl DuckLakeCatalog {
             catalog_path,
             write_config: Some(WriteConfig {
                 writer,
-                data_path: data_path_str,
             }),
         })
     }
@@ -197,7 +194,7 @@ impl CatalogProvider for DuckLakeCatalog {
                 // Configure writer if this catalog is writable
                 #[cfg(feature = "write")]
                 let schema = if let Some(ref config) = self.write_config {
-                    schema.with_writer(Arc::clone(&config.writer), config.data_path.clone())
+                    schema.with_writer(Arc::clone(&config.writer))
                 } else {
                     schema
                 };

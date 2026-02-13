@@ -39,7 +39,6 @@ pub struct DuckLakeInsertExec {
     arrow_schema: SchemaRef,
     write_mode: WriteMode,
     object_store_url: Arc<ObjectStoreUrl>,
-    data_path: String,
     cache: PlanProperties,
 }
 
@@ -53,7 +52,6 @@ impl DuckLakeInsertExec {
         arrow_schema: SchemaRef,
         write_mode: WriteMode,
         object_store_url: Arc<ObjectStoreUrl>,
-        data_path: String,
     ) -> Self {
         let cache = Self::compute_properties();
         Self {
@@ -64,7 +62,6 @@ impl DuckLakeInsertExec {
             arrow_schema,
             write_mode,
             object_store_url,
-            data_path,
             cache,
         }
     }
@@ -85,7 +82,6 @@ impl Debug for DuckLakeInsertExec {
             .field("schema_name", &self.schema_name)
             .field("table_name", &self.table_name)
             .field("write_mode", &self.write_mode)
-            .field("data_path", &self.data_path)
             .finish_non_exhaustive()
     }
 }
@@ -140,7 +136,6 @@ impl ExecutionPlan for DuckLakeInsertExec {
             Arc::clone(&self.arrow_schema),
             self.write_mode,
             self.object_store_url.clone(),
-            self.data_path.clone(),
         )))
     }
 
