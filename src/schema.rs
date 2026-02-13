@@ -62,9 +62,6 @@ pub struct DuckLakeSchema {
     /// Metadata writer for write operations (when write feature is enabled)
     #[cfg(feature = "write")]
     writer: Option<Arc<dyn MetadataWriter>>,
-    /// Data path for write operations (when write feature is enabled)
-    #[cfg(feature = "write")]
-    data_path: Option<String>,
 }
 
 impl DuckLakeSchema {
@@ -86,23 +83,19 @@ impl DuckLakeSchema {
             schema_path,
             #[cfg(feature = "write")]
             writer: None,
-            #[cfg(feature = "write")]
-            data_path: None,
         }
     }
 
     /// Configure this schema for write operations.
     ///
-    /// This method enables write support by attaching a metadata writer and data path.
+    /// This method enables write support by attaching a metadata writer.
     /// Once configured, the schema can handle CREATE TABLE AS and tables can handle INSERT INTO.
     ///
     /// # Arguments
     /// * `writer` - Metadata writer for catalog operations
-    /// * `data_path` - Base path for data files
     #[cfg(feature = "write")]
-    pub fn with_writer(mut self, writer: Arc<dyn MetadataWriter>, data_path: String) -> Self {
+    pub fn with_writer(mut self, writer: Arc<dyn MetadataWriter>) -> Self {
         self.writer = Some(writer);
-        self.data_path = Some(data_path);
         self
     }
 }
@@ -155,14 +148,8 @@ impl SchemaProvider for DuckLakeSchema {
 
                 // Configure writer if this schema is writable
                 #[cfg(feature = "write")]
-                let table = if let (Some(writer), Some(data_path)) =
-                    (self.writer.as_ref(), self.data_path.as_ref())
-                {
-                    table.with_writer(
-                        self.schema_name.clone(),
-                        Arc::clone(writer),
-                        data_path.clone(),
-                    )
+                let table = if let Some(writer) = self.writer.as_ref() {
+                    table.with_writer(self.schema_name.clone(), Arc::clone(writer))
                 } else {
                     table
                 };
@@ -201,10 +188,6 @@ impl SchemaProvider for DuckLakeSchema {
             )
         })?;
 
-        let data_path = self.data_path.as_ref().ok_or_else(|| {
-            DataFusionError::Internal("Data path not set for writable schema".to_string())
-        })?;
-
         // Convert Arrow schema to ColumnDefs
         let arrow_schema = table.schema();
         let columns: Vec<ColumnDef> = arrow_schema
@@ -234,11 +217,7 @@ impl SchemaProvider for DuckLakeSchema {
             table_path,
         )
         .map_err(|e| DataFusionError::External(Box::new(e)))?
-        .with_writer(
-            self.schema_name.clone(),
-            Arc::clone(writer),
-            data_path.clone(),
-        );
+        .with_writer(self.schema_name.clone(), Arc::clone(writer));
 
         Ok(Some(Arc::new(writable_table) as Arc<dyn TableProvider>))
     }
