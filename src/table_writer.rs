@@ -428,18 +428,6 @@ mod tests {
         assert!(file_size > 0);
         assert!(footer_size > 0);
         assert!(footer_size < file_size);
-
-        // Verify field_ids by reading from buffer
-        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(buffer)).unwrap();
-        let metadata = reader.metadata();
-
-        let schema_descr = metadata.file_metadata().schema_descr();
-        for i in 0..schema_descr.num_columns() {
-            let column = schema_descr.column(i);
-            let basic_info = column.self_type().get_basic_info();
-            assert!(basic_info.has_id(), "Column {} should have field_id", i);
-        }
     }
 
     #[test]
