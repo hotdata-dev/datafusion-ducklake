@@ -440,11 +440,13 @@ impl TableChangesTable {
             &self.table_path,
             &data_file.path,
             data_file.path_is_relative,
-        )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        );
 
         // Create PartitionedFile with footer size hint if available
-        let mut pf = PartitionedFile::new(&resolved_path, validated_file_size(data_file.file_size_bytes, &resolved_path)?);
+        let mut pf = PartitionedFile::new(
+            &resolved_path,
+            validated_file_size(data_file.file_size_bytes, &resolved_path)?,
+        );
         if let Some(footer_size) = data_file.footer_size {
             if footer_size > 0 {
                 pf = pf.with_metadata_size_hint(footer_size as usize);
@@ -560,8 +562,7 @@ impl TableProvider for TableChangesTable {
                     &self.table_path,
                     &data_file.path,
                     data_file.path_is_relative,
-                )
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                );
                 builder.add_file(&resolved_path, data_file.encryption_key.as_deref());
             }
             let factory = builder.build();
