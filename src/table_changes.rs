@@ -31,6 +31,7 @@ use futures::Stream;
 
 use crate::metadata_provider::{DataFileChange, MetadataProvider};
 use crate::path_resolver::resolve_path;
+use crate::table::validated_file_size;
 
 #[cfg(feature = "encryption")]
 use crate::encryption::EncryptionFactoryBuilder;
@@ -443,9 +444,11 @@ impl TableChangesTable {
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         // Create PartitionedFile with footer size hint if available
-        let mut pf = PartitionedFile::new(&resolved_path, data_file.file_size_bytes as u64);
+        let mut pf = PartitionedFile::new(&resolved_path, validated_file_size(data_file.file_size_bytes, &resolved_path)?);
         if let Some(footer_size) = data_file.footer_size {
-            pf = pf.with_metadata_size_hint(footer_size as usize);
+            if footer_size > 0 {
+                pf = pf.with_metadata_size_hint(footer_size as usize);
+            }
         }
 
         // Determine what to read from Parquet
