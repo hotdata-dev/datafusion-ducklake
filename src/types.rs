@@ -293,7 +293,12 @@ pub fn build_read_schema_with_field_id_mapping(
         .iter()
         .map(|col| {
             let data_type = ducklake_to_arrow_type(&col.column_type)?;
-            let field_id = col.column_id as i32;
+            let field_id = i32::try_from(col.column_id).map_err(|_| {
+                DuckLakeError::Internal(format!(
+                    "column_id {} for column '{}' exceeds i32 range for Parquet field_id",
+                    col.column_id, col.column_name
+                ))
+            })?;
 
             let (read_name, needs_rename) =
                 if let Some(parquet_name) = parquet_field_ids.get(&field_id) {
@@ -745,5 +750,70 @@ mod tests {
             },
             _ => panic!("Expected UnsupportedType error when building schema with complex type"),
         }
+    }
+
+    #[test]
+    fn test_column_id_i32_max_succeeds() {
+        let columns = vec![DuckLakeTableColumn {
+            column_id: i32::MAX as i64,
+            column_name: "id".to_string(),
+            column_type: "int32".to_string(),
+            is_nullable: true,
+        }];
+
+        let mut parquet_field_ids = HashMap::new();
+        parquet_field_ids.insert(i32::MAX, "id".to_string());
+
+        let result = build_read_schema_with_field_id_mapping(&columns, &parquet_field_ids);
+        assert!(result.is_ok(), "column_id = i32::MAX should succeed");
+    }
+
+    #[test]
+    fn test_column_id_overflow_returns_error() {
+        let columns = vec![DuckLakeTableColumn {
+            column_id: i32::MAX as i64 + 1, // 2147483648, exceeds i32 range
+            column_name: "id".to_string(),
+            column_type: "int32".to_string(),
+            is_nullable: true,
+        }];
+
+        let parquet_field_ids = HashMap::new();
+
+        let result = build_read_schema_with_field_id_mapping(&columns, &parquet_field_ids);
+        assert!(result.is_err(), "column_id > i32::MAX should fail");
+        match result {
+            Err(DuckLakeError::Internal(msg)) => {
+                assert!(
+                    msg.contains("2147483648"),
+                    "Error should contain the overflowing value: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("exceeds i32 range"),
+                    "Error should explain the issue: {}",
+                    msg
+                );
+            },
+            _ => panic!("Expected Internal error for column_id overflow"),
+        }
+    }
+
+    #[test]
+    fn test_column_id_negative_within_i32_range_succeeds() {
+        let columns = vec![DuckLakeTableColumn {
+            column_id: -1,
+            column_name: "id".to_string(),
+            column_type: "int32".to_string(),
+            is_nullable: true,
+        }];
+
+        let mut parquet_field_ids = HashMap::new();
+        parquet_field_ids.insert(-1_i32, "id".to_string());
+
+        let result = build_read_schema_with_field_id_mapping(&columns, &parquet_field_ids);
+        assert!(
+            result.is_ok(),
+            "Negative column_id within i32 range should succeed"
+        );
     }
 }
