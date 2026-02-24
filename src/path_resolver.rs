@@ -113,11 +113,16 @@ fn validate_path(path: &str) -> Result<()> {
 /// # Ok::<(), datafusion_ducklake::DuckLakeError>(())
 /// ```
 pub fn parse_object_store_url(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
+    // Trim leading/trailing whitespace (#64)
+    let data_path = data_path.trim();
+
     validate_path(data_path)?;
 
-    if data_path.starts_with("s3://") {
+    // Use case-insensitive scheme matching per RFC 3986 (#61)
+    let lower = data_path.to_ascii_lowercase();
+    if lower.starts_with("s3://") {
         parse_s3_url(data_path)
-    } else if data_path.starts_with("file://") {
+    } else if lower.starts_with("file://") {
         parse_file_url(data_path)
     } else {
         parse_local_path(data_path)
@@ -771,8 +776,76 @@ mod tests {
 
     #[test]
     fn test_s3_url_uppercase_scheme() {
-        let result = parse_object_store_url("S3://bucket/path");
-        assert!(result.is_err());
+        // URL schemes are case-insensitive per RFC 3986 (#61)
+        let (url, path) = parse_object_store_url("S3://bucket/path").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("s3://bucket/").unwrap());
+        assert_eq!(path, "/path");
+    }
+
+    #[test]
+    fn test_s3_url_mixed_case_scheme() {
+        let (url, path) = parse_object_store_url("s3://bucket/data").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("s3://bucket/").unwrap());
+        assert_eq!(path, "/data");
+    }
+
+    #[test]
+    fn test_file_url_uppercase_scheme() {
+        let (url, path) = parse_object_store_url("FILE:///tmp/data").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/tmp/data");
+    }
+
+    #[test]
+    fn test_file_url_mixed_case_scheme() {
+        let (url, path) = parse_object_store_url("File:///tmp/data").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/tmp/data");
+    }
+
+    #[test]
+    fn test_whitespace_trimming_s3() {
+        // Leading/trailing whitespace should be trimmed (#64)
+        let (url, path) = parse_object_store_url("  s3://bucket/data  ").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("s3://bucket/").unwrap());
+        assert_eq!(path, "/data");
+    }
+
+    #[test]
+    fn test_whitespace_trimming_file() {
+        let (url, path) = parse_object_store_url("  file:///tmp/data  ").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/tmp/data");
+    }
+
+    #[test]
+    fn test_file_url_non_ascii_preserved() {
+        // Non-ASCII characters in file:// URLs should be preserved (#60)
+        let (url, path) = parse_object_store_url("file:///tmp/données/données").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/tmp/données/données");
+    }
+
+    #[test]
+    fn test_file_url_unicode_preserved() {
+        let (url, path) = parse_object_store_url("file:///home/用户/数据").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/home/用户/数据");
+    }
+
+    #[test]
+    fn test_file_url_spaces_preserved() {
+        let (url, path) = parse_object_store_url("file:///tmp/my data/file").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/tmp/my data/file");
+    }
+
+    #[test]
+    fn test_whitespace_trimming_with_uppercase_scheme() {
+        // Combined: whitespace + uppercase scheme
+        let (url, path) = parse_object_store_url("  S3://bucket/data  ").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("s3://bucket/").unwrap());
+        assert_eq!(path, "/data");
     }
 
     #[test]
