@@ -423,7 +423,9 @@ mod tests {
             "/data/".to_string(),
         );
 
-        let schema_resolver = catalog_resolver.child_resolver("/other/schema/", false).unwrap();
+        let schema_resolver = catalog_resolver
+            .child_resolver("/other/schema/", false)
+            .unwrap();
         assert_eq!(schema_resolver.base_path(), "/other/schema/");
     }
 
@@ -520,7 +522,10 @@ mod tests {
     #[test]
     fn test_join_paths_double_slash_in_relative() {
         // If relative path starts with /, we preserve it (though it's unusual)
-        assert_eq!(join_paths("/data/", "/absolute").unwrap(), "/data//absolute");
+        assert_eq!(
+            join_paths("/data/", "/absolute").unwrap(),
+            "/data//absolute"
+        );
     }
 
     #[test]
@@ -535,7 +540,9 @@ mod tests {
         assert_eq!(schema_resolver.base_path(), "/catalog/schema1/");
 
         // Second child is absolute (overrides)
-        let table_resolver = schema_resolver.child_resolver("/absolute/table/", false).unwrap();
+        let table_resolver = schema_resolver
+            .child_resolver("/absolute/table/", false)
+            .unwrap();
         assert_eq!(table_resolver.base_path(), "/absolute/table/");
 
         // Third child is relative to the absolute path
@@ -583,10 +590,14 @@ mod tests {
             Arc::new(ObjectStoreUrl::parse("s3://data-lake/").unwrap())
         );
 
-        let table_resolver = schema_resolver.child_resolver("transactions/", true).unwrap();
+        let table_resolver = schema_resolver
+            .child_resolver("transactions/", true)
+            .unwrap();
         assert_eq!(table_resolver.base_path(), "/prod/sales/transactions/");
 
-        let file_path = table_resolver.resolve("2024/01/data.parquet", true).unwrap();
+        let file_path = table_resolver
+            .resolve("2024/01/data.parquet", true)
+            .unwrap();
         assert_eq!(file_path, "/prod/sales/transactions/2024/01/data.parquet");
     }
 
@@ -602,7 +613,9 @@ mod tests {
         assert_eq!(schema_resolver.base_path(), "/warehouse/prod/");
 
         // Table overrides with absolute path
-        let table_resolver = schema_resolver.child_resolver("/external/data/", false).unwrap();
+        let table_resolver = schema_resolver
+            .child_resolver("/external/data/", false)
+            .unwrap();
         assert_eq!(table_resolver.base_path(), "/external/data/");
 
         // File is relative to the absolute table path
@@ -677,7 +690,9 @@ mod tests {
         let schema_resolver = catalog_resolver.child_resolver("prod/", true).unwrap();
         assert_eq!(schema_resolver.base_path(), "/warehouse/prod/");
 
-        let table_resolver = schema_resolver.child_resolver("sales/transactions/", true).unwrap();
+        let table_resolver = schema_resolver
+            .child_resolver("sales/transactions/", true)
+            .unwrap();
         assert_eq!(
             table_resolver.base_path(),
             "/warehouse/prod/sales/transactions/"
@@ -697,7 +712,9 @@ mod tests {
             "/metadata/".to_string(),
         );
 
-        let schema_resolver = catalog_resolver.child_resolver("/schemas/prod/", false).unwrap();
+        let schema_resolver = catalog_resolver
+            .child_resolver("/schemas/prod/", false)
+            .unwrap();
         assert_eq!(schema_resolver.base_path(), "/schemas/prod/");
 
         let table_resolver = schema_resolver.child_resolver("customers/", true).unwrap();

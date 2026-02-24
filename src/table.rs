@@ -143,7 +143,9 @@ impl DuckLakeTable {
                 if let Some(ref delete_file) = table_file.delete_file {
                     let resolved_delete_path =
                         resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative)
-                        .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+                            .map_err(|e| {
+                                datafusion::error::DataFusionError::External(Box::new(e))
+                            })?;
                     builder.add_file(&resolved_delete_path, delete_file.encryption_key.as_deref());
                 }
             }
