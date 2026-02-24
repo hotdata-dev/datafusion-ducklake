@@ -99,11 +99,12 @@ fn parse_file_url(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
 fn parse_local_path(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
     let has_trailing_slash = data_path.ends_with('/') || data_path.ends_with('\\');
 
-    let absolute_path = std::path::PathBuf::from(data_path)
-        .canonicalize()
-        .map_err(|e| {
-            DuckLakeError::InvalidConfig(format!("Failed to resolve path '{}': {}", data_path, e))
-        })?;
+    // Use std::path::absolute() instead of canonicalize() so that the path
+    // does not need to exist on disk yet. This supports empty catalogs where
+    // the data directory has not been created (#57).
+    let absolute_path = std::path::absolute(data_path).map_err(|e| {
+        DuckLakeError::InvalidConfig(format!("Failed to resolve path '{}': {}", data_path, e))
+    })?;
 
     let object_store_url = ObjectStoreUrl::parse("file:///").map_err(|e| {
         DuckLakeError::InvalidConfig(format!("Failed to create ObjectStoreUrl: {}", e))
@@ -442,14 +443,20 @@ mod tests {
 
     #[test]
     fn test_parse_local_path_nonexistent() {
-        let result = parse_object_store_url("/nonexistent/path/that/does/not/exist");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to resolve path")
-        );
+        // Non-existent paths should now succeed (#57) - the directory does not
+        // need to exist at catalog creation time (e.g., empty catalogs).
+        let (url, path) =
+            parse_object_store_url("/nonexistent/path/that/does/not/exist").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/nonexistent/path/that/does/not/exist");
+    }
+
+    #[test]
+    fn test_parse_local_path_nonexistent_with_trailing_slash() {
+        let (url, path) =
+            parse_object_store_url("/nonexistent/data/path/").unwrap();
+        assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
+        assert_eq!(path, "/nonexistent/data/path/");
     }
 
     #[test]
