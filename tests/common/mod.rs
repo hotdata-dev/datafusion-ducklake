@@ -10,6 +10,18 @@
 
 use anyhow::Result;
 use std::path::Path;
+use std::sync::Once;
+
+static INSTALL_DUCKLAKE: Once = Once::new();
+
+/// Install the ducklake extension exactly once (thread-safe across parallel tests).
+fn ensure_ducklake_installed() {
+    INSTALL_DUCKLAKE.call_once(|| {
+        let conn = duckdb::Connection::open_in_memory().expect("open in-memory duckdb");
+        conn.execute("INSTALL ducklake;", [])
+            .expect("install ducklake extension");
+    });
+}
 
 /// Creates a catalog with a simple table (no deletes)
 ///
@@ -29,7 +41,7 @@ pub fn create_catalog_no_deletes(catalog_path: &Path) -> Result<()> {
     // Use in-memory database to avoid file locking issues
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
@@ -69,7 +81,7 @@ pub fn create_catalog_with_deletes(catalog_path: &Path) -> Result<()> {
     // Use in-memory database to avoid file locking issues
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
@@ -115,7 +127,7 @@ pub fn create_catalog_with_updates(catalog_path: &Path) -> Result<()> {
     // Use in-memory database to avoid file locking issues
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
@@ -170,7 +182,7 @@ pub fn create_catalog_filter_pushdown(catalog_path: &Path) -> Result<()> {
     // Use in-memory database to avoid file locking issues
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
@@ -208,7 +220,7 @@ pub fn create_catalog_filter_pushdown(catalog_path: &Path) -> Result<()> {
 pub fn create_catalog_empty_table(catalog_path: &Path) -> Result<()> {
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
@@ -238,7 +250,7 @@ pub fn create_catalog_empty_table(catalog_path: &Path) -> Result<()> {
 pub fn create_catalog_basic_test(catalog_path: &Path) -> Result<()> {
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
@@ -290,7 +302,7 @@ pub fn to_datafusion_error(e: anyhow::Error) -> datafusion::error::DataFusionErr
 pub fn create_catalog_complex_deletions(catalog_path: &Path) -> Result<()> {
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
@@ -336,7 +348,7 @@ pub fn create_catalog_complex_deletions(catalog_path: &Path) -> Result<()> {
 pub fn create_catalog_multiple_snapshots(catalog_path: &Path) -> Result<()> {
     let conn = duckdb::Connection::open_in_memory()?;
 
-    conn.execute("INSTALL ducklake;", [])?;
+    ensure_ducklake_installed();
     conn.execute("LOAD ducklake;", [])?;
 
     let ducklake_path = format!("ducklake:{}", catalog_path.display());
