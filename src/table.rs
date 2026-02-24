@@ -299,10 +299,10 @@ impl DuckLakeTable {
             &resolved_delete_path,
             validated_file_size(delete_file.file_size_bytes, &resolved_delete_path)?,
         );
-        if let Some(footer_size) = delete_file.footer_size {
-            if footer_size > 0 {
-                pf = pf.with_metadata_size_hint(footer_size as usize);
-            }
+        if let Some(footer_size) = delete_file.footer_size
+            && footer_size > 0
+        {
+            pf = pf.with_metadata_size_hint(footer_size as usize);
         }
 
         // Create file scan config for the delete file
@@ -370,10 +370,10 @@ impl DuckLakeTable {
 
                 // Apply footer size hint if available from DuckLake metadata
                 // This reduces I/O from 2 reads to 1 read per file (especially beneficial for S3/MinIO)
-                if let Some(footer_size) = table_file.file.footer_size {
-                    if footer_size > 0 {
-                        pf = pf.with_metadata_size_hint(footer_size as usize);
-                    }
+                if let Some(footer_size) = table_file.file.footer_size
+                    && footer_size > 0
+                {
+                    pf = pf.with_metadata_size_hint(footer_size as usize);
                 }
 
                 Ok(pf)
@@ -450,10 +450,10 @@ impl DuckLakeTable {
             &resolved_path,
             validated_file_size(table_file.file.file_size_bytes, &resolved_path)?,
         );
-        if let Some(footer_size) = table_file.file.footer_size {
-            if footer_size > 0 {
-                pf = pf.with_metadata_size_hint(footer_size as usize);
-            }
+        if let Some(footer_size) = table_file.file.footer_size
+            && footer_size > 0
+        {
+            pf = pf.with_metadata_size_hint(footer_size as usize);
         }
 
         // Use read_schema (with original Parquet names) for reading

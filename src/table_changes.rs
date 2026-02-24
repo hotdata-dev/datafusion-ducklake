@@ -447,10 +447,10 @@ impl TableChangesTable {
             &resolved_path,
             validated_file_size(data_file.file_size_bytes, &resolved_path)?,
         );
-        if let Some(footer_size) = data_file.footer_size {
-            if footer_size > 0 {
-                pf = pf.with_metadata_size_hint(footer_size as usize);
-            }
+        if let Some(footer_size) = data_file.footer_size
+            && footer_size > 0
+        {
+            pf = pf.with_metadata_size_hint(footer_size as usize);
         }
 
         // Determine what to read from Parquet
