@@ -41,7 +41,11 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
 
         // Temporal types
         "time" => Ok(DataType::Time64(TimeUnit::Microsecond)),
+        "time_s" => Ok(DataType::Time32(TimeUnit::Second)),
+        "time_ms" => Ok(DataType::Time32(TimeUnit::Millisecond)),
+        "time_ns" => Ok(DataType::Time64(TimeUnit::Nanosecond)),
         "date" => Ok(DataType::Date32),
+        "date64" => Ok(DataType::Date64),
         "timestamp" => Ok(DataType::Timestamp(TimeUnit::Microsecond, None)),
         "timestamptz" | "timestamp with time zone" => Ok(DataType::Timestamp(
             TimeUnit::Microsecond,
@@ -54,10 +58,12 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
 
         // String types
         "varchar" | "text" | "string" => Ok(DataType::Utf8),
+        "large_varchar" => Ok(DataType::LargeUtf8),
         "json" => Ok(DataType::Utf8), // JSON stored as UTF8 string
 
         // Binary types
         "blob" | "binary" | "bytea" => Ok(DataType::Binary),
+        "large_blob" => Ok(DataType::LargeBinary),
         "uuid" => Ok(DataType::FixedSizeBinary(16)),
 
         // Geometry types (stored as binary WKB format)
@@ -114,7 +120,12 @@ pub fn arrow_to_ducklake_type(arrow_type: &DataType) -> Result<String> {
         DataType::Float64 => Ok("float64".to_string()),
 
         // Temporal types
-        DataType::Date32 | DataType::Date64 => Ok("date".to_string()),
+        DataType::Date32 => Ok("date".to_string()),
+        DataType::Date64 => Ok("date64".to_string()),
+        DataType::Time32(TimeUnit::Second) => Ok("time_s".to_string()),
+        DataType::Time32(TimeUnit::Millisecond) => Ok("time_ms".to_string()),
+        DataType::Time64(TimeUnit::Microsecond) => Ok("time".to_string()),
+        DataType::Time64(TimeUnit::Nanosecond) => Ok("time_ns".to_string()),
         DataType::Time32(_) | DataType::Time64(_) => Ok("time".to_string()),
         DataType::Timestamp(TimeUnit::Second, None) => Ok("timestamp_s".to_string()),
         DataType::Timestamp(TimeUnit::Millisecond, None) => Ok("timestamp_ms".to_string()),
@@ -124,10 +135,12 @@ pub fn arrow_to_ducklake_type(arrow_type: &DataType) -> Result<String> {
         DataType::Interval(_) => Ok("interval".to_string()),
 
         // String types
-        DataType::Utf8 | DataType::LargeUtf8 => Ok("varchar".to_string()),
+        DataType::Utf8 => Ok("varchar".to_string()),
+        DataType::LargeUtf8 => Ok("large_varchar".to_string()),
 
         // Binary types
-        DataType::Binary | DataType::LargeBinary => Ok("blob".to_string()),
+        DataType::Binary => Ok("blob".to_string()),
+        DataType::LargeBinary => Ok("large_blob".to_string()),
         DataType::FixedSizeBinary(16) => Ok("uuid".to_string()),
         DataType::FixedSizeBinary(_) => Ok("blob".to_string()),
 
@@ -275,35 +288,30 @@ mod tests {
 
     #[test]
     fn test_build_read_schema_with_renamed_columns() {
-        // Simulate: column was originally named "user_id", now renamed to "userId"
         let current_columns = vec![
             DuckLakeTableColumn {
                 column_id: 1,
-                column_name: "userId".to_string(), // Current name (renamed)
+                column_name: "userId".to_string(),
                 column_type: "int32".to_string(),
                 is_nullable: true,
             },
             DuckLakeTableColumn {
                 column_id: 2,
-                column_name: "name".to_string(), // Not renamed
+                column_name: "name".to_string(),
                 column_type: "varchar".to_string(),
                 is_nullable: true,
             },
         ];
 
-        // Parquet file has original names
         let mut parquet_field_ids = HashMap::new();
-        parquet_field_ids.insert(1, "user_id".to_string()); // Original name
-        parquet_field_ids.insert(2, "name".to_string()); // Same name
+        parquet_field_ids.insert(1, "user_id".to_string());
+        parquet_field_ids.insert(2, "name".to_string());
 
         let (read_schema, name_mapping) =
             build_read_schema_with_field_id_mapping(&current_columns, &parquet_field_ids).unwrap();
 
-        // Read schema should have original Parquet names
         assert_eq!(read_schema.field(0).name(), "user_id");
         assert_eq!(read_schema.field(1).name(), "name");
-
-        // Name mapping should map old name to new name
         assert_eq!(name_mapping.len(), 1);
         assert_eq!(name_mapping.get("user_id"), Some(&"userId".to_string()));
     }
@@ -318,18 +326,17 @@ mod tests {
         }];
 
         let mut parquet_field_ids = HashMap::new();
-        parquet_field_ids.insert(1, "id".to_string()); // Same name
+        parquet_field_ids.insert(1, "id".to_string());
 
         let (read_schema, name_mapping) =
             build_read_schema_with_field_id_mapping(&current_columns, &parquet_field_ids).unwrap();
 
         assert_eq!(read_schema.field(0).name(), "id");
-        assert!(name_mapping.is_empty()); // No rename needed
+        assert!(name_mapping.is_empty());
     }
 
     #[test]
     fn test_build_read_schema_no_field_ids() {
-        // External file without field_ids
         let current_columns = vec![DuckLakeTableColumn {
             column_id: 1,
             column_name: "id".to_string(),
@@ -337,12 +344,11 @@ mod tests {
             is_nullable: true,
         }];
 
-        let parquet_field_ids = HashMap::new(); // No field_ids in Parquet
+        let parquet_field_ids = HashMap::new();
 
         let (read_schema, name_mapping) =
             build_read_schema_with_field_id_mapping(&current_columns, &parquet_field_ids).unwrap();
 
-        // Falls back to current column name
         assert_eq!(read_schema.field(0).name(), "id");
         assert!(name_mapping.is_empty());
     }
@@ -361,6 +367,34 @@ mod tests {
         );
         assert_eq!(ducklake_to_arrow_type("varchar").unwrap(), DataType::Utf8);
         assert_eq!(ducklake_to_arrow_type("blob").unwrap(), DataType::Binary);
+    }
+
+    #[test]
+    fn test_precision_preserving_types() {
+        assert_eq!(
+            ducklake_to_arrow_type("date64").unwrap(),
+            DataType::Date64
+        );
+        assert_eq!(
+            ducklake_to_arrow_type("large_varchar").unwrap(),
+            DataType::LargeUtf8
+        );
+        assert_eq!(
+            ducklake_to_arrow_type("large_blob").unwrap(),
+            DataType::LargeBinary
+        );
+        assert_eq!(
+            ducklake_to_arrow_type("time_s").unwrap(),
+            DataType::Time32(TimeUnit::Second)
+        );
+        assert_eq!(
+            ducklake_to_arrow_type("time_ms").unwrap(),
+            DataType::Time32(TimeUnit::Millisecond)
+        );
+        assert_eq!(
+            ducklake_to_arrow_type("time_ns").unwrap(),
+            DataType::Time64(TimeUnit::Nanosecond)
+        );
     }
 
     #[test]
@@ -386,7 +420,6 @@ mod tests {
 
     #[test]
     fn test_unsupported_list_type_errors() {
-        // Test list type returns error
         let result = ducklake_to_arrow_type("list<int32>");
         assert!(result.is_err());
         match result {
@@ -401,7 +434,6 @@ mod tests {
 
     #[test]
     fn test_unsupported_array_type_errors() {
-        // Test array type returns error
         let result = ducklake_to_arrow_type("array<varchar>");
         assert!(result.is_err());
         match result {
@@ -415,7 +447,6 @@ mod tests {
 
     #[test]
     fn test_unsupported_struct_type_errors() {
-        // Test struct type returns error
         let result = ducklake_to_arrow_type("struct<a:int32,b:varchar>");
         assert!(result.is_err());
         match result {
@@ -430,7 +461,6 @@ mod tests {
 
     #[test]
     fn test_unsupported_map_type_errors() {
-        // Test map type returns error
         let result = ducklake_to_arrow_type("map<varchar,int32>");
         assert!(result.is_err());
         match result {
@@ -445,7 +475,6 @@ mod tests {
 
     #[test]
     fn test_nested_complex_types_error() {
-        // Test nested complex types return error
         let result = ducklake_to_arrow_type("list<struct<a:int32,b:varchar>>");
         assert!(result.is_err());
         match result {
@@ -459,7 +488,6 @@ mod tests {
 
     #[test]
     fn test_unknown_type_error() {
-        // Test completely unknown types also return error
         let result = ducklake_to_arrow_type("completely_unknown_type");
         assert!(result.is_err());
         match result {
@@ -493,16 +521,39 @@ mod tests {
             "float64"
         );
         assert_eq!(arrow_to_ducklake_type(&DataType::Utf8).unwrap(), "varchar");
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::LargeUtf8).unwrap(),
+            "large_varchar"
+        );
         assert_eq!(arrow_to_ducklake_type(&DataType::Binary).unwrap(), "blob");
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::LargeBinary).unwrap(),
+            "large_blob"
+        );
     }
 
     #[test]
     fn test_arrow_to_ducklake_temporal_types() {
         assert_eq!(arrow_to_ducklake_type(&DataType::Date32).unwrap(), "date");
-        assert_eq!(arrow_to_ducklake_type(&DataType::Date64).unwrap(), "date");
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Date64).unwrap(),
+            "date64"
+        );
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Time32(TimeUnit::Second)).unwrap(),
+            "time_s"
+        );
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Time32(TimeUnit::Millisecond)).unwrap(),
+            "time_ms"
+        );
         assert_eq!(
             arrow_to_ducklake_type(&DataType::Time64(TimeUnit::Microsecond)).unwrap(),
             "time"
+        );
+        assert_eq!(
+            arrow_to_ducklake_type(&DataType::Time64(TimeUnit::Nanosecond)).unwrap(),
+            "time_ns"
         );
         assert_eq!(
             arrow_to_ducklake_type(&DataType::Timestamp(TimeUnit::Microsecond, None)).unwrap(),
@@ -536,7 +587,6 @@ mod tests {
             arrow_to_ducklake_type(&DataType::FixedSizeBinary(16)).unwrap(),
             "uuid"
         );
-        // Non-16 byte fixed size binary becomes blob
         assert_eq!(
             arrow_to_ducklake_type(&DataType::FixedSizeBinary(32)).unwrap(),
             "blob"
@@ -545,16 +595,26 @@ mod tests {
 
     #[test]
     fn test_arrow_to_ducklake_roundtrip() {
-        // Verify roundtrip: arrow -> ducklake -> arrow for common types
+        // Verify roundtrip: arrow -> ducklake -> arrow for all supported types
         let test_types = vec![
             DataType::Boolean,
             DataType::Int32,
             DataType::Int64,
             DataType::Float64,
             DataType::Utf8,
+            DataType::LargeUtf8,
             DataType::Binary,
+            DataType::LargeBinary,
             DataType::Date32,
+            DataType::Date64,
+            DataType::Time32(TimeUnit::Second),
+            DataType::Time32(TimeUnit::Millisecond),
+            DataType::Time64(TimeUnit::Microsecond),
+            DataType::Time64(TimeUnit::Nanosecond),
+            DataType::Timestamp(TimeUnit::Second, None),
+            DataType::Timestamp(TimeUnit::Millisecond, None),
             DataType::Timestamp(TimeUnit::Microsecond, None),
+            DataType::Timestamp(TimeUnit::Nanosecond, None),
             DataType::Decimal128(10, 2),
         ];
 
@@ -595,7 +655,6 @@ mod tests {
 
     #[test]
     fn test_build_schema_with_unsupported_type() {
-        // Test that build_arrow_schema propagates complex type errors
         let columns = vec![
             DuckLakeTableColumn {
                 column_id: 1,
