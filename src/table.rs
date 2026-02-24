@@ -310,7 +310,7 @@ impl DuckLakeTable {
             .map_err(|e| {
                 if is_object_store_not_found(&e) {
                     DataFusionError::Execution(format!(
-                        "Delete file '{}' referenced in catalog metadata was not found.                          This may indicate catalog corruption or that the file was                          deleted outside of DuckLake.",
+                        "Delete file '{}' referenced in catalog metadata was not found. This may indicate catalog corruption or that the file was deleted outside of DuckLake.",
                         resolved_delete_path
                     ))
                 } else {
