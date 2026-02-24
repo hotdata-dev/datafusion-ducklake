@@ -33,7 +33,7 @@ pub struct DuckLakeCatalog {
     provider: Arc<dyn MetadataProvider>,
     /// Snapshot ID this catalog is bound to (for query consistency)
     snapshot_id: i64,
-    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///
+    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
     catalog_path: String,

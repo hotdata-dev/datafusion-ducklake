@@ -52,7 +52,7 @@ fn validate_table_name(name: &str) -> DataFusionResult<()> {
 pub struct DuckLakeSchema {
     schema_id: i64,
     schema_name: String,
-    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///
+    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     provider: Arc<dyn MetadataProvider>,
     /// Cached snapshot_id from catalog.schema() call

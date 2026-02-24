@@ -15,7 +15,7 @@ fn validate_no_null_bytes(path: &str) -> Result<()> {
             path.replace('\0', "\\0")
         )));
     }
-    if path.to_ascii_lowercase().contains("%00") {
+    if path.contains("%00") {
         return Err(DuckLakeError::InvalidConfig(format!(
             "Path contains URL-encoded null byte (%00): {}",
             path
@@ -24,21 +24,48 @@ fn validate_no_null_bytes(path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Simple percent-decode of path-relevant characters for traversal detection
+fn percent_decode_path(path: &str) -> String {
+    let mut result = String::with_capacity(path.len());
+    let bytes = path.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(&path[i + 1..i + 3], 16)
+        {
+            result.push(byte as char);
+            i += 3;
+            continue;
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+/// Check if any path component is ".." when split on `/` and `\`
+fn has_dotdot_component(path: &str) -> bool {
+    path.split(['/', '\\']).any(|c| c == "..")
+}
+
 /// Validate that a path does not contain path traversal sequences
 fn validate_no_path_traversal(path: &str) -> Result<()> {
-    if path.to_ascii_lowercase().contains("%2e%2e") {
+    // Check literal '..' components (split on / and \)
+    if has_dotdot_component(path) {
+        return Err(DuckLakeError::InvalidConfig(format!(
+            "Path traversal detected: path contains '..' component: {}",
+            path
+        )));
+    }
+    // Also check the percent-decoded path to catch encoded variants
+    // (e.g., %2e%2e%2f, ..%2f, %2e%2e%2F, ..%2F, etc.)
+    let decoded = percent_decode_path(path);
+    if decoded != path && has_dotdot_component(&decoded) {
         return Err(DuckLakeError::InvalidConfig(format!(
             "Path traversal detected: URL-encoded '..': {}",
             path
         )));
-    }
-    for component in path.split(['/', '\\']) {
-        if component == ".." {
-            return Err(DuckLakeError::InvalidConfig(format!(
-                "Path traversal detected: path contains '..' component: {}",
-                path
-            )));
-        }
     }
     Ok(())
 }
@@ -918,6 +945,37 @@ mod tests {
             "/data/".to_string(),
         );
         let result = resolver.child_resolver("../secret/", true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reject_dotdot_percent_encoded_slash() {
+        // ..%2f bypasses literal `/` split — must be caught via percent-decoding
+        let result = resolve_path("/data/", "..%2f..%2fetc", true);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Path traversal"), "error was: {}", err);
+    }
+
+    #[test]
+    fn test_reject_dotdot_percent_encoded_slash_uppercase() {
+        let result = resolve_path("/data/", "..%2F..%2Fetc", true);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Path traversal"), "error was: {}", err);
+    }
+
+    #[test]
+    fn test_reject_fully_encoded_dotdot_slash() {
+        // %2e%2e%2f = ../
+        let result = resolve_path("/data/", "%2e%2e%2fetc/passwd", true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reject_mixed_encoded_dotdot_slash() {
+        // ..%2f with literal dots and encoded slash
+        let result = resolve_path("/data/", "sub/..%2fsecret", true);
         assert!(result.is_err());
     }
 
