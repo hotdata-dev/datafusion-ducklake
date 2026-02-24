@@ -306,7 +306,17 @@ impl DuckLakeTable {
             .collect::<Vec<_>>()
             .await
             .into_iter()
-            .collect::<DataFusionResult<Vec<_>>>()?;
+            .collect::<DataFusionResult<Vec<_>>>()
+            .map_err(|e| {
+                if is_object_store_not_found(&e) {
+                    DataFusionError::Execution(format!(
+                        "Delete file '{}' referenced in catalog metadata was not found.                          This may indicate catalog corruption or that the file was                          deleted outside of DuckLake.",
+                        resolved_delete_path
+                    ))
+                } else {
+                    e
+                }
+            })?;
 
         // Extract all positions from all batches
         let mut positions = HashSet::new();
@@ -636,4 +646,19 @@ fn extract_deleted_positions_from_batch(
     }
 
     Ok(())
+}
+
+/// Check if a DataFusion error is caused by an object store NotFound error.
+fn is_object_store_not_found(err: &DataFusionError) -> bool {
+    if let DataFusionError::ObjectStore(os_err) = err {
+        return matches!(os_err.as_ref(), object_store::Error::NotFound { .. });
+    }
+    let mut source = std::error::Error::source(err);
+    while let Some(e) = source {
+        if let Some(os_err) = e.downcast_ref::<object_store::Error>() {
+            return matches!(os_err, object_store::Error::NotFound { .. });
+        }
+        source = e.source();
+    }
+    false
 }
