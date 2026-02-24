@@ -371,10 +371,7 @@ mod tests {
 
     #[test]
     fn test_precision_preserving_types() {
-        assert_eq!(
-            ducklake_to_arrow_type("date64").unwrap(),
-            DataType::Date64
-        );
+        assert_eq!(ducklake_to_arrow_type("date64").unwrap(), DataType::Date64);
         assert_eq!(
             ducklake_to_arrow_type("large_varchar").unwrap(),
             DataType::LargeUtf8
@@ -535,10 +532,7 @@ mod tests {
     #[test]
     fn test_arrow_to_ducklake_temporal_types() {
         assert_eq!(arrow_to_ducklake_type(&DataType::Date32).unwrap(), "date");
-        assert_eq!(
-            arrow_to_ducklake_type(&DataType::Date64).unwrap(),
-            "date64"
-        );
+        assert_eq!(arrow_to_ducklake_type(&DataType::Date64).unwrap(), "date64");
         assert_eq!(
             arrow_to_ducklake_type(&DataType::Time32(TimeUnit::Second)).unwrap(),
             "time_s"
