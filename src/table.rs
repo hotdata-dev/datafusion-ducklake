@@ -135,17 +135,13 @@ impl DuckLakeTable {
                     &table_path,
                     &table_file.file.path,
                     table_file.file.path_is_relative,
-                )
-                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+                )?;
                 builder.add_file(&resolved_path, table_file.file.encryption_key.as_deref());
 
                 // Also add delete file encryption key if present
                 if let Some(ref delete_file) = table_file.delete_file {
                     let resolved_delete_path =
-                        resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative)
-                            .map_err(|e| {
-                                datafusion::error::DataFusionError::External(Box::new(e))
-                            })?;
+                        resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative)?;
                     builder.add_file(&resolved_delete_path, delete_file.encryption_key.as_deref());
                 }
             }

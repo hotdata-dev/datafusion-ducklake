@@ -5,6 +5,7 @@
 
 use crate::{DuckLakeError, Result};
 use datafusion::datasource::object_store::ObjectStoreUrl;
+use percent_encoding::percent_decode_str;
 use std::sync::Arc;
 
 /// Validate that a path does not contain null bytes (literal or URL-encoded)
@@ -57,6 +58,10 @@ fn validate_no_path_traversal(path: &str) -> Result<()> {
             "Path traversal detected: path contains '..' component: {}",
             path
         )));
+    }
+    // Fast path: skip allocation if no percent-encoded characters
+    if !path.contains('%') {
+        return Ok(());
     }
     // Also check the percent-decoded path to catch encoded variants
     // (e.g., %2e%2e%2f, ..%2f, %2e%2e%2F, ..%2F, etc.)
@@ -146,7 +151,20 @@ fn parse_file_url(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
         DuckLakeError::InvalidConfig(format!("Failed to create ObjectStoreUrl: {}", e))
     })?;
 
-    Ok((object_store_url, url.path().to_owned()))
+    // Decode percent-encoded characters to preserve non-ASCII in local filesystem paths (#60).
+    // url::Url::parse() percent-encodes UTF-8 characters, but the local filesystem expects
+    // raw UTF-8 paths.
+    let decoded_path = percent_decode_str(url.path())
+        .decode_utf8()
+        .map_err(|e| {
+            DuckLakeError::InvalidConfig(format!(
+                "Invalid UTF-8 in file path '{}': {}",
+                data_path, e
+            ))
+        })?
+        .to_string();
+
+    Ok((object_store_url, decoded_path))
 }
 
 /// Parse a local filesystem path into ObjectStoreUrl and key path

@@ -1863,6 +1863,7 @@ dependencies = [
  "hex",
  "object_store",
  "parquet",
+ "percent-encoding",
  "sqllogictest",
  "sqlx",
  "tempfile",
