@@ -445,16 +445,14 @@ mod tests {
     fn test_parse_local_path_nonexistent() {
         // Non-existent paths should now succeed (#57) - the directory does not
         // need to exist at catalog creation time (e.g., empty catalogs).
-        let (url, path) =
-            parse_object_store_url("/nonexistent/path/that/does/not/exist").unwrap();
+        let (url, path) = parse_object_store_url("/nonexistent/path/that/does/not/exist").unwrap();
         assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
         assert_eq!(path, "/nonexistent/path/that/does/not/exist");
     }
 
     #[test]
     fn test_parse_local_path_nonexistent_with_trailing_slash() {
-        let (url, path) =
-            parse_object_store_url("/nonexistent/data/path/").unwrap();
+        let (url, path) = parse_object_store_url("/nonexistent/data/path/").unwrap();
         assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
         assert_eq!(path, "/nonexistent/data/path/");
     }
