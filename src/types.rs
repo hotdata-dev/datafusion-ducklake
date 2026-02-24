@@ -243,7 +243,10 @@ fn parse_decimal(type_str: &str) -> Result<Option<DataType>> {
                 Ok(Some(DataType::Decimal128(precision, scale)))
             }
         },
-        _ => Ok(None),
+        n => Err(DuckLakeError::UnsupportedType(format!(
+            "Invalid decimal type: expected at most 2 parameters (precision, scale), got {} in type '{}'",
+            n, type_str
+        ))),
     }
 }
 
@@ -717,6 +720,37 @@ mod tests {
     fn test_decimal_negative_precision_rejected() {
         let result = ducklake_to_arrow_type("decimal(-1, 0)");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decimal_too_many_parameters_rejected() {
+        let result = ducklake_to_arrow_type("decimal(1,2,3)");
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(msg)) => {
+                assert!(msg.contains("expected at most 2 parameters"));
+                assert!(msg.contains("got 3"));
+            },
+            _ => panic!("Expected UnsupportedType error for 3 parameters"),
+        }
+
+        let result = ducklake_to_arrow_type("decimal(10,2,5,3)");
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(msg)) => {
+                assert!(msg.contains("expected at most 2 parameters"));
+                assert!(msg.contains("got 4"));
+            },
+            _ => panic!("Expected UnsupportedType error for 4 parameters"),
+        }
+    }
+
+    #[test]
+    fn test_decimal_negative_scale_valid() {
+        assert_eq!(
+            ducklake_to_arrow_type("decimal(10, -2)").unwrap(),
+            DataType::Decimal128(10, -2)
+        );
     }
 
     #[test]
