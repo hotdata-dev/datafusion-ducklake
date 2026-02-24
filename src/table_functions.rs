@@ -196,8 +196,10 @@ impl TableFunctionImpl for DucklakeTableChangesFunction {
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
         // Resolve full table path: catalog_path -> schema.path -> table.path
-        let schema_path = resolve_path(&catalog_path, &schema.path, schema.path_is_relative);
-        let table_path = resolve_path(&schema_path, &table.path, table.path_is_relative);
+        let schema_path = resolve_path(&catalog_path, &schema.path, schema.path_is_relative)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let table_path = resolve_path(&schema_path, &table.path, table.path_is_relative)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
         // Get table structure and build Arrow schema
         let columns = self
@@ -336,8 +338,10 @@ impl TableFunctionImpl for DucklakeTableDeletionsFunction {
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
         // Resolve full table path: catalog_path -> schema.path -> table.path
-        let schema_path = resolve_path(&catalog_path, &schema.path, schema.path_is_relative);
-        let table_path = resolve_path(&schema_path, &table.path, table.path_is_relative);
+        let schema_path = resolve_path(&catalog_path, &schema.path, schema.path_is_relative)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let table_path = resolve_path(&schema_path, &table.path, table.path_is_relative)
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
         // Get table structure and build Arrow schema
         let columns = self

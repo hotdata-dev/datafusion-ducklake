@@ -33,7 +33,7 @@ pub struct DuckLakeCatalog {
     provider: Arc<dyn MetadataProvider>,
     /// Snapshot ID this catalog is bound to (for query consistency)
     snapshot_id: i64,
-    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
+    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///
     object_store_url: Arc<ObjectStoreUrl>,
     /// Catalog base path component for resolving relative schema paths (e.g., /prefix/)
     catalog_path: String,
@@ -178,8 +178,17 @@ impl CatalogProvider for DuckLakeCatalog {
         match self.provider.get_schema_by_name(name, self.snapshot_id) {
             Ok(Some(meta)) => {
                 // Resolve schema path hierarchically using path_resolver utility
-                let schema_path =
-                    resolve_path(&self.catalog_path, &meta.path, meta.path_is_relative);
+                let schema_path = match resolve_path(&self.catalog_path, &meta.path, meta.path_is_relative) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            schema_name = %name,
+                            "Failed to resolve schema path"
+                        );
+                        return None;
+                    }
+                };
 
                 // Pass the pinned snapshot_id to schema
                 let schema = DuckLakeSchema::new(

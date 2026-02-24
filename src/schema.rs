@@ -52,7 +52,7 @@ fn validate_table_name(name: &str) -> DataFusionResult<()> {
 pub struct DuckLakeSchema {
     schema_id: i64,
     schema_name: String,
-    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
+    /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///
     object_store_url: Arc<ObjectStoreUrl>,
     provider: Arc<dyn MetadataProvider>,
     /// Cached snapshot_id from catalog.schema() call
@@ -133,7 +133,8 @@ impl SchemaProvider for DuckLakeSchema {
         {
             Ok(Some(meta)) => {
                 // Resolve table path hierarchically using path_resolver utility
-                let table_path = resolve_path(&self.schema_path, &meta.path, meta.path_is_relative);
+                let table_path = resolve_path(&self.schema_path, &meta.path, meta.path_is_relative)
+                    .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
 
                 // Pass snapshot_id to table
                 let table = DuckLakeTable::new(
@@ -205,7 +206,8 @@ impl SchemaProvider for DuckLakeSchema {
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         // Resolve table path
-        let table_path = resolve_path(&self.schema_path, &name, true);
+        let table_path = resolve_path(&self.schema_path, &name, true)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         // Create writable DuckLakeTable
         let writable_table = DuckLakeTable::new(
