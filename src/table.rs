@@ -135,13 +135,13 @@ impl DuckLakeTable {
                     &table_path,
                     &table_file.file.path,
                     table_file.file.path_is_relative,
-                );
+                )?;
                 builder.add_file(&resolved_path, table_file.file.encryption_key.as_deref());
 
                 // Also add delete file encryption key if present
                 if let Some(ref delete_file) = table_file.delete_file {
                     let resolved_delete_path =
-                        resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative);
+                        resolve_path(&table_path, &delete_file.path, delete_file.path_is_relative)?;
                     builder.add_file(&resolved_delete_path, delete_file.encryption_key.as_deref());
                 }
             }
@@ -173,8 +173,9 @@ impl DuckLakeTable {
     }
 
     /// Resolve a file path (data or delete file) to its absolute path
-    fn resolve_file_path(&self, file: &DuckLakeFileData) -> String {
+    fn resolve_file_path(&self, file: &DuckLakeFileData) -> DataFusionResult<String> {
         resolve_path(&self.table_path, &file.path, file.path_is_relative)
+            .map_err(|e| DataFusionError::External(Box::new(e)))
     }
 
     /// Create a ParquetSource with encryption support if enabled and needed
@@ -199,7 +200,7 @@ impl DuckLakeTable {
                     return Ok((self.schema.clone(), HashMap::new()));
                 };
 
-                let resolved_path = self.resolve_file_path(&first_file.file);
+                let resolved_path = self.resolve_file_path(&first_file.file)?;
                 let object_store = state
                     .runtime_env()
                     .object_store(self.object_store_url.as_ref())?;
@@ -277,7 +278,7 @@ impl DuckLakeTable {
         let delete_schema = delete_file_schema();
 
         // Resolve the delete file path
-        let resolved_delete_path = self.resolve_file_path(delete_file);
+        let resolved_delete_path = self.resolve_file_path(delete_file)?;
 
         // Create PartitionedFile with footer size hint if available
         let mut pf =
@@ -333,7 +334,7 @@ impl DuckLakeTable {
         let partitioned_files: Vec<PartitionedFile> = files
             .iter()
             .map(|table_file| {
-                let resolved_path = self.resolve_file_path(&table_file.file);
+                let resolved_path = self.resolve_file_path(&table_file.file)?;
                 let mut pf =
                     PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);
 
@@ -343,9 +344,9 @@ impl DuckLakeTable {
                     pf = pf.with_metadata_size_hint(footer_size as usize);
                 }
 
-                pf
+                Ok(pf)
             })
-            .collect();
+            .collect::<DataFusionResult<Vec<_>>>()?;
 
         // Use read_schema (with original Parquet names) for reading
         let mut builder = FileScanConfigBuilder::new(
@@ -410,7 +411,7 @@ impl DuckLakeTable {
         let (read_schema, name_mapping) = self.get_schema_mapping(state).await?;
 
         // Resolve the data file path for scanning
-        let resolved_path = self.resolve_file_path(&table_file.file);
+        let resolved_path = self.resolve_file_path(&table_file.file)?;
 
         // Create PartitionedFile with footer size hint if available
         let mut pf = PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);

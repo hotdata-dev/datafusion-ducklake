@@ -179,7 +179,17 @@ impl CatalogProvider for DuckLakeCatalog {
             Ok(Some(meta)) => {
                 // Resolve schema path hierarchically using path_resolver utility
                 let schema_path =
-                    resolve_path(&self.catalog_path, &meta.path, meta.path_is_relative);
+                    match resolve_path(&self.catalog_path, &meta.path, meta.path_is_relative) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::error!(
+                                error = %e,
+                                schema_name = %name,
+                                "Failed to resolve schema path"
+                            );
+                            return None;
+                        },
+                    };
 
                 // Pass the pinned snapshot_id to schema
                 let schema = DuckLakeSchema::new(
