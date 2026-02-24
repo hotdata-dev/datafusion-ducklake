@@ -49,6 +49,20 @@ use datafusion::execution::parquet_encryption::EncryptionFactory;
 pub const DELETE_FILE_PATH_COL: &str = "file_path";
 pub const DELETE_POS_COL: &str = "pos";
 
+/// Validate and convert file_size_bytes from i64 (as stored in DuckLake metadata) to u64.
+///
+/// DuckLake stores file sizes as signed integers in SQL. A negative value indicates
+/// corrupt or invalid metadata. Without this check, a negative i64 cast to u64 would
+/// wrap to a huge value (e.g., -1 becomes u64::MAX), causing confusing downstream errors.
+pub(crate) fn validated_file_size(file_size_bytes: i64, file_path: &str) -> DataFusionResult<u64> {
+    u64::try_from(file_size_bytes).map_err(|_| {
+        DataFusionError::Execution(format!(
+            "Invalid file_size_bytes ({}) for file '{}': value must be non-negative",
+            file_size_bytes, file_path
+        ))
+    })
+}
+
 /// Returns the expected schema for DuckLake delete files
 ///
 /// Delete files have a standard schema: (file_path: VARCHAR, pos: INT64)
@@ -281,10 +295,14 @@ impl DuckLakeTable {
         let resolved_delete_path = self.resolve_file_path(delete_file)?;
 
         // Create PartitionedFile with footer size hint if available
-        let mut pf =
-            PartitionedFile::new(&resolved_delete_path, delete_file.file_size_bytes as u64);
+        let mut pf = PartitionedFile::new(
+            &resolved_delete_path,
+            validated_file_size(delete_file.file_size_bytes, &resolved_delete_path)?,
+        );
         if let Some(footer_size) = delete_file.footer_size {
-            pf = pf.with_metadata_size_hint(footer_size as usize);
+            if footer_size > 0 {
+                pf = pf.with_metadata_size_hint(footer_size as usize);
+            }
         }
 
         // Create file scan config for the delete file
@@ -345,13 +363,17 @@ impl DuckLakeTable {
             .iter()
             .map(|table_file| {
                 let resolved_path = self.resolve_file_path(&table_file.file)?;
-                let mut pf =
-                    PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);
+                let mut pf = PartitionedFile::new(
+                    &resolved_path,
+                    validated_file_size(table_file.file.file_size_bytes, &resolved_path)?,
+                );
 
                 // Apply footer size hint if available from DuckLake metadata
                 // This reduces I/O from 2 reads to 1 read per file (especially beneficial for S3/MinIO)
                 if let Some(footer_size) = table_file.file.footer_size {
-                    pf = pf.with_metadata_size_hint(footer_size as usize);
+                    if footer_size > 0 {
+                        pf = pf.with_metadata_size_hint(footer_size as usize);
+                    }
                 }
 
                 Ok(pf)
@@ -424,9 +446,14 @@ impl DuckLakeTable {
         let resolved_path = self.resolve_file_path(&table_file.file)?;
 
         // Create PartitionedFile with footer size hint if available
-        let mut pf = PartitionedFile::new(&resolved_path, table_file.file.file_size_bytes as u64);
+        let mut pf = PartitionedFile::new(
+            &resolved_path,
+            validated_file_size(table_file.file.file_size_bytes, &resolved_path)?,
+        );
         if let Some(footer_size) = table_file.file.footer_size {
-            pf = pf.with_metadata_size_hint(footer_size as usize);
+            if footer_size > 0 {
+                pf = pf.with_metadata_size_hint(footer_size as usize);
+            }
         }
 
         // Use read_schema (with original Parquet names) for reading
@@ -662,4 +689,43 @@ fn is_object_store_not_found(err: &DataFusionError) -> bool {
         source = e.source();
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validated_file_size_positive() {
+        assert_eq!(validated_file_size(0, "test.parquet").unwrap(), 0);
+        assert_eq!(validated_file_size(1024, "test.parquet").unwrap(), 1024);
+        assert_eq!(
+            validated_file_size(i64::MAX, "test.parquet").unwrap(),
+            i64::MAX as u64
+        );
+    }
+
+    #[test]
+    fn test_validated_file_size_negative() {
+        let err = validated_file_size(-1, "data/test.parquet").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("-1"),
+            "Error should contain the negative value: {}",
+            msg
+        );
+        assert!(
+            msg.contains("data/test.parquet"),
+            "Error should contain the file path: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_validated_file_size_large_negative() {
+        let err = validated_file_size(i64::MIN, "bad.parquet").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("bad.parquet"));
+        assert!(msg.contains(&i64::MIN.to_string()));
+    }
 }
