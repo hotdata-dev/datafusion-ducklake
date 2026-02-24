@@ -578,7 +578,7 @@ mod tests {
             .unwrap();
 
         let columns =
-            vec![ColumnDef::new("id", "int64", false), ColumnDef::new("name", "varchar", true)];
+            vec![ColumnDef::new("id", "int64", false).unwrap(), ColumnDef::new("name", "varchar", true).unwrap()];
 
         let column_ids = writer.set_columns(table_id, &columns, snapshot_id).unwrap();
         assert_eq!(column_ids.len(), 2);

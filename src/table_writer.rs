@@ -299,11 +299,11 @@ fn arrow_schema_to_column_defs(schema: &Schema) -> Result<Vec<ColumnDef>> {
         .iter()
         .map(|field| {
             let ducklake_type = arrow_to_ducklake_type(field.data_type())?;
-            Ok(ColumnDef::new(
+            ColumnDef::new(
                 field.name().clone(),
                 ducklake_type,
                 field.is_nullable(),
-            ))
+            )
         })
         .collect()
 }

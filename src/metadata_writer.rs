@@ -32,16 +32,21 @@ pub struct ColumnDef {
 
 impl ColumnDef {
     /// Create a new column definition.
+    ///
+    /// Returns an error if the type string is not a recognized DuckLake type.
     pub fn new(
         name: impl Into<String>,
         ducklake_type: impl Into<String>,
         is_nullable: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let ducklake_type = ducklake_type.into();
+        // Validate that the type string is a known DuckLake type
+        crate::types::ducklake_to_arrow_type(&ducklake_type)?;
+        Ok(Self {
             name: name.into(),
-            ducklake_type: ducklake_type.into(),
+            ducklake_type,
             is_nullable,
-        }
+        })
     }
 
     /// Create a column definition from an Arrow DataType.
@@ -53,7 +58,7 @@ impl ColumnDef {
         is_nullable: bool,
     ) -> Result<Self> {
         let ducklake_type = arrow_to_ducklake_type(data_type)?;
-        Ok(Self::new(name, ducklake_type, is_nullable))
+        Self::new(name, ducklake_type, is_nullable)
     }
 }
 
@@ -198,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_column_def_new() {
-        let col = ColumnDef::new("test_col", "int32", true);
+        let col = ColumnDef::new("test_col", "int32", true).unwrap();
         assert_eq!(col.name, "test_col");
         assert_eq!(col.ducklake_type, "int32");
         assert!(col.is_nullable);
@@ -232,5 +237,17 @@ mod tests {
     fn test_data_file_info_with_absolute_path() {
         let file = DataFileInfo::new("/absolute/path.parquet", 1024, 100).with_absolute_path();
         assert!(!file.path_is_relative);
+    }
+
+    #[test]
+    fn test_column_def_rejects_invalid_type() {
+        let result = ColumnDef::new("col", "not_a_real_type", true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_column_def_rejects_empty_type() {
+        let result = ColumnDef::new("col", "", true);
+        assert!(result.is_err());
     }
 }

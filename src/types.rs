@@ -15,6 +15,12 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
     // Normalize type string (lowercase, remove whitespace)
     let normalized = ducklake_type.trim().to_lowercase();
 
+    if normalized.is_empty() {
+        return Err(DuckLakeError::UnsupportedType(
+            "empty type string is not a valid DuckLake type".to_string(),
+        ));
+    }
+
     // Handle parameterized types first
     if let Some(decimal_params) = parse_decimal(&normalized) {
         return Ok(decimal_params);
@@ -618,6 +624,30 @@ mod tests {
                 assert!(msg.contains("list<int32>"));
             },
             _ => panic!("Expected UnsupportedType error when building schema with complex type"),
+        }
+    }
+
+    #[test]
+    fn test_empty_type_string_error() {
+        let result = ducklake_to_arrow_type("");
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(msg)) => {
+                assert!(msg.contains("empty"), "Error should mention empty: {}", msg);
+            },
+            _ => panic!("Expected UnsupportedType error for empty string"),
+        }
+    }
+
+    #[test]
+    fn test_whitespace_only_type_string_error() {
+        let result = ducklake_to_arrow_type("   ");
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(msg)) => {
+                assert!(msg.contains("empty"), "Error should mention empty: {}", msg);
+            },
+            _ => panic!("Expected UnsupportedType error for whitespace-only string"),
         }
     }
 }
