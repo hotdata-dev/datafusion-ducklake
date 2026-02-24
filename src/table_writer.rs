@@ -49,7 +49,7 @@ impl DuckLakeTableWriter {
         arrow_schema: &Schema,
         mode: WriteMode,
     ) -> Result<TableWriteSession> {
-        let table_key = join_paths(&join_paths(&self.base_key_path, schema_name), table_name);
+        let table_key = join_paths(&join_paths(&self.base_key_path, schema_name)?, table_name)?;
         let file_name = format!("{}.parquet", Uuid::new_v4());
         self.begin_write_internal(
             schema_name,
@@ -73,7 +73,7 @@ impl DuckLakeTableWriter {
         file_name: String,
         mode: WriteMode,
     ) -> Result<TableWriteSession> {
-        let full_path = join_paths(file_dir, &file_name);
+        let full_path = join_paths(file_dir, &file_name)?;
         self.begin_write_internal(
             schema_name,
             table_name,
@@ -105,7 +105,7 @@ impl DuckLakeTableWriter {
         let schema_with_ids =
             Arc::new(build_schema_with_field_ids(arrow_schema, &setup.column_ids));
 
-        let object_path_str = join_paths(&file_dir, &file_name);
+        let object_path_str = join_paths(&file_dir, &file_name)?;
         // Strip leading slash for object_store Path (it expects relative keys)
         let object_path = ObjectPath::from(object_path_str.trim_start_matches('/'));
 

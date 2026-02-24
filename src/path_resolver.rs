@@ -32,7 +32,7 @@ fn validate_no_path_traversal(path: &str) -> Result<()> {
             path
         )));
     }
-    for component in path.split(|c| c == '/' || c == '\\') {
+    for component in path.split(['/', '\\']) {
         if component == ".." {
             return Err(DuckLakeError::InvalidConfig(format!(
                 "Path traversal detected: path contains '..' component: {}",
