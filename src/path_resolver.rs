@@ -97,6 +97,15 @@ fn parse_file_url(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
 
 /// Parse a local filesystem path into ObjectStoreUrl and key path
 fn parse_local_path(data_path: &str) -> Result<(ObjectStoreUrl, String)> {
+    // Reject paths containing ".." to prevent directory traversal attacks.
+    // std::path::absolute() does NOT normalize ".." components, so a malicious
+    // data_path like "/data/../../../etc/" would pass through unchanged.
+    if data_path.split(['/', '\\']).any(|c| c == "..") {
+        return Err(DuckLakeError::InvalidConfig(
+            "Path contains '..' traversal component".to_string(),
+        ));
+    }
+
     let has_trailing_slash = data_path.ends_with('/') || data_path.ends_with('\\');
 
     // Use std::path::absolute() instead of canonicalize() so that the path
@@ -455,6 +464,26 @@ mod tests {
         let (url, path) = parse_object_store_url("/nonexistent/data/path/").unwrap();
         assert_eq!(url, ObjectStoreUrl::parse("file:///").unwrap());
         assert_eq!(path, "/nonexistent/data/path/");
+    }
+
+    #[test]
+    fn test_reject_dotdot_in_local_path() {
+        // Local paths with ".." must be rejected since std::path::absolute()
+        // does not normalize them away.
+        let result = parse_object_store_url("/data/../../../etc/passwd");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("'..'"),
+            "error should mention '..' traversal: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_dotdot_in_local_path_backslash() {
+        let result = parse_object_store_url("/data\\..\\secret");
+        assert!(result.is_err());
     }
 
     #[test]
