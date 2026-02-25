@@ -14,7 +14,6 @@ use uuid::Uuid;
 use crate::Result;
 use crate::metadata_writer::{ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteResult};
 use crate::path_resolver::join_paths;
-use crate::types::arrow_to_ducklake_type;
 
 /// High-level writer for DuckLake tables.
 #[derive(Debug)]
@@ -297,14 +296,7 @@ fn arrow_schema_to_column_defs(schema: &Schema) -> Result<Vec<ColumnDef>> {
     schema
         .fields()
         .iter()
-        .map(|field| {
-            let ducklake_type = arrow_to_ducklake_type(field.data_type())?;
-            Ok(ColumnDef::new(
-                field.name().clone(),
-                ducklake_type,
-                field.is_nullable(),
-            ))
-        })
+        .map(|field| ColumnDef::from_arrow(field.name(), field.data_type(), field.is_nullable()))
         .collect()
 }
 

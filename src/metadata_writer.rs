@@ -13,7 +13,7 @@ pub enum WriteMode {
     /// Keep existing data and append new records
     Append,
 }
-use crate::types::arrow_to_ducklake_type;
+use crate::types::{arrow_to_ducklake_type, ducklake_to_arrow_type};
 use arrow::datatypes::DataType;
 
 /// Column definition for creating or updating a table's schema.
@@ -23,37 +23,67 @@ use arrow::datatypes::DataType;
 #[derive(Debug, Clone)]
 pub struct ColumnDef {
     /// Column name
-    pub name: String,
+    pub(crate) name: String,
     /// DuckLake type string (e.g., "varchar", "int64", "decimal(10,2)")
-    pub ducklake_type: String,
+    pub(crate) ducklake_type: String,
     /// Whether this column allows NULL values
-    pub is_nullable: bool,
+    pub(crate) is_nullable: bool,
 }
 
 impl ColumnDef {
+    /// Returns the column name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the DuckLake type string.
+    pub fn ducklake_type(&self) -> &str {
+        &self.ducklake_type
+    }
+
+    /// Returns whether this column allows NULL values.
+    pub fn is_nullable(&self) -> bool {
+        self.is_nullable
+    }
+
     /// Create a new column definition.
+    ///
+    /// Validates that `ducklake_type` is a recognized DuckLake type string by converting
+    /// it to an Arrow DataType. Returns an error if the type is invalid or unsupported.
     pub fn new(
         name: impl Into<String>,
         ducklake_type: impl Into<String>,
         is_nullable: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let ducklake_type = ducklake_type.into();
+        // Validate the type string by attempting to convert it to an Arrow type.
+        // We discard the result; we only care that the conversion succeeds.
+        ducklake_to_arrow_type(&ducklake_type)?;
+        Ok(Self {
             name: name.into(),
-            ducklake_type: ducklake_type.into(),
+            ducklake_type,
             is_nullable,
-        }
+        })
     }
 
     /// Create a column definition from an Arrow DataType.
     ///
     /// This is a convenience constructor that converts the Arrow type to a DuckLake type string.
+    /// The resulting DuckLake type is guaranteed to be valid since it was derived from a known
+    /// Arrow type.
     pub fn from_arrow(
         name: impl Into<String>,
         data_type: &DataType,
         is_nullable: bool,
     ) -> Result<Self> {
         let ducklake_type = arrow_to_ducklake_type(data_type)?;
-        Ok(Self::new(name, ducklake_type, is_nullable))
+        // We use direct struct construction here since the ducklake_type was just
+        // produced by arrow_to_ducklake_type, so it is guaranteed to be valid.
+        Ok(Self {
+            name: name.into(),
+            ducklake_type,
+            is_nullable,
+        })
     }
 }
 
@@ -195,13 +225,50 @@ pub trait MetadataWriter: Send + Sync + std::fmt::Debug {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DuckLakeError;
 
     #[test]
     fn test_column_def_new() {
-        let col = ColumnDef::new("test_col", "int32", true);
+        let col = ColumnDef::new("test_col", "int32", true).unwrap();
         assert_eq!(col.name, "test_col");
         assert_eq!(col.ducklake_type, "int32");
         assert!(col.is_nullable);
+    }
+
+    #[test]
+    fn test_column_def_new_valid_types() {
+        // Various valid type strings should be accepted
+        assert!(ColumnDef::new("a", "int32", true).is_ok());
+        assert!(ColumnDef::new("b", "varchar", false).is_ok());
+        assert!(ColumnDef::new("c", "boolean", true).is_ok());
+        assert!(ColumnDef::new("d", "float64", true).is_ok());
+        assert!(ColumnDef::new("e", "decimal(10,2)", true).is_ok());
+        assert!(ColumnDef::new("f", "timestamp", true).is_ok());
+        assert!(ColumnDef::new("g", "date", true).is_ok());
+        assert!(ColumnDef::new("h", "bigint", true).is_ok());
+        assert!(ColumnDef::new("i", "text", true).is_ok());
+    }
+
+    #[test]
+    fn test_column_def_new_invalid_type_rejected() {
+        let result = ColumnDef::new("col", "not_a_type", true);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(msg)) => {
+                assert_eq!(msg, "not_a_type");
+            },
+            other => panic!("Expected UnsupportedType error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_column_def_new_empty_type_rejected() {
+        let result = ColumnDef::new("col", "", true);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::UnsupportedType(_)) => {},
+            other => panic!("Expected UnsupportedType error, got {:?}", other),
+        }
     }
 
     #[test]
