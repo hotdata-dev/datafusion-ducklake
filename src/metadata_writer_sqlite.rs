@@ -204,6 +204,11 @@ impl MetadataWriter for SqliteMetadataWriter {
         columns: &[ColumnDef],
         snapshot_id: i64,
     ) -> Result<Vec<i64>> {
+        if columns.is_empty() {
+            return Err(crate::DuckLakeError::InvalidConfig(
+                "Table must have at least one column".to_string(),
+            ));
+        }
         block_on(async {
             // Use a transaction to ensure atomicity: if column insertion fails,
             // we don't leave existing columns marked as ended
@@ -328,6 +333,11 @@ impl MetadataWriter for SqliteMetadataWriter {
         columns: &[ColumnDef],
         mode: WriteMode,
     ) -> Result<WriteSetupResult> {
+        if columns.is_empty() {
+            return Err(crate::DuckLakeError::InvalidConfig(
+                "Table must have at least one column".to_string(),
+            ));
+        }
         block_on(async {
             let mut tx = self.pool.begin().await?;
 
