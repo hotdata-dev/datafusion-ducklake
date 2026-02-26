@@ -250,6 +250,128 @@ fn parse_decimal(type_str: &str) -> Result<Option<DataType>> {
     }
 }
 
+/// Normalize a DuckLake type string to its canonical form.
+///
+/// Converts aliases and case variants to the canonical DuckLake type string.
+/// For example: "int" -> "int32", "INTEGER" -> "int32", "text" -> "varchar".
+///
+/// Returns the canonical type string, or an error if the type is unrecognized.
+pub fn normalize_ducklake_type(ducklake_type: &str) -> Result<String> {
+    let arrow_type = ducklake_to_arrow_type(ducklake_type)?;
+    arrow_to_ducklake_type(&arrow_type)
+}
+
+/// Check if a type can be safely promoted (widened) to another type.
+///
+/// Type promotion allows safe widening of numeric types during schema evolution.
+/// Both type strings are normalized before comparison.
+///
+/// Supported promotions:
+/// - Signed integer widening: int8 -> int16 -> int32 -> int64
+/// - Unsigned integer widening: uint8 -> uint16 -> uint32 -> uint64
+/// - Float widening: float32 -> float64
+/// - Integer to float: any int -> float64
+/// - Timestamp: timestamp -> timestamptz
+/// - Decimal: smaller precision/scale -> larger precision/scale
+pub fn is_promotable(from: &str, to: &str) -> bool {
+    let from_arrow = match ducklake_to_arrow_type(from) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let to_arrow = match ducklake_to_arrow_type(to) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    is_arrow_promotable(&from_arrow, &to_arrow)
+}
+
+/// Check if one Arrow DataType can be safely promoted to another.
+fn is_arrow_promotable(from: &DataType, to: &DataType) -> bool {
+    use DataType::*;
+
+    // Same type is trivially promotable
+    if from == to {
+        return true;
+    }
+
+    fn signed_int_rank(dt: &DataType) -> Option<u8> {
+        match dt {
+            Int8 => Some(0),
+            Int16 => Some(1),
+            Int32 => Some(2),
+            Int64 => Some(3),
+            _ => None,
+        }
+    }
+
+    fn unsigned_int_rank(dt: &DataType) -> Option<u8> {
+        match dt {
+            UInt8 => Some(0),
+            UInt16 => Some(1),
+            UInt32 => Some(2),
+            UInt64 => Some(3),
+            _ => None,
+        }
+    }
+
+    // Signed integer widening
+    if let (Some(from_rank), Some(to_rank)) = (signed_int_rank(from), signed_int_rank(to)) {
+        return from_rank < to_rank;
+    }
+
+    // Unsigned integer widening
+    if let (Some(from_rank), Some(to_rank)) = (unsigned_int_rank(from), unsigned_int_rank(to)) {
+        return from_rank < to_rank;
+    }
+
+    // Float widening
+    if matches!(from, Float32) && matches!(to, Float64) {
+        return true;
+    }
+
+    // Integer to float64 (safe for reasonable values)
+    if signed_int_rank(from).is_some() && matches!(to, Float64) {
+        return true;
+    }
+
+    // Timestamp -> TimestampTZ
+    if matches!(from, Timestamp(_, None)) && matches!(to, Timestamp(_, Some(_))) {
+        return true;
+    }
+
+    // Decimal widening: larger precision/scale
+    match (from, to) {
+        (Decimal128(fp, fs) | Decimal256(fp, fs), Decimal128(tp, ts) | Decimal256(tp, ts)) => {
+            tp >= fp && ts >= fs
+        }
+        _ => false,
+    }
+}
+
+/// Check if two DuckLake type strings are compatible for schema evolution.
+///
+/// Types are compatible if they normalize to the same canonical type,
+/// or if the existing type can be safely promoted to the new type.
+pub fn types_compatible(existing_type: &str, new_type: &str) -> bool {
+    // First try normalization: if both normalize to the same canonical form, they match
+    let existing_normalized = match normalize_ducklake_type(existing_type) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let new_normalized = match normalize_ducklake_type(new_type) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    if existing_normalized == new_normalized {
+        return true;
+    }
+
+    // Then check if promotion is allowed
+    is_promotable(existing_type, new_type)
+}
+
 /// Build an Arrow schema from a list of DuckLake table columns
 pub fn build_arrow_schema(columns: &[DuckLakeTableColumn]) -> Result<Schema> {
     let fields: Result<Vec<Field>> = columns
@@ -849,5 +971,234 @@ mod tests {
             result.is_ok(),
             "Negative column_id within i32 range should succeed"
         );
+    }
+
+    // ── normalize_ducklake_type tests ──
+
+    #[test]
+    fn test_normalize_int_aliases() {
+        assert_eq!(normalize_ducklake_type("int").unwrap(), "int32");
+        assert_eq!(normalize_ducklake_type("integer").unwrap(), "int32");
+        assert_eq!(normalize_ducklake_type("INT").unwrap(), "int32");
+        assert_eq!(normalize_ducklake_type("Integer").unwrap(), "int32");
+        assert_eq!(normalize_ducklake_type("int32").unwrap(), "int32");
+    }
+
+    #[test]
+    fn test_normalize_bigint_aliases() {
+        assert_eq!(normalize_ducklake_type("bigint").unwrap(), "int64");
+        assert_eq!(normalize_ducklake_type("long").unwrap(), "int64");
+        assert_eq!(normalize_ducklake_type("BIGINT").unwrap(), "int64");
+        assert_eq!(normalize_ducklake_type("int64").unwrap(), "int64");
+    }
+
+    #[test]
+    fn test_normalize_string_aliases() {
+        assert_eq!(normalize_ducklake_type("text").unwrap(), "varchar");
+        assert_eq!(normalize_ducklake_type("string").unwrap(), "varchar");
+        assert_eq!(normalize_ducklake_type("varchar").unwrap(), "varchar");
+        assert_eq!(normalize_ducklake_type("TEXT").unwrap(), "varchar");
+        assert_eq!(normalize_ducklake_type("STRING").unwrap(), "varchar");
+    }
+
+    #[test]
+    fn test_normalize_float_aliases() {
+        assert_eq!(normalize_ducklake_type("float").unwrap(), "float32");
+        assert_eq!(normalize_ducklake_type("real").unwrap(), "float32");
+        assert_eq!(normalize_ducklake_type("FLOAT").unwrap(), "float32");
+        assert_eq!(normalize_ducklake_type("float32").unwrap(), "float32");
+    }
+
+    #[test]
+    fn test_normalize_double_aliases() {
+        assert_eq!(normalize_ducklake_type("double").unwrap(), "float64");
+        assert_eq!(normalize_ducklake_type("DOUBLE").unwrap(), "float64");
+        assert_eq!(normalize_ducklake_type("float64").unwrap(), "float64");
+    }
+
+    #[test]
+    fn test_normalize_bool_aliases() {
+        assert_eq!(normalize_ducklake_type("bool").unwrap(), "boolean");
+        assert_eq!(normalize_ducklake_type("boolean").unwrap(), "boolean");
+        assert_eq!(normalize_ducklake_type("BOOLEAN").unwrap(), "boolean");
+    }
+
+    #[test]
+    fn test_normalize_smallint_aliases() {
+        assert_eq!(normalize_ducklake_type("smallint").unwrap(), "int16");
+        assert_eq!(normalize_ducklake_type("SMALLINT").unwrap(), "int16");
+        assert_eq!(normalize_ducklake_type("int16").unwrap(), "int16");
+    }
+
+    #[test]
+    fn test_normalize_tinyint_aliases() {
+        assert_eq!(normalize_ducklake_type("tinyint").unwrap(), "int8");
+        assert_eq!(normalize_ducklake_type("TINYINT").unwrap(), "int8");
+        assert_eq!(normalize_ducklake_type("int8").unwrap(), "int8");
+    }
+
+    #[test]
+    fn test_normalize_unknown_type_errors() {
+        assert!(normalize_ducklake_type("foobar").is_err());
+    }
+
+    // ── is_promotable tests ──
+
+    #[test]
+    fn test_promotable_same_type() {
+        assert!(is_promotable("int32", "int32"));
+        assert!(is_promotable("varchar", "varchar"));
+        assert!(is_promotable("float64", "float64"));
+    }
+
+    #[test]
+    fn test_promotable_signed_int_widening() {
+        assert!(is_promotable("int8", "int16"));
+        assert!(is_promotable("int8", "int32"));
+        assert!(is_promotable("int8", "int64"));
+        assert!(is_promotable("int16", "int32"));
+        assert!(is_promotable("int16", "int64"));
+        assert!(is_promotable("int32", "int64"));
+    }
+
+    #[test]
+    fn test_promotable_signed_int_narrowing_rejected() {
+        assert!(!is_promotable("int64", "int32"));
+        assert!(!is_promotable("int32", "int16"));
+        assert!(!is_promotable("int16", "int8"));
+    }
+
+    #[test]
+    fn test_promotable_unsigned_int_widening() {
+        assert!(is_promotable("uint8", "uint16"));
+        assert!(is_promotable("uint8", "uint32"));
+        assert!(is_promotable("uint8", "uint64"));
+        assert!(is_promotable("uint16", "uint32"));
+        assert!(is_promotable("uint32", "uint64"));
+    }
+
+    #[test]
+    fn test_promotable_unsigned_narrowing_rejected() {
+        assert!(!is_promotable("uint64", "uint32"));
+        assert!(!is_promotable("uint32", "uint16"));
+    }
+
+    #[test]
+    fn test_promotable_float_widening() {
+        assert!(is_promotable("float32", "float64"));
+    }
+
+    #[test]
+    fn test_promotable_float_narrowing_rejected() {
+        assert!(!is_promotable("float64", "float32"));
+    }
+
+    #[test]
+    fn test_promotable_int_to_float64() {
+        assert!(is_promotable("int8", "float64"));
+        assert!(is_promotable("int16", "float64"));
+        assert!(is_promotable("int32", "float64"));
+        assert!(is_promotable("int64", "float64"));
+    }
+
+    #[test]
+    fn test_promotable_int_to_float32_rejected() {
+        // We only allow int -> float64, not int -> float32
+        assert!(!is_promotable("int32", "float32"));
+    }
+
+    #[test]
+    fn test_promotable_timestamp_to_timestamptz() {
+        assert!(is_promotable("timestamp", "timestamptz"));
+    }
+
+    #[test]
+    fn test_promotable_timestamptz_to_timestamp_rejected() {
+        assert!(!is_promotable("timestamptz", "timestamp"));
+    }
+
+    #[test]
+    fn test_promotable_decimal_widening() {
+        assert!(is_promotable("decimal(10, 2)", "decimal(18, 4)"));
+        assert!(is_promotable("decimal(10, 2)", "decimal(10, 2)")); // same
+        assert!(is_promotable("decimal(10, 2)", "decimal(20, 2)")); // wider precision
+        assert!(is_promotable("decimal(10, 2)", "decimal(10, 4)")); // wider scale
+    }
+
+    #[test]
+    fn test_promotable_decimal_narrowing_rejected() {
+        assert!(!is_promotable("decimal(18, 4)", "decimal(10, 2)"));
+        assert!(!is_promotable("decimal(20, 2)", "decimal(10, 2)")); // narrower precision
+    }
+
+    #[test]
+    fn test_promotable_incompatible_types() {
+        assert!(!is_promotable("int32", "varchar"));
+        assert!(!is_promotable("varchar", "int32"));
+        assert!(!is_promotable("boolean", "int32"));
+        assert!(!is_promotable("date", "timestamp"));
+    }
+
+    #[test]
+    fn test_promotable_unknown_types() {
+        assert!(!is_promotable("foobar", "int32"));
+        assert!(!is_promotable("int32", "foobar"));
+    }
+
+    #[test]
+    fn test_promotable_with_aliases() {
+        // Uses normalized forms internally
+        assert!(is_promotable("int", "bigint")); // int32 -> int64
+        assert!(is_promotable("tinyint", "integer")); // int8 -> int32
+        assert!(is_promotable("float", "double")); // float32 -> float64
+    }
+
+    // ── types_compatible tests ──
+
+    #[test]
+    fn test_types_compatible_same_canonical() {
+        assert!(types_compatible("int", "int32"));
+        assert!(types_compatible("int32", "int"));
+        assert!(types_compatible("integer", "int"));
+        assert!(types_compatible("text", "varchar"));
+        assert!(types_compatible("string", "text"));
+        assert!(types_compatible("bigint", "int64"));
+        assert!(types_compatible("float", "real"));
+        assert!(types_compatible("double", "float64"));
+        assert!(types_compatible("bool", "boolean"));
+    }
+
+    #[test]
+    fn test_types_compatible_case_insensitive() {
+        assert!(types_compatible("INT", "int32"));
+        assert!(types_compatible("VARCHAR", "text"));
+        assert!(types_compatible("BIGINT", "int64"));
+    }
+
+    #[test]
+    fn test_types_compatible_with_promotion() {
+        assert!(types_compatible("int32", "int64"));
+        assert!(types_compatible("float32", "float64"));
+        assert!(types_compatible("timestamp", "timestamptz"));
+    }
+
+    #[test]
+    fn test_types_compatible_narrowing_rejected() {
+        assert!(!types_compatible("int64", "int32"));
+        assert!(!types_compatible("float64", "float32"));
+    }
+
+    #[test]
+    fn test_types_compatible_incompatible() {
+        assert!(!types_compatible("int32", "varchar"));
+        assert!(!types_compatible("varchar", "int32"));
+        assert!(!types_compatible("boolean", "float64"));
+    }
+
+    #[test]
+    fn test_types_compatible_unknown() {
+        assert!(!types_compatible("foobar", "int32"));
+        assert!(!types_compatible("int32", "foobar"));
+        assert!(!types_compatible("foobar", "bazqux"));
     }
 }

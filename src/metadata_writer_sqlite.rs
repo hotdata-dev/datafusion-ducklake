@@ -427,8 +427,8 @@ impl MetadataWriter for SqliteMetadataWriter {
                     if let Some((existing_type, _existing_nullable)) =
                         existing_map.get(new_col.name.as_str())
                     {
-                        // Column exists - check type matches
-                        if *existing_type != new_col.ducklake_type {
+                        // Column exists - check type compatibility (normalize aliases + allow promotions)
+                        if !crate::types::types_compatible(existing_type, &new_col.ducklake_type) {
                             return Err(crate::error::DuckLakeError::InvalidConfig(format!(
                                 "Schema evolution error: column '{}' has type '{}' in existing table but '{}' in new schema. Type changes are not allowed.",
                                 new_col.name, existing_type, new_col.ducklake_type
