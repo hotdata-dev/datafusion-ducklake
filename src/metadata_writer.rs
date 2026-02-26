@@ -3,7 +3,37 @@
 //! This module provides the `MetadataWriter` trait for writing metadata to DuckLake catalogs,
 //! along with helper types for column definitions and data file registration.
 
-use crate::Result;
+use crate::{DuckLakeError, Result};
+
+/// Maximum allowed length for catalog entity names (schemas, tables, columns).
+const MAX_NAME_LENGTH: usize = 1024;
+
+/// Validate a catalog entity name (schema, table, or column).
+///
+/// Rejects names that are:
+/// - Empty or whitespace-only
+/// - Contain ASCII control characters (0x00-0x1F, 0x7F)
+/// - Exceed [`MAX_NAME_LENGTH`] characters
+pub fn validate_name(name: &str, kind: &str) -> Result<()> {
+    if name.trim().is_empty() {
+        return Err(DuckLakeError::InvalidConfig(format!(
+            "{kind} name cannot be empty or whitespace-only"
+        )));
+    }
+    if let Some(pos) = name.find(|c: char| c.is_ascii_control()) {
+        let byte = name.as_bytes()[pos];
+        return Err(DuckLakeError::InvalidConfig(format!(
+            "{kind} name contains control character 0x{byte:02X} at position {pos}"
+        )));
+    }
+    if name.len() > MAX_NAME_LENGTH {
+        return Err(DuckLakeError::InvalidConfig(format!(
+            "{kind} name exceeds maximum length of {MAX_NAME_LENGTH} characters (got {})",
+            name.len()
+        )));
+    }
+    Ok(())
+}
 
 /// Write mode for table operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,12 +85,14 @@ impl ColumnDef {
         ducklake_type: impl Into<String>,
         is_nullable: bool,
     ) -> Result<Self> {
+        let name = name.into();
+        validate_name(&name, "Column")?;
         let ducklake_type = ducklake_type.into();
         // Validate the type string by attempting to convert it to an Arrow type.
         // We discard the result; we only care that the conversion succeeds.
         ducklake_to_arrow_type(&ducklake_type)?;
         Ok(Self {
-            name: name.into(),
+            name,
             ducklake_type,
             is_nullable,
         })
@@ -76,11 +108,13 @@ impl ColumnDef {
         data_type: &DataType,
         is_nullable: bool,
     ) -> Result<Self> {
+        let name = name.into();
+        validate_name(&name, "Column")?;
         let ducklake_type = arrow_to_ducklake_type(data_type)?;
         // We use direct struct construction here since the ducklake_type was just
         // produced by arrow_to_ducklake_type, so it is guaranteed to be valid.
         Ok(Self {
-            name: name.into(),
+            name,
             ducklake_type,
             is_nullable,
         })
@@ -299,5 +333,114 @@ mod tests {
     fn test_data_file_info_with_absolute_path() {
         let file = DataFileInfo::new("/absolute/path.parquet", 1024, 100).with_absolute_path();
         assert!(!file.path_is_relative);
+    }
+
+    #[test]
+    fn test_column_def_empty_name_rejected() {
+        let result = ColumnDef::new("", "int32", true);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::InvalidConfig(msg)) => {
+                assert!(msg.contains("empty"), "Expected 'empty' in: {msg}");
+            }
+            other => panic!("Expected InvalidConfig, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_column_def_control_char_name_rejected() {
+        let result = ColumnDef::new("col\0name", "int32", true);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::InvalidConfig(msg)) => {
+                assert!(
+                    msg.contains("control character"),
+                    "Expected 'control character' in: {msg}"
+                );
+            }
+            other => panic!("Expected InvalidConfig, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_column_def_from_arrow_empty_name_rejected() {
+        let result = ColumnDef::from_arrow("", &DataType::Int64, false);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::InvalidConfig(msg)) => {
+                assert!(msg.contains("empty"), "Expected 'empty' in: {msg}");
+            }
+            other => panic!("Expected InvalidConfig, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_column_def_from_arrow_control_char_rejected() {
+        let result = ColumnDef::from_arrow("col\nnewline", &DataType::Int64, false);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::InvalidConfig(msg)) => {
+                assert!(
+                    msg.contains("control character"),
+                    "Expected 'control character' in: {msg}"
+                );
+            }
+            other => panic!("Expected InvalidConfig, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_validate_name_valid() {
+        assert!(validate_name("users", "Table").is_ok());
+        assert!(validate_name("my_column", "Column").is_ok());
+        assert!(validate_name("Schema123", "Schema").is_ok());
+        assert!(validate_name("a", "Column").is_ok());
+    }
+
+    #[test]
+    fn test_validate_name_empty() {
+        let result = validate_name("", "Table");
+        assert!(result.is_err());
+        let result = validate_name("   ", "Table");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_name_control_chars() {
+        // Null byte
+        assert!(validate_name("col\0", "Column").is_err());
+        // Newline
+        assert!(validate_name("col\n", "Column").is_err());
+        // Tab
+        assert!(validate_name("col\t", "Column").is_err());
+        // DEL (0x7F)
+        assert!(validate_name("col\x7F", "Column").is_err());
+    }
+
+    #[test]
+    fn test_validate_name_length_limit() {
+        // Exactly at limit should succeed
+        let at_limit = "a".repeat(MAX_NAME_LENGTH);
+        assert!(validate_name(&at_limit, "Table").is_ok());
+
+        // One over should fail
+        let over_limit = "a".repeat(MAX_NAME_LENGTH + 1);
+        assert!(validate_name(&over_limit, "Table").is_err());
+    }
+
+    #[test]
+    fn test_column_def_long_name_rejected() {
+        let long_name = "x".repeat(MAX_NAME_LENGTH + 1);
+        let result = ColumnDef::new(long_name, "int32", true);
+        assert!(result.is_err());
+        match result {
+            Err(DuckLakeError::InvalidConfig(msg)) => {
+                assert!(
+                    msg.contains("exceeds maximum length"),
+                    "Expected 'exceeds maximum length' in: {msg}"
+                );
+            }
+            other => panic!("Expected InvalidConfig, got {:?}", other),
+        }
     }
 }

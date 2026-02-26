@@ -5,7 +5,7 @@
 use crate::Result;
 use crate::metadata_provider::block_on;
 use crate::metadata_writer::{
-    ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteSetupResult,
+    ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteSetupResult, validate_name,
 };
 use sqlx::Row;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
@@ -133,6 +133,7 @@ impl MetadataWriter for SqliteMetadataWriter {
         path: Option<&str>,
         snapshot_id: i64,
     ) -> Result<(i64, bool)> {
+        validate_name(name, "Schema")?;
         block_on(async {
             let existing = sqlx::query(
                 "SELECT schema_id FROM ducklake_schema
@@ -168,6 +169,7 @@ impl MetadataWriter for SqliteMetadataWriter {
         path: Option<&str>,
         snapshot_id: i64,
     ) -> Result<(i64, bool)> {
+        validate_name(name, "Table")?;
         block_on(async {
             let existing = sqlx::query(
                 "SELECT table_id FROM ducklake_table
@@ -333,6 +335,8 @@ impl MetadataWriter for SqliteMetadataWriter {
         columns: &[ColumnDef],
         mode: WriteMode,
     ) -> Result<WriteSetupResult> {
+        validate_name(schema_name, "Schema")?;
+        validate_name(table_name, "Table")?;
         if columns.is_empty() {
             return Err(crate::DuckLakeError::InvalidConfig(
                 "Table must have at least one column".to_string(),
@@ -659,5 +663,74 @@ mod tests {
         writer.set_data_path("/new/path").unwrap();
         let path2 = writer.get_data_path().unwrap();
         assert_eq!(path2, "/new/path");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_or_create_schema_empty_name_rejected() {
+        let (writer, _temp) = create_test_writer().await;
+        let snapshot_id = writer.create_snapshot().unwrap();
+        let result = writer.get_or_create_schema("", None, snapshot_id);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("empty"),
+            "Expected 'empty' in: {err_msg}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_get_or_create_schema_control_char_rejected() {
+        let (writer, _temp) = create_test_writer().await;
+        let snapshot_id = writer.create_snapshot().unwrap();
+        let result = writer.get_or_create_schema("bad\0schema", None, snapshot_id);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("control character"),
+            "Expected 'control character' in: {err_msg}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_begin_write_transaction_empty_schema_name_rejected() {
+        let (writer, _temp) = create_test_writer().await;
+        let columns = vec![ColumnDef::new("id", "int64", false).unwrap()];
+        let result = writer.begin_write_transaction("", "table", &columns, WriteMode::Replace);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("empty"),
+            "Expected 'empty' in: {err_msg}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_begin_write_transaction_empty_table_name_rejected() {
+        let (writer, _temp) = create_test_writer().await;
+        let columns = vec![ColumnDef::new("id", "int64", false).unwrap()];
+        let result =
+            writer.begin_write_transaction("main", "", &columns, WriteMode::Replace);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("empty"),
+            "Expected 'empty' in: {err_msg}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_begin_write_transaction_control_char_names_rejected() {
+        let (writer, _temp) = create_test_writer().await;
+        let columns = vec![ColumnDef::new("id", "int64", false).unwrap()];
+
+        // Control char in schema name
+        let result =
+            writer.begin_write_transaction("bad\nschema", "table", &columns, WriteMode::Replace);
+        assert!(result.is_err());
+
+        // Control char in table name
+        let result =
+            writer.begin_write_transaction("main", "bad\ttable", &columns, WriteMode::Replace);
+        assert!(result.is_err());
     }
 }
