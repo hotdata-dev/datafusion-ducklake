@@ -63,6 +63,23 @@ pub(crate) fn validated_file_size(file_size_bytes: i64, file_path: &str) -> Data
     })
 }
 
+/// Validate and convert record_count from i64 (as stored in DuckLake metadata) to u64.
+///
+/// DuckLake stores record counts as signed integers in SQL. A negative value indicates
+/// corrupt or invalid metadata. Without this check, a negative record_count would cause
+/// incorrect behavior (e.g., empty ranges in full-file deletes, or incorrect row filtering).
+pub(crate) fn validated_record_count(
+    record_count: i64,
+    file_path: &str,
+) -> DataFusionResult<u64> {
+    u64::try_from(record_count).map_err(|_| {
+        DataFusionError::Execution(format!(
+            "Invalid record_count ({}) for file '{}': value must be non-negative",
+            record_count, file_path
+        ))
+    })
+}
+
 /// Returns the expected schema for DuckLake delete files
 ///
 /// Delete files have a standard schema: (file_path: VARCHAR, pos: INT64)
@@ -727,6 +744,45 @@ mod tests {
     #[test]
     fn test_validated_file_size_large_negative() {
         let err = validated_file_size(i64::MIN, "bad.parquet").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("bad.parquet"));
+        assert!(msg.contains(&i64::MIN.to_string()));
+    }
+
+    #[test]
+    fn test_validated_record_count_positive() {
+        assert_eq!(validated_record_count(0, "test.parquet").unwrap(), 0);
+        assert_eq!(validated_record_count(100, "test.parquet").unwrap(), 100);
+        assert_eq!(
+            validated_record_count(i64::MAX, "test.parquet").unwrap(),
+            i64::MAX as u64
+        );
+    }
+
+    #[test]
+    fn test_validated_record_count_negative() {
+        let err = validated_record_count(-1, "data/test.parquet").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("-1"),
+            "Error should contain the negative value: {}",
+            msg
+        );
+        assert!(
+            msg.contains("data/test.parquet"),
+            "Error should contain the file path: {}",
+            msg
+        );
+        assert!(
+            msg.contains("record_count"),
+            "Error should mention record_count: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_validated_record_count_large_negative() {
+        let err = validated_record_count(i64::MIN, "bad.parquet").unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("bad.parquet"));
         assert!(msg.contains(&i64::MIN.to_string()));

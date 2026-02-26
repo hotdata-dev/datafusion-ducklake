@@ -36,7 +36,7 @@ use futures::Stream;
 
 use crate::metadata_provider::{DeleteFileChange, MetadataProvider};
 use crate::path_resolver::resolve_path;
-use crate::table::validated_file_size;
+use crate::table::{validated_file_size, validated_record_count};
 
 /// Delete file schema: (file_path: VARCHAR, pos: INT64)
 fn delete_file_schema() -> SchemaRef {
@@ -141,6 +141,13 @@ impl TableDeletionsTable {
             &data_file_path,
             delete_file.data_file_size_bytes,
             delete_file.data_file_footer_size,
+        )?;
+
+        // Validate record_count before use — a negative value from corrupt metadata
+        // would cause incorrect behavior (e.g., empty ranges in full-file deletes).
+        validated_record_count(
+            delete_file.data_record_count,
+            &delete_file.data_file_path,
         )?;
 
         Ok(Arc::new(DeletedRowsExec::new(
