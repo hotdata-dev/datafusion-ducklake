@@ -344,7 +344,7 @@ fn is_arrow_promotable(from: &DataType, to: &DataType) -> bool {
     match (from, to) {
         (Decimal128(fp, fs) | Decimal256(fp, fs), Decimal128(tp, ts) | Decimal256(tp, ts)) => {
             tp >= fp && ts >= fs
-        }
+        },
         _ => false,
     }
 }
