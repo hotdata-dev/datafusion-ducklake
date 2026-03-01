@@ -672,10 +672,7 @@ mod tests {
         let result = writer.get_or_create_schema("", None, snapshot_id);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("empty"),
-            "Expected 'empty' in: {err_msg}"
-        );
+        assert!(err_msg.contains("empty"), "Expected 'empty' in: {err_msg}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -698,24 +695,17 @@ mod tests {
         let result = writer.begin_write_transaction("", "table", &columns, WriteMode::Replace);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("empty"),
-            "Expected 'empty' in: {err_msg}"
-        );
+        assert!(err_msg.contains("empty"), "Expected 'empty' in: {err_msg}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_begin_write_transaction_empty_table_name_rejected() {
         let (writer, _temp) = create_test_writer().await;
         let columns = vec![ColumnDef::new("id", "int64", false).unwrap()];
-        let result =
-            writer.begin_write_transaction("main", "", &columns, WriteMode::Replace);
+        let result = writer.begin_write_transaction("main", "", &columns, WriteMode::Replace);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("empty"),
-            "Expected 'empty' in: {err_msg}"
-        );
+        assert!(err_msg.contains("empty"), "Expected 'empty' in: {err_msg}");
     }
 
     #[tokio::test(flavor = "multi_thread")]

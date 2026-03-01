@@ -342,7 +342,7 @@ mod tests {
         match result {
             Err(DuckLakeError::InvalidConfig(msg)) => {
                 assert!(msg.contains("empty"), "Expected 'empty' in: {msg}");
-            }
+            },
             other => panic!("Expected InvalidConfig, got {:?}", other),
         }
     }
@@ -357,7 +357,7 @@ mod tests {
                     msg.contains("control character"),
                     "Expected 'control character' in: {msg}"
                 );
-            }
+            },
             other => panic!("Expected InvalidConfig, got {:?}", other),
         }
     }
@@ -369,7 +369,7 @@ mod tests {
         match result {
             Err(DuckLakeError::InvalidConfig(msg)) => {
                 assert!(msg.contains("empty"), "Expected 'empty' in: {msg}");
-            }
+            },
             other => panic!("Expected InvalidConfig, got {:?}", other),
         }
     }
@@ -384,7 +384,7 @@ mod tests {
                     msg.contains("control character"),
                     "Expected 'control character' in: {msg}"
                 );
-            }
+            },
             other => panic!("Expected InvalidConfig, got {:?}", other),
         }
     }
@@ -439,7 +439,7 @@ mod tests {
                     msg.contains("exceeds maximum length"),
                     "Expected 'exceeds maximum length' in: {msg}"
                 );
-            }
+            },
             other => panic!("Expected InvalidConfig, got {:?}", other),
         }
     }
