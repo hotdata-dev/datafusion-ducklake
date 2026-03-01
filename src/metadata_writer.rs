@@ -6,7 +6,7 @@
 use crate::{DuckLakeError, Result};
 
 /// Maximum allowed length for catalog entity names (schemas, tables, columns).
-const MAX_NAME_LENGTH: usize = 1024;
+pub const MAX_NAME_LENGTH: usize = 1024;
 
 /// Validate a catalog entity name (schema, table, or column).
 ///
