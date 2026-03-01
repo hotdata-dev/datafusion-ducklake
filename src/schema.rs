@@ -13,20 +13,19 @@ use crate::path_resolver::resolve_path;
 use crate::table::DuckLakeTable;
 
 #[cfg(feature = "write")]
-use crate::metadata_writer::{ColumnDef, MetadataWriter, WriteMode};
+use crate::metadata_writer::{ColumnDef, MetadataWriter, WriteMode, validate_name};
 #[cfg(feature = "write")]
 use datafusion::error::DataFusionError;
 
-/// Validate table name to prevent path traversal attacks.
+/// Validate table name to prevent path traversal attacks and reject
+/// empty, control-character, or overlength names.
+///
 /// Table names are used to construct file paths, so we must ensure they
 /// don't contain path separators or parent directory references.
 #[cfg(feature = "write")]
 fn validate_table_name(name: &str) -> DataFusionResult<()> {
-    if name.is_empty() {
-        return Err(DataFusionError::Plan(
-            "Table name cannot be empty".to_string(),
-        ));
-    }
+    // Shared name validation (empty, control chars, length)
+    validate_name(name, "Table").map_err(|e| DataFusionError::External(Box::new(e)))?;
     if name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(DataFusionError::Plan(format!(
             "Invalid table name '{}': must not contain path separators or '..'",
@@ -269,5 +268,13 @@ mod tests {
         assert!(validate_table_name(".").is_err());
         assert!(validate_table_name("..").is_err());
         assert!(validate_table_name("...").is_err());
+    }
+
+    #[test]
+    fn test_validate_table_name_control_chars() {
+        assert!(validate_table_name("table\0name").is_err());
+        assert!(validate_table_name("table\nname").is_err());
+        assert!(validate_table_name("table\tname").is_err());
+        assert!(validate_table_name("\x7Ftable").is_err());
     }
 }
