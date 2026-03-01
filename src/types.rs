@@ -340,10 +340,14 @@ fn is_arrow_promotable(from: &DataType, to: &DataType) -> bool {
         return true;
     }
 
-    // Decimal widening: larger precision/scale
+    // Decimal widening: integer digits don't shrink AND fractional digits don't shrink.
+    // We check (tp - ts >= fp - fs) to ensure the integer part has enough room,
+    // in addition to (ts >= fs) for the fractional part.
     match (from, to) {
         (Decimal128(fp, fs) | Decimal256(fp, fs), Decimal128(tp, ts) | Decimal256(tp, ts)) => {
-            tp >= fp && ts >= fs
+            let from_int_digits = *fp as i16 - *fs as i16;
+            let to_int_digits = *tp as i16 - *ts as i16;
+            ts >= fs && to_int_digits >= from_int_digits
         },
         _ => false,
     }
@@ -1122,13 +1126,15 @@ mod tests {
         assert!(is_promotable("decimal(10, 2)", "decimal(18, 4)"));
         assert!(is_promotable("decimal(10, 2)", "decimal(10, 2)")); // same
         assert!(is_promotable("decimal(10, 2)", "decimal(20, 2)")); // wider precision
-        assert!(is_promotable("decimal(10, 2)", "decimal(10, 4)")); // wider scale
+        assert!(is_promotable("decimal(10, 2)", "decimal(12, 4)")); // wider scale with enough integer digits
     }
 
     #[test]
     fn test_promotable_decimal_narrowing_rejected() {
         assert!(!is_promotable("decimal(18, 4)", "decimal(10, 2)"));
         assert!(!is_promotable("decimal(20, 2)", "decimal(10, 2)")); // narrower precision
+        // Scale widening that shrinks integer digits: 10-2=8 integer digits vs 12-8=4
+        assert!(!is_promotable("decimal(10, 2)", "decimal(12, 8)"));
     }
 
     #[test]
