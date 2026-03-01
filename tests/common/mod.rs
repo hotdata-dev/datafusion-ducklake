@@ -14,12 +14,17 @@ use std::sync::Once;
 
 static INSTALL_DUCKLAKE: Once = Once::new();
 
-/// Install the ducklake extension exactly once (thread-safe across parallel tests).
+/// Install the ducklake and parquet extensions exactly once (thread-safe across parallel tests).
+///
+/// Pre-installing parquet avoids race conditions when multiple concurrent tests
+/// trigger DuckDB's auto-install simultaneously (observed on macOS CI).
 fn ensure_ducklake_installed() {
     INSTALL_DUCKLAKE.call_once(|| {
         let conn = duckdb::Connection::open_in_memory().expect("open in-memory duckdb");
         conn.execute("INSTALL ducklake;", [])
             .expect("install ducklake extension");
+        conn.execute("INSTALL parquet;", [])
+            .expect("install parquet extension");
     });
 }
 
