@@ -106,7 +106,18 @@ pub struct DataFileInfo {
 
 impl DataFileInfo {
     /// Create a new data file info with relative path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `record_count` is negative. Record counts originate from
+    /// `RecordBatch::num_rows()` (always non-negative), so a negative value
+    /// indicates a programming error.
     pub fn new(path: impl Into<String>, file_size_bytes: i64, record_count: i64) -> Self {
+        assert!(
+            record_count >= 0,
+            "record_count must be non-negative, got {}",
+            record_count
+        );
         Self {
             path: path.into(),
             path_is_relative: true,
@@ -299,5 +310,17 @@ mod tests {
     fn test_data_file_info_with_absolute_path() {
         let file = DataFileInfo::new("/absolute/path.parquet", 1024, 100).with_absolute_path();
         assert!(!file.path_is_relative);
+    }
+
+    #[test]
+    fn test_data_file_info_zero_record_count() {
+        let file = DataFileInfo::new("empty.parquet", 0, 0);
+        assert_eq!(file.record_count, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "record_count must be non-negative")]
+    fn test_data_file_info_negative_record_count_panics() {
+        DataFileInfo::new("test.parquet", 1024, -1);
     }
 }
