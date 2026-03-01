@@ -68,10 +68,7 @@ pub(crate) fn validated_file_size(file_size_bytes: i64, file_path: &str) -> Data
 /// DuckLake stores record counts as signed integers in SQL. A negative value indicates
 /// corrupt or invalid metadata. Without this check, a negative record_count would cause
 /// incorrect behavior (e.g., empty ranges in full-file deletes, or incorrect row filtering).
-pub(crate) fn validated_record_count(
-    record_count: i64,
-    file_path: &str,
-) -> DataFusionResult<u64> {
+pub(crate) fn validated_record_count(record_count: i64, file_path: &str) -> DataFusionResult<u64> {
     u64::try_from(record_count).map_err(|_| {
         DataFusionError::Execution(format!(
             "Invalid record_count ({}) for file '{}': value must be non-negative",

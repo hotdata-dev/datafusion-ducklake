@@ -145,10 +145,7 @@ impl TableDeletionsTable {
 
         // Validate record_count before use — a negative value from corrupt metadata
         // would cause incorrect behavior (e.g., empty ranges in full-file deletes).
-        validated_record_count(
-            delete_file.data_record_count,
-            &delete_file.data_file_path,
-        )?;
+        validated_record_count(delete_file.data_record_count, &delete_file.data_file_path)?;
 
         Ok(Arc::new(DeletedRowsExec::new(
             current_delete_exec,
