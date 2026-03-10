@@ -408,7 +408,8 @@ impl TableChangesTable {
         encryption_factory: &Option<Arc<dyn EncryptionFactory>>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let parquet_source = if let Some(factory) = encryption_factory {
-            ParquetSource::new(self.table_schema.clone()).with_encryption_factory(Arc::clone(factory))
+            ParquetSource::new(self.table_schema.clone())
+                .with_encryption_factory(Arc::clone(factory))
         } else {
             ParquetSource::new(self.table_schema.clone())
         };
@@ -424,8 +425,13 @@ impl TableChangesTable {
         data_file: &DataFileChange,
         proj_info: &ProjectionInfo,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.build_exec_for_file_impl(state, data_file, proj_info, ParquetSource::new(self.table_schema.clone()))
-            .await
+        self.build_exec_for_file_impl(
+            state,
+            data_file,
+            proj_info,
+            ParquetSource::new(self.table_schema.clone()),
+        )
+        .await
     }
 
     /// Internal implementation for building a ParquetExec wrapped with AppendCDCColumnsExec
