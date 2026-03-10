@@ -207,12 +207,12 @@ impl DuckLakeTable {
     }
 
     /// Create a ParquetSource with encryption support if enabled and needed
-    fn create_parquet_source(&self) -> ParquetSource {
+    fn create_parquet_source(&self, schema: SchemaRef) -> ParquetSource {
         #[cfg(feature = "encryption")]
         if let Some(ref factory) = self.encryption_factory {
-            return ParquetSource::default().with_encryption_factory(Arc::clone(factory));
+            return ParquetSource::new(schema).with_encryption_factory(Arc::clone(factory));
         }
-        ParquetSource::default()
+        ParquetSource::new(schema)
     }
 
     /// Get the cached schema mapping, computing it once from the first file if needed.
@@ -323,8 +323,7 @@ impl DuckLakeTable {
         // Create file scan config for the delete file
         let file_scan_config = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            delete_schema,
-            Arc::new(self.create_parquet_source()),
+            Arc::new(self.create_parquet_source(delete_schema)),
         )
         .with_file_group(FileGroup::new(vec![pf]))
         .build();
@@ -399,15 +398,14 @@ impl DuckLakeTable {
         // Use read_schema (with original Parquet names) for reading
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            read_schema.clone(),
-            Arc::new(self.create_parquet_source()),
+            Arc::new(self.create_parquet_source(read_schema.clone())),
         )
         .with_limit(limit)
         .with_file_group(FileGroup::new(partitioned_files));
 
         // Apply projection if provided
         if let Some(proj) = projection {
-            builder = builder.with_projection_indices(Some(proj.clone()));
+            builder = builder.with_projection_indices(Some(proj.clone()))?;
         }
 
         let file_scan_config = builder.build();
@@ -476,15 +474,14 @@ impl DuckLakeTable {
         // Use read_schema (with original Parquet names) for reading
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            read_schema.clone(),
-            Arc::new(self.create_parquet_source()),
+            Arc::new(self.create_parquet_source(read_schema.clone())),
         )
         .with_limit(limit)
         .with_file_group(FileGroup::new(vec![pf]));
 
         // Apply projection if provided
         if let Some(proj) = projection {
-            builder = builder.with_projection_indices(Some(proj.clone()));
+            builder = builder.with_projection_indices(Some(proj.clone()))?;
         }
 
         let file_scan_config = builder.build();
@@ -696,7 +693,7 @@ fn extract_deleted_positions_from_batch(
 /// Check if a DataFusion error is caused by an object store NotFound error.
 fn is_object_store_not_found(err: &DataFusionError) -> bool {
     if let DataFusionError::ObjectStore(os_err) = err {
-        return matches!(os_err.as_ref(), object_store::Error::NotFound { .. });
+        return matches!(&**os_err, object_store::Error::NotFound { .. });
     }
     let mut source = std::error::Error::source(err);
     while let Some(e) = source {

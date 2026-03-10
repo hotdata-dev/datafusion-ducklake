@@ -70,8 +70,8 @@ impl DuckLakeInsertExec {
         PlanProperties::new(
             EquivalenceProperties::new(make_insert_count_schema()),
             Partitioning::UnknownPartitioning(1),
-            datafusion::physical_plan::execution_plan::EmissionType::Final,
-            datafusion::physical_plan::execution_plan::Boundedness::Bounded,
+            datafusion::physical_plan::PipelineBehavior::Final,
+            datafusion::physical_plan::Boundedness::Bounded,
         )
     }
 }
