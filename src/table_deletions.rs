@@ -31,7 +31,9 @@ use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::EquivalenceProperties;
 use datafusion::physical_plan::union::UnionExec;
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
+use datafusion::physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+};
 use futures::Stream;
 
 use crate::metadata_provider::{DeleteFileChange, MetadataProvider};
@@ -180,8 +182,7 @@ impl TableDeletionsTable {
 
         let builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            delete_file_schema(),
-            Arc::new(ParquetSource::default()),
+            Arc::new(ParquetSource::new(delete_file_schema())),
         )
         .with_file_group(FileGroup::new(vec![pf]));
 
@@ -204,8 +205,7 @@ impl TableDeletionsTable {
 
         let builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            self.table_schema.clone(),
-            Arc::new(ParquetSource::default()),
+            Arc::new(ParquetSource::new(self.table_schema.clone())),
         )
         .with_file_group(FileGroup::new(vec![pf]));
 
@@ -311,12 +311,11 @@ impl DeletedRowsExec {
         output_schema: SchemaRef,
     ) -> Self {
         let eq_properties = EquivalenceProperties::new(output_schema.clone());
-        let data_props = data_file_scan.properties();
         let properties = PlanProperties::new(
             eq_properties,
-            data_props.output_partitioning().clone(),
-            data_props.emission_type,
-            data_props.boundedness,
+            data_file_scan.output_partitioning().clone(),
+            data_file_scan.pipeline_behavior(),
+            data_file_scan.boundedness(),
         );
 
         Self {

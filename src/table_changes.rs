@@ -26,7 +26,9 @@ use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::execution::{RecordBatchStream, SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::EquivalenceProperties;
 use datafusion::physical_plan::union::UnionExec;
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
+use datafusion::physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+};
 use futures::Stream;
 
 use crate::metadata_provider::{DataFileChange, MetadataProvider};
@@ -104,12 +106,11 @@ impl AppendCDCColumnsExec {
         // Future optimization: carry forward equivalences for projected table columns.
         let eq_properties = EquivalenceProperties::new(output_schema.clone());
 
-        let input_props = input.properties();
         let properties = PlanProperties::new(
             eq_properties,
-            input_props.output_partitioning().clone(),
-            input_props.emission_type,
-            input_props.boundedness,
+            input.output_partitioning().clone(),
+            input.pipeline_behavior(),
+            input.boundedness(),
         );
 
         Self {
@@ -407,9 +408,10 @@ impl TableChangesTable {
         encryption_factory: &Option<Arc<dyn EncryptionFactory>>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let parquet_source = if let Some(factory) = encryption_factory {
-            ParquetSource::default().with_encryption_factory(Arc::clone(factory))
+            ParquetSource::new(self.table_schema.clone())
+                .with_encryption_factory(Arc::clone(factory))
         } else {
-            ParquetSource::default()
+            ParquetSource::new(self.table_schema.clone())
         };
         self.build_exec_for_file_impl(state, data_file, proj_info, parquet_source)
             .await
@@ -423,8 +425,13 @@ impl TableChangesTable {
         data_file: &DataFileChange,
         proj_info: &ProjectionInfo,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        self.build_exec_for_file_impl(state, data_file, proj_info, ParquetSource::default())
-            .await
+        self.build_exec_for_file_impl(
+            state,
+            data_file,
+            proj_info,
+            ParquetSource::new(self.table_schema.clone()),
+        )
+        .await
     }
 
     /// Internal implementation for building a ParquetExec wrapped with AppendCDCColumnsExec
@@ -466,13 +473,12 @@ impl TableChangesTable {
         // Create file scan config with projection pushdown
         let mut builder = FileScanConfigBuilder::new(
             self.object_store_url.as_ref().clone(),
-            self.table_schema.clone(),
             Arc::new(parquet_source),
         )
         .with_file_group(FileGroup::new(vec![pf]));
 
         if let Some(proj) = parquet_projection {
-            builder = builder.with_projection_indices(Some(proj));
+            builder = builder.with_projection_indices(Some(proj))?;
         }
 
         let file_scan_config = builder.build();
