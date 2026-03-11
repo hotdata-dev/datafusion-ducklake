@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-03-11
+
+### Changed
+- Upgraded DataFusion to 52.2, Arrow/Parquet 57
+
+### Fixed
+- Validate catalog entity names to reject empty, control chars, and overlength
+- Normalize type aliases and add promotion rules for schema evolution
+- Validate record_count metadata to reject negative values
+- Reject zero-column table creation
+- Validate type strings in ColumnDef constructor to reject invalid types early
+
 ## [0.0.7] - 2026-02-24
 
 ### Fixed
@@ -76,6 +88,7 @@ Initial release.
 - Filter pushdown to Parquet
 - Query-scoped snapshot isolation
 
+[0.1.0]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.0.7...v0.1.0
 [0.0.7]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.0.4...v0.0.5
