@@ -175,7 +175,7 @@ impl MetadataProvider for PostgresMetadataProvider {
             let rows = sqlx::query(
                 "SELECT column_id, column_name, column_type, nulls_allowed
                  FROM ducklake_column
-                 WHERE table_id = $1
+                 WHERE table_id = $1 AND end_snapshot IS NULL
                  ORDER BY column_order",
             )
             .bind(table_id)
