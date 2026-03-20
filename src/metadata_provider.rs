@@ -17,7 +17,8 @@ pub const SQL_LIST_TABLES: &str =
        AND ? >= begin_snapshot
        AND (? < end_snapshot OR end_snapshot IS NULL)";
 
-pub const SQL_GET_TABLE_COLUMNS: &str = "SELECT column_id, column_name, column_type, nulls_allowed, parent_column
+pub const SQL_GET_TABLE_COLUMNS: &str =
+    "SELECT column_id, column_name, column_type, nulls_allowed, parent_column
      FROM ducklake_column
      WHERE table_id = ? AND end_snapshot IS NULL
      ORDER BY column_order";
@@ -390,14 +391,12 @@ pub fn reconstruct_list_columns(
     // Find children of list parents and rewrite parent types
     let mut skip: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for (i, parent_id) in parent_columns.iter().enumerate() {
-        if let Some(pid) = parent_id {
-            if let Some(&parent_idx) = id_to_index.get(pid) {
-                if columns[parent_idx].column_type == "list" {
-                    columns[parent_idx].column_type =
-                        format!("list<{}>", columns[i].column_type);
-                    skip.insert(i);
-                }
-            }
+        if let Some(pid) = parent_id
+            && let Some(&parent_idx) = id_to_index.get(pid)
+            && columns[parent_idx].column_type == "list"
+        {
+            columns[parent_idx].column_type = format!("list<{}>", columns[i].column_type);
+            skip.insert(i);
         }
     }
 
@@ -431,14 +430,13 @@ pub fn reconstruct_list_columns_with_table(
 
     let mut skip: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for (i, parent_id) in parent_columns.iter().enumerate() {
-        if let Some(pid) = parent_id {
-            if let Some(&parent_idx) = id_to_index.get(pid) {
-                if entries[parent_idx].column.column_type == "list" {
-                    entries[parent_idx].column.column_type =
-                        format!("list<{}>", entries[i].column.column_type);
-                    skip.insert(i);
-                }
-            }
+        if let Some(pid) = parent_id
+            && let Some(&parent_idx) = id_to_index.get(pid)
+            && entries[parent_idx].column.column_type == "list"
+        {
+            entries[parent_idx].column.column_type =
+                format!("list<{}>", entries[i].column.column_type);
+            skip.insert(i);
         }
     }
 
@@ -730,12 +728,7 @@ mod tests {
                 ColumnWithTable {
                     schema_name: "main".into(),
                     table_name: "t".into(),
-                    column: DuckLakeTableColumn::new(
-                        6,
-                        "vector".into(),
-                        "list".into(),
-                        true,
-                    ),
+                    column: DuckLakeTableColumn::new(6, "vector".into(), "list".into(), true),
                 },
                 None,
             ),
@@ -743,12 +736,7 @@ mod tests {
                 ColumnWithTable {
                     schema_name: "main".into(),
                     table_name: "t".into(),
-                    column: DuckLakeTableColumn::new(
-                        7,
-                        "element".into(),
-                        "float64".into(),
-                        true,
-                    ),
+                    column: DuckLakeTableColumn::new(7, "element".into(), "float64".into(), true),
                 },
                 Some(6),
             ),

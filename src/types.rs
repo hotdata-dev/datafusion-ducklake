@@ -265,9 +265,9 @@ fn parse_list_type(type_str: &str) -> Result<Option<DataType>> {
             return Ok(None);
         }
         &type_str[start + 1..type_str.len() - 1]
-    } else if type_str.ends_with("[]") {
+    } else if let Some(stripped) = type_str.strip_suffix("[]") {
         // type[]
-        &type_str[..type_str.len() - 2]
+        stripped
     } else {
         return Ok(None);
     };
@@ -832,13 +832,9 @@ mod tests {
         assert_eq!(arrow_to_ducklake_type(&list_type).unwrap(), "list<int32>");
 
         let list_type = DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)));
-        assert_eq!(
-            arrow_to_ducklake_type(&list_type).unwrap(),
-            "list<varchar>"
-        );
+        assert_eq!(arrow_to_ducklake_type(&list_type).unwrap(), "list<varchar>");
 
-        let large_list =
-            DataType::LargeList(Arc::new(Field::new("item", DataType::Float64, true)));
+        let large_list = DataType::LargeList(Arc::new(Field::new("item", DataType::Float64, true)));
         assert_eq!(
             arrow_to_ducklake_type(&large_list).unwrap(),
             "list<float64>"
