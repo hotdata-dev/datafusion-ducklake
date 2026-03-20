@@ -6,7 +6,8 @@ use crate::metadata_provider::{
     SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS, SQL_GET_LATEST_SNAPSHOT, SQL_GET_SCHEMA_BY_NAME,
     SQL_GET_TABLE_BY_NAME, SQL_GET_TABLE_COLUMNS, SQL_LIST_ALL_COLUMNS, SQL_LIST_ALL_FILES,
     SQL_LIST_ALL_TABLES, SQL_LIST_SCHEMAS, SQL_LIST_SNAPSHOTS, SQL_LIST_TABLES, SQL_TABLE_EXISTS,
-    SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema,
+    SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema, reconstruct_list_columns,
+    reconstruct_list_columns_with_table,
 };
 use duckdb::AccessMode::ReadOnly;
 use duckdb::{Config, Connection, params};
@@ -145,22 +146,26 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let conn = self.connection();
         let mut stmt = conn.prepare(SQL_GET_TABLE_COLUMNS)?;
 
-        let columns = stmt
+        let raw_columns: Vec<(DuckLakeTableColumn, Option<i64>)> = stmt
             .query_map([table_id], |row| {
                 let column_id: i64 = row.get(0)?;
                 let column_name: String = row.get(1)?;
                 let column_type: String = row.get(2)?;
                 let nulls_allowed: Option<bool> = row.get(3)?;
-                Ok(DuckLakeTableColumn::new(
-                    column_id,
-                    column_name,
-                    column_type,
-                    nulls_allowed.unwrap_or(true),
+                let parent_column: Option<i64> = row.get(4)?;
+                Ok((
+                    DuckLakeTableColumn::new(
+                        column_id,
+                        column_name,
+                        column_type,
+                        nulls_allowed.unwrap_or(true),
+                    ),
+                    parent_column,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(columns)
+        Ok(reconstruct_list_columns(raw_columns))
     }
 
     fn get_table_files_for_select(
@@ -307,29 +312,33 @@ impl MetadataProvider for DuckdbMetadataProvider {
         let conn = self.connection();
         let mut stmt = conn.prepare(SQL_LIST_ALL_COLUMNS)?;
 
-        let columns = stmt
+        let raw_columns: Vec<(ColumnWithTable, Option<i64>)> = stmt
             .query_map(
                 params![snapshot_id, snapshot_id, snapshot_id, snapshot_id],
                 |row| {
                     let schema_name: String = row.get(0)?;
                     let table_name: String = row.get(1)?;
                     let nulls_allowed: Option<bool> = row.get(5)?;
+                    let parent_column: Option<i64> = row.get(6)?;
                     let column = DuckLakeTableColumn {
                         column_id: row.get(2)?,
                         column_name: row.get(3)?,
                         column_type: row.get(4)?,
                         is_nullable: nulls_allowed.unwrap_or(true),
                     };
-                    Ok(ColumnWithTable {
-                        schema_name,
-                        table_name,
-                        column,
-                    })
+                    Ok((
+                        ColumnWithTable {
+                            schema_name,
+                            table_name,
+                            column,
+                        },
+                        parent_column,
+                    ))
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(columns)
+        Ok(reconstruct_list_columns_with_table(raw_columns))
     }
 
     fn list_all_files(&self, snapshot_id: i64) -> crate::Result<Vec<FileWithTable>> {

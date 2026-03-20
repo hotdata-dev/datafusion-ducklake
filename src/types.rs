@@ -1,8 +1,6 @@
 //! Type mapping from DuckLake types to Arrow types
 
 use std::collections::HashMap;
-
-#[cfg(test)]
 use std::sync::Arc;
 
 use crate::metadata_provider::DuckLakeTableColumn;
@@ -18,6 +16,11 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
     // Handle parameterized types first
     if let Some(decimal_params) = parse_decimal(&normalized)? {
         return Ok(decimal_params);
+    }
+
+    // Handle list/array types
+    if let Some(list_type) = parse_list_type(&normalized)? {
+        return Ok(list_type);
     }
 
     // Handle basic types
@@ -68,13 +71,8 @@ pub fn ducklake_to_arrow_type(ducklake_type: &str) -> Result<DataType> {
         "timetz" | "time with time zone" => Ok(DataType::Utf8),
 
         _ => {
-            // Check for complex types (list, struct, map)
-            if normalized.starts_with("list") || normalized.starts_with("array") {
-                Err(DuckLakeError::UnsupportedType(format!(
-                    "Complex type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.",
-                    ducklake_type
-                )))
-            } else if normalized.starts_with("struct") {
+            // Check for complex types (struct, map)
+            if normalized.starts_with("struct") {
                 Err(DuckLakeError::UnsupportedType(format!(
                     "Struct type '{}' not yet supported. Please open an issue at https://github.com/hotdata-dev/datafusion-ducklake if you need this feature.",
                     ducklake_type
@@ -139,12 +137,14 @@ pub fn arrow_to_ducklake_type(arrow_type: &DataType) -> Result<String> {
         // Null type - map to varchar as there's no direct equivalent
         DataType::Null => Ok("varchar".to_string()),
 
-        // Complex types - not yet supported for writing
-        DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(_, _) => {
-            Err(DuckLakeError::UnsupportedType(format!(
-                "List type '{}' not yet supported for writing",
-                arrow_type
-            )))
+        // List types
+        DataType::List(field) | DataType::LargeList(field) => {
+            let inner = arrow_to_ducklake_type(field.data_type())?;
+            Ok(format!("list<{}>", inner))
+        },
+        DataType::FixedSizeList(field, _) => {
+            let inner = arrow_to_ducklake_type(field.data_type())?;
+            Ok(format!("list<{}>", inner))
         },
         DataType::Struct(_) => Err(DuckLakeError::UnsupportedType(format!(
             "Struct type '{}' not yet supported for writing",
@@ -248,6 +248,52 @@ fn parse_decimal(type_str: &str) -> Result<Option<DataType>> {
             n, type_str
         ))),
     }
+}
+
+/// Parse list/array type syntax and return `DataType::List` if matched.
+///
+/// Supported formats:
+/// - `list<element_type>` / `array<element_type>` (DuckDB style)
+/// - `element_type[]` (Postgres style, e.g. `varchar[]`, `float[]`)
+///
+/// Only simple (non-nested) element types are supported.
+fn parse_list_type(type_str: &str) -> Result<Option<DataType>> {
+    let inner = if type_str.starts_with("list<") || type_str.starts_with("array<") {
+        // list<type> or array<type>
+        let start = type_str.find('<').unwrap();
+        if !type_str.ends_with('>') {
+            return Ok(None);
+        }
+        &type_str[start + 1..type_str.len() - 1]
+    } else if let Some(stripped) = type_str.strip_suffix("[]") {
+        // type[]
+        stripped
+    } else {
+        return Ok(None);
+    };
+
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return Err(DuckLakeError::UnsupportedType(format!(
+            "List type '{}' has empty element type",
+            type_str
+        )));
+    }
+
+    // Only support simple (non-nested) element types
+    if inner.contains('<') || inner.contains('[') || inner.contains('{') {
+        return Err(DuckLakeError::UnsupportedType(format!(
+            "Nested complex type '{}' not yet supported",
+            type_str
+        )));
+    }
+
+    let element_type = ducklake_to_arrow_type(inner)?;
+    Ok(Some(DataType::List(Arc::new(Field::new(
+        "item",
+        element_type,
+        true,
+    )))))
 }
 
 /// Normalize a DuckLake type string to its canonical form.
@@ -567,32 +613,59 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_list_type_errors() {
-        // Test list type returns error
-        let result = ducklake_to_arrow_type("list<int32>");
-        assert!(result.is_err());
-        match result {
-            Err(DuckLakeError::UnsupportedType(msg)) => {
-                assert!(msg.contains("list<int32>"));
-                assert!(msg.contains("not yet supported"));
-                assert!(msg.contains("open an issue"));
-            },
-            _ => panic!("Expected UnsupportedType error for list type"),
+    fn test_list_type_angle_bracket() {
+        let result = ducklake_to_arrow_type("list<int32>").unwrap();
+        let expected = DataType::List(Arc::new(Field::new("item", DataType::Int32, true)));
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_list_type_various_elements() {
+        let cases = vec![
+            ("list<varchar>", DataType::Utf8),
+            ("list<float64>", DataType::Float64),
+            ("list<boolean>", DataType::Boolean),
+            ("list<date>", DataType::Date32),
+        ];
+        for (type_str, expected_inner) in cases {
+            let result = ducklake_to_arrow_type(type_str).unwrap();
+            let expected =
+                DataType::List(Arc::new(Field::new("item", expected_inner.clone(), true)));
+            assert_eq!(result, expected, "Failed for {}", type_str);
         }
     }
 
     #[test]
-    fn test_unsupported_array_type_errors() {
-        // Test array type returns error
-        let result = ducklake_to_arrow_type("array<varchar>");
-        assert!(result.is_err());
-        match result {
-            Err(DuckLakeError::UnsupportedType(msg)) => {
-                assert!(msg.contains("array<varchar>"));
-                assert!(msg.contains("not yet supported"));
-            },
-            _ => panic!("Expected UnsupportedType error for array type"),
+    fn test_array_type_angle_bracket() {
+        let result = ducklake_to_arrow_type("array<varchar>").unwrap();
+        let expected = DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)));
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_list_type_postgres_bracket_syntax() {
+        let cases = vec![
+            ("varchar[]", DataType::Utf8),
+            ("float64[]", DataType::Float64),
+            ("int32[]", DataType::Int32),
+            ("boolean[]", DataType::Boolean),
+            ("bigint[]", DataType::Int64),
+            ("text[]", DataType::Utf8),
+            ("float[]", DataType::Float32),
+            ("integer[]", DataType::Int32),
+        ];
+        for (type_str, expected_inner) in cases {
+            let result = ducklake_to_arrow_type(type_str).unwrap();
+            let expected =
+                DataType::List(Arc::new(Field::new("item", expected_inner.clone(), true)));
+            assert_eq!(result, expected, "Failed for {}", type_str);
         }
+    }
+
+    #[test]
+    fn test_list_type_empty_element_errors() {
+        assert!(ducklake_to_arrow_type("list<>").is_err());
+        assert!(ducklake_to_arrow_type("[]").is_err());
     }
 
     #[test]
@@ -627,16 +700,20 @@ mod tests {
 
     #[test]
     fn test_nested_complex_types_error() {
-        // Test nested complex types return error
+        // Nested complex types return error
         let result = ducklake_to_arrow_type("list<struct<a:int32,b:varchar>>");
         assert!(result.is_err());
         match result {
             Err(DuckLakeError::UnsupportedType(msg)) => {
-                assert!(msg.contains("list<struct<a:int32,b:varchar>>"));
+                assert!(msg.contains("Nested complex type"));
                 assert!(msg.contains("not yet supported"));
             },
             _ => panic!("Expected UnsupportedType error for nested complex type"),
         }
+
+        // Nested list also errors
+        assert!(ducklake_to_arrow_type("list<list<int32>>").is_err());
+        assert!(ducklake_to_arrow_type("int32[][]").is_err());
     }
 
     #[test]
@@ -738,6 +815,8 @@ mod tests {
             DataType::Date32,
             DataType::Timestamp(TimeUnit::Microsecond, None),
             DataType::Decimal128(10, 2),
+            DataType::List(Arc::new(Field::new("item", DataType::Int32, true))),
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
         ];
 
         for original in test_types {
@@ -748,17 +827,18 @@ mod tests {
     }
 
     #[test]
-    fn test_arrow_to_ducklake_unsupported_list() {
+    fn test_arrow_to_ducklake_list() {
         let list_type = DataType::List(Arc::new(Field::new("item", DataType::Int32, true)));
-        let result = arrow_to_ducklake_type(&list_type);
-        assert!(result.is_err());
-        match result {
-            Err(DuckLakeError::UnsupportedType(msg)) => {
-                assert!(msg.contains("List type"));
-                assert!(msg.contains("not yet supported"));
-            },
-            _ => panic!("Expected UnsupportedType error"),
-        }
+        assert_eq!(arrow_to_ducklake_type(&list_type).unwrap(), "list<int32>");
+
+        let list_type = DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)));
+        assert_eq!(arrow_to_ducklake_type(&list_type).unwrap(), "list<varchar>");
+
+        let large_list = DataType::LargeList(Arc::new(Field::new("item", DataType::Float64, true)));
+        assert_eq!(
+            arrow_to_ducklake_type(&large_list).unwrap(),
+            "list<float64>"
+        );
     }
 
     #[test]
@@ -885,8 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_schema_with_unsupported_type() {
-        // Test that build_arrow_schema propagates complex type errors
+    fn test_build_schema_with_list_type() {
         let columns = vec![
             DuckLakeTableColumn {
                 column_id: 1,
@@ -896,20 +975,32 @@ mod tests {
             },
             DuckLakeTableColumn {
                 column_id: 2,
-                column_name: "data".to_string(),
-                column_type: "list<int32>".to_string(),
+                column_name: "tags".to_string(),
+                column_type: "list<varchar>".to_string(),
                 is_nullable: true,
             },
         ];
 
+        let schema = build_arrow_schema(&columns).unwrap();
+        assert_eq!(schema.fields().len(), 2);
+        assert_eq!(
+            *schema.field(1).data_type(),
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true)))
+        );
+    }
+
+    #[test]
+    fn test_build_schema_with_unsupported_type() {
+        // Test that build_arrow_schema propagates complex type errors
+        let columns = vec![DuckLakeTableColumn {
+            column_id: 1,
+            column_name: "data".to_string(),
+            column_type: "struct<a:int32>".to_string(),
+            is_nullable: true,
+        }];
+
         let result = build_arrow_schema(&columns);
         assert!(result.is_err());
-        match result {
-            Err(DuckLakeError::UnsupportedType(msg)) => {
-                assert!(msg.contains("list<int32>"));
-            },
-            _ => panic!("Expected UnsupportedType error when building schema with complex type"),
-        }
     }
 
     #[test]
