@@ -4,7 +4,8 @@ use crate::Result;
 use crate::metadata_provider::{
     ColumnWithTable, DataFileChange, DeleteFileChange, DuckLakeFileData, DuckLakeTableColumn,
     DuckLakeTableFile, FileWithTable, MetadataProvider, SchemaMetadata, SnapshotMetadata,
-    TableMetadata, TableWithSchema, block_on,
+    TableMetadata, TableWithSchema, block_on, reconstruct_list_columns,
+    reconstruct_list_columns_with_table,
 };
 use sqlx::Row;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
@@ -140,7 +141,7 @@ impl MetadataProvider for SqliteMetadataProvider {
     fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>> {
         block_on(async {
             let rows = sqlx::query(
-                "SELECT column_id, column_name, column_type, nulls_allowed
+                "SELECT column_id, column_name, column_type, nulls_allowed, parent_column
                  FROM ducklake_column
                  WHERE table_id = ? AND end_snapshot IS NULL
                  ORDER BY column_order",
@@ -149,17 +150,23 @@ impl MetadataProvider for SqliteMetadataProvider {
             .fetch_all(&self.pool)
             .await?;
 
-            rows.into_iter()
+            let raw: Result<Vec<(DuckLakeTableColumn, Option<i64>)>> = rows
+                .into_iter()
                 .map(|row| {
                     let nulls_allowed: Option<bool> = row.try_get(3)?;
-                    Ok(DuckLakeTableColumn {
-                        column_id: row.try_get(0)?,
-                        column_name: row.try_get(1)?,
-                        column_type: row.try_get(2)?,
-                        is_nullable: nulls_allowed.unwrap_or(true),
-                    })
+                    let parent_column: Option<i64> = row.try_get(4)?;
+                    Ok((
+                        DuckLakeTableColumn {
+                            column_id: row.try_get(0)?,
+                            column_name: row.try_get(1)?,
+                            column_type: row.try_get(2)?,
+                            is_nullable: nulls_allowed.unwrap_or(true),
+                        },
+                        parent_column,
+                    ))
                 })
-                .collect()
+                .collect();
+            Ok(reconstruct_list_columns(raw?))
         })
     }
 
@@ -357,7 +364,7 @@ impl MetadataProvider for SqliteMetadataProvider {
     fn list_all_columns(&self, snapshot_id: i64) -> Result<Vec<ColumnWithTable>> {
         block_on(async {
             let rows = sqlx::query(
-                "SELECT s.schema_name, t.table_name, c.column_id, c.column_name, c.column_type, c.nulls_allowed
+                "SELECT s.schema_name, t.table_name, c.column_id, c.column_name, c.column_type, c.nulls_allowed, c.parent_column
                  FROM ducklake_schema s
                  JOIN ducklake_table t ON s.schema_id = t.schema_id
                  JOIN ducklake_column c ON t.table_id = c.table_id
@@ -374,24 +381,30 @@ impl MetadataProvider for SqliteMetadataProvider {
             .fetch_all(&self.pool)
             .await?;
 
-            rows.into_iter()
+            let raw: Result<Vec<(ColumnWithTable, Option<i64>)>> = rows
+                .into_iter()
                 .map(|row| {
                     let schema_name: String = row.try_get(0)?;
                     let table_name: String = row.try_get(1)?;
                     let nulls_allowed: Option<bool> = row.try_get(5)?;
+                    let parent_column: Option<i64> = row.try_get(6)?;
                     let column = DuckLakeTableColumn {
                         column_id: row.try_get(2)?,
                         column_name: row.try_get(3)?,
                         column_type: row.try_get(4)?,
                         is_nullable: nulls_allowed.unwrap_or(true),
                     };
-                    Ok(ColumnWithTable {
-                        schema_name,
-                        table_name,
-                        column,
-                    })
+                    Ok((
+                        ColumnWithTable {
+                            schema_name,
+                            table_name,
+                            column,
+                        },
+                        parent_column,
+                    ))
                 })
-                .collect()
+                .collect();
+            Ok(reconstruct_list_columns_with_table(raw?))
         })
     }
 
