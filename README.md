@@ -4,8 +4,6 @@ A [DataFusion](https://datafusion.apache.org/) extension for querying [DuckLake]
 
 The goal of this project is to make DuckLake a first-class, Arrow-native lakehouse format inside DataFusion.
 
-[Join the Discord](https://discord.gg/FefVb3u9sH)
-
 ---
 
 ## Currently Supported
