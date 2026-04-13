@@ -3,7 +3,7 @@
 //! Requires multi-threaded Tokio runtime (`#[tokio::test(flavor = "multi_thread")]`).
 
 use crate::Result;
-use crate::metadata_provider::block_on;
+use crate::metadata_provider::sync_call as block_on;
 use crate::metadata_writer::{
     ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteSetupResult, validate_name,
 };
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS ducklake_column (
     column_type VARCHAR NOT NULL,
     column_order INTEGER NOT NULL,
     nulls_allowed BOOLEAN DEFAULT 1,
+    parent_column INTEGER,
     begin_snapshot INTEGER NOT NULL,
     end_snapshot INTEGER
 );

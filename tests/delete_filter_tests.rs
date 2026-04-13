@@ -57,10 +57,12 @@ mod integration_tests {
     use super::*;
 
     /// Helper to create a catalog from a DuckLake database file
-    fn create_catalog(path: &str) -> DataFusionResult<Arc<DuckLakeCatalog>> {
+    async fn create_catalog(path: &str) -> DataFusionResult<Arc<DuckLakeCatalog>> {
         let provider = DuckdbMetadataProvider::new(path)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
         let catalog = DuckLakeCatalog::new(provider)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
         Ok(Arc::new(catalog))
     }
@@ -75,7 +77,7 @@ mod integration_tests {
         // Generate test data
         common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("no_deletes", catalog);
@@ -111,7 +113,7 @@ mod integration_tests {
         // Generate test data
         common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -150,7 +152,7 @@ mod integration_tests {
         // Generate test data
         common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -186,7 +188,7 @@ mod integration_tests {
         // Generate test data
         common::create_catalog_with_updates(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_updates", catalog);
@@ -231,7 +233,7 @@ mod integration_tests {
         // Generate test data
         common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -269,7 +271,7 @@ mod integration_tests {
         // Generate test data
         common::create_catalog_with_updates(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_updates", catalog);
@@ -305,7 +307,7 @@ mod integration_tests {
         // Generate test data
         common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("with_deletes", catalog);
@@ -338,7 +340,7 @@ mod integration_tests {
         // Generate test data - inserts a row, then deletes it
         common::create_catalog_empty_table(&catalog_path).map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("all_deleted", catalog);
@@ -405,7 +407,7 @@ mod integration_tests {
         common::create_catalog_filter_pushdown(&catalog_path)
             .map_err(common::to_datafusion_error)?;
 
-        let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+        let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
 
         let ctx = SessionContext::new();
         ctx.register_catalog("filter_pushdown", catalog);

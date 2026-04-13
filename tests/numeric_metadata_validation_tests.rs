@@ -68,10 +68,12 @@ fn create_catalog_with_negative_footer_size(catalog_path: &std::path::Path) -> a
     Ok(())
 }
 
-fn create_catalog(path: &str) -> DataFusionResult<Arc<DuckLakeCatalog>> {
+async fn create_catalog(path: &str) -> DataFusionResult<Arc<DuckLakeCatalog>> {
     let provider = DuckdbMetadataProvider::new(path)
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = DuckLakeCatalog::new(provider)
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     Ok(Arc::new(catalog))
 }
@@ -85,7 +87,7 @@ async fn test_negative_file_size_produces_clear_error() -> DataFusionResult<()> 
     create_catalog_with_negative_file_size(&catalog_path)
         .map_err(|e| datafusion::error::DataFusionError::External(e.into()))?;
 
-    let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+    let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", catalog);
 
@@ -123,7 +125,7 @@ async fn test_negative_footer_size_is_gracefully_skipped() -> DataFusionResult<(
     create_catalog_with_negative_footer_size(&catalog_path)
         .map_err(|e| datafusion::error::DataFusionError::External(e.into()))?;
 
-    let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+    let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", catalog);
 

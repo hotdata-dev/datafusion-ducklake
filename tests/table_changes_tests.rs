@@ -80,17 +80,14 @@ mod integration_tests {
 
     /// Helper to create a context with catalog and register functions
     async fn create_context_with_functions(path: &str) -> DataFusionResult<SessionContext> {
-        let provider = DuckdbMetadataProvider::new(path)?;
-        let provider_arc: Arc<dyn datafusion_ducklake::MetadataProvider> =
-            Arc::new(DuckdbMetadataProvider::new(path)?);
-
-        let catalog = DuckLakeCatalog::new(provider)?;
+        let provider = DuckdbMetadataProvider::new(path).await?;
+        let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
 
         let ctx = SessionContext::new();
-        ctx.register_catalog("ducklake", Arc::new(catalog));
+        ctx.register_catalog("ducklake", catalog.clone());
 
         // Register the table functions including ducklake_table_changes
-        register_ducklake_functions(&ctx, provider_arc);
+        register_ducklake_functions(&ctx, catalog);
 
         Ok(ctx)
     }
@@ -357,17 +354,14 @@ mod table_deletions_tests {
 
     /// Helper to create a context with catalog and register functions
     async fn create_context_with_functions(path: &str) -> DataFusionResult<SessionContext> {
-        let provider = DuckdbMetadataProvider::new(path)?;
-        let provider_arc: Arc<dyn datafusion_ducklake::MetadataProvider> =
-            Arc::new(DuckdbMetadataProvider::new(path)?);
-
-        let catalog = DuckLakeCatalog::new(provider)?;
+        let provider = DuckdbMetadataProvider::new(path).await?;
+        let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
 
         let ctx = SessionContext::new();
-        ctx.register_catalog("ducklake", Arc::new(catalog));
+        ctx.register_catalog("ducklake", catalog.clone());
 
         // Register the table functions including ducklake_table_deletions
-        register_ducklake_functions(&ctx, provider_arc);
+        register_ducklake_functions(&ctx, catalog);
 
         Ok(ctx)
     }

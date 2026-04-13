@@ -49,7 +49,7 @@ async fn create_read_context(temp_dir: &TempDir) -> SessionContext {
     let conn_str = format!("sqlite:{}", db_path.display());
 
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::new(provider).unwrap();
+    let catalog = DuckLakeCatalog::new(provider).await.unwrap();
 
     let ctx = SessionContext::new();
     ctx.register_catalog("test", Arc::new(catalog));
