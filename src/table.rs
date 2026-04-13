@@ -100,8 +100,6 @@ pub struct DuckLakeTable {
     #[allow(dead_code)]
     table_id: i64,
     table_name: String,
-    #[allow(dead_code)]
-    provider: Arc<dyn MetadataProvider>,
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     /// Table path for resolving relative file paths
@@ -140,7 +138,7 @@ impl std::fmt::Debug for DuckLakeTable {
 
 impl DuckLakeTable {
     /// Create a new DuckLake table
-    pub fn new(
+    pub async fn new(
         table_id: i64,
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
@@ -148,10 +146,31 @@ impl DuckLakeTable {
         object_store_url: Arc<ObjectStoreUrl>,
         table_path: String,
     ) -> Result<Self> {
-        // Load ALL metadata with this snapshot_id
-        let columns = provider.get_table_structure(table_id)?;
+        let table_name = table_name.into();
+        let columns = provider.get_table_structure(table_id).await?;
+        let table_files = provider
+            .get_table_files_for_select(table_id, snapshot_id)
+            .await?;
+        Self::from_loaded_metadata(
+            table_id,
+            table_name,
+            object_store_url,
+            table_path,
+            columns,
+            table_files,
+        )
+    }
+
+    pub(crate) fn from_loaded_metadata(
+        table_id: i64,
+        table_name: impl Into<String>,
+        object_store_url: Arc<ObjectStoreUrl>,
+        table_path: String,
+        columns: Vec<DuckLakeTableColumn>,
+        table_files: Vec<DuckLakeTableFile>,
+    ) -> Result<Self> {
+        let table_name = table_name.into();
         let schema = Arc::new(build_arrow_schema(&columns)?);
-        let table_files = provider.get_table_files_for_select(table_id, snapshot_id)?;
 
         // Build encryption factory from file encryption keys (when encryption feature is enabled)
         #[cfg(feature = "encryption")]
@@ -183,8 +202,7 @@ impl DuckLakeTable {
 
         Ok(Self {
             table_id,
-            table_name: table_name.into(),
-            provider,
+            table_name,
             object_store_url,
             table_path,
             schema,

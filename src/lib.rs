@@ -22,10 +22,10 @@
 //! let ctx = SessionContext::new();
 //!
 //! // Create a DuckDB metadata provider
-//! let provider = DuckdbMetadataProvider::new("path/to/catalog.ducklake")?;
+//! let provider = DuckdbMetadataProvider::new("path/to/catalog.ducklake").await?;
 //!
 //! // Register a DuckLake catalog with the provider
-//! let catalog = DuckLakeCatalog::new(provider)?;
+//! let catalog = DuckLakeCatalog::new(provider).await?;
 //! ctx.register_catalog("ducklake", std::sync::Arc::new(catalog));
 //!
 //! // Query tables from the catalog

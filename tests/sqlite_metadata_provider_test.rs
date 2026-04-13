@@ -76,6 +76,7 @@ async fn init_schema(pool: &SqlitePool) -> anyhow::Result<()> {
             column_type TEXT NOT NULL,
             column_order INTEGER NOT NULL,
             nulls_allowed INTEGER,
+            parent_column INTEGER,
             begin_snapshot INTEGER NOT NULL DEFAULT 1,
             end_snapshot INTEGER,
             FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
@@ -350,15 +351,18 @@ async fn populate_from_duckdb_catalog(
     common::create_catalog_no_deletes(&catalog_path)?;
 
     // Step 2: Read metadata from DuckDB catalog
-    let duckdb_provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())?;
+    let duckdb_provider =
+        DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string()).await?;
 
-    let data_path = duckdb_provider.get_data_path()?;
-    let snapshots = duckdb_provider.list_snapshots()?;
+    let data_path = duckdb_provider.get_data_path().await?;
+    let snapshots = duckdb_provider.list_snapshots().await?;
     let current_snapshot = snapshots
         .last()
         .ok_or_else(|| anyhow::anyhow!("No snapshots found"))?;
 
-    let schemas = duckdb_provider.list_schemas(current_snapshot.snapshot_id)?;
+    let schemas = duckdb_provider
+        .list_schemas(current_snapshot.snapshot_id)
+        .await?;
 
     // Step 3: Populate SQLite with metadata from DuckDB
     let pool = &provider.pool;
@@ -396,7 +400,9 @@ async fn populate_from_duckdb_catalog(
         .execute(pool)
         .await?;
 
-        let tables = duckdb_provider.list_tables(schema.schema_id, current_snapshot.snapshot_id)?;
+        let tables = duckdb_provider
+            .list_tables(schema.schema_id, current_snapshot.snapshot_id)
+            .await?;
 
         for table in &tables {
             sqlx::query(
@@ -413,7 +419,7 @@ async fn populate_from_duckdb_catalog(
             .execute(pool)
             .await?;
 
-            let columns = duckdb_provider.get_table_structure(table.table_id)?;
+            let columns = duckdb_provider.get_table_structure(table.table_id).await?;
 
             for (order, column) in columns.iter().enumerate() {
                 sqlx::query(
@@ -431,7 +437,8 @@ async fn populate_from_duckdb_catalog(
             }
 
             let files = duckdb_provider
-                .get_table_files_for_select(table.table_id, current_snapshot.snapshot_id)?;
+                .get_table_files_for_select(table.table_id, current_snapshot.snapshot_id)
+                .await?;
 
             for (file_idx, file) in files.iter().enumerate() {
                 let data_file_id = table.table_id * 1000 + file_idx as i64 + 1;
@@ -488,7 +495,7 @@ async fn test_schema_initialization_idempotent() {
         .expect("Schema initialization should be idempotent");
 
     // Verify tables exist by querying them
-    let result = provider.get_current_snapshot();
+    let result = provider.get_current_snapshot().await;
     assert!(result.is_ok(), "Should be able to query after init");
 }
 
@@ -499,6 +506,7 @@ async fn test_get_current_snapshot() {
     // Initially should be 0 (no snapshots)
     let snapshot_id = provider
         .get_current_snapshot()
+        .await
         .expect("Should get current snapshot");
     assert_eq!(snapshot_id, 0, "Should be 0 when no snapshots exist");
 
@@ -510,6 +518,7 @@ async fn test_get_current_snapshot() {
     // Should now return 2 (max snapshot_id)
     let snapshot_id = provider
         .get_current_snapshot()
+        .await
         .expect("Should get current snapshot");
     assert_eq!(snapshot_id, 2, "Should return max snapshot_id");
 }
@@ -522,7 +531,10 @@ async fn test_get_data_path() {
         .await
         .expect("Failed to populate test data");
 
-    let data_path = provider.get_data_path().expect("Should get data path");
+    let data_path = provider
+        .get_data_path()
+        .await
+        .expect("Should get data path");
 
     assert_eq!(data_path, "file:///tmp/ducklake_data/");
 }
@@ -535,7 +547,10 @@ async fn test_list_snapshots() {
         .await
         .expect("Failed to populate test data");
 
-    let snapshots = provider.list_snapshots().expect("Should list snapshots");
+    let snapshots = provider
+        .list_snapshots()
+        .await
+        .expect("Should list snapshots");
 
     assert_eq!(snapshots.len(), 2, "Should have 2 snapshots");
     assert_eq!(snapshots[0].snapshot_id, 1);
@@ -553,6 +568,7 @@ async fn test_list_schemas_snapshot_isolation() {
     // Snapshot 1 should only see test_schema
     let schemas = provider
         .list_schemas(1)
+        .await
         .expect("Should list schemas for snapshot 1");
 
     assert_eq!(schemas.len(), 1, "Snapshot 1 should have 1 schema");
@@ -561,6 +577,7 @@ async fn test_list_schemas_snapshot_isolation() {
     // Snapshot 2 should see both schemas
     let schemas = provider
         .list_schemas(2)
+        .await
         .expect("Should list schemas for snapshot 2");
 
     assert_eq!(schemas.len(), 2, "Snapshot 2 should have 2 schemas");
@@ -581,6 +598,7 @@ async fn test_get_schema_by_name() {
     // Should find test_schema
     let schema = provider
         .get_schema_by_name("test_schema", 1)
+        .await
         .expect("Should get schema by name");
 
     assert!(schema.is_some(), "Should find test_schema");
@@ -591,6 +609,7 @@ async fn test_get_schema_by_name() {
     // Should not find non-existent schema
     let schema = provider
         .get_schema_by_name("nonexistent", 1)
+        .await
         .expect("Should handle non-existent schema");
 
     assert!(schema.is_none(), "Should not find nonexistent schema");
@@ -598,6 +617,7 @@ async fn test_get_schema_by_name() {
     // schema2 should not be visible in snapshot 1
     let schema = provider
         .get_schema_by_name("schema2", 1)
+        .await
         .expect("Should handle schema not in snapshot");
 
     assert!(
@@ -608,6 +628,7 @@ async fn test_get_schema_by_name() {
     // schema2 should be visible in snapshot 2
     let schema = provider
         .get_schema_by_name("schema2", 2)
+        .await
         .expect("Should get schema by name");
 
     assert!(schema.is_some(), "schema2 should be visible in snapshot 2");
@@ -622,13 +643,19 @@ async fn test_list_tables() {
         .expect("Failed to populate test data");
 
     // Snapshot 1 should only see users table
-    let tables = provider.list_tables(1, 1).expect("Should list tables");
+    let tables = provider
+        .list_tables(1, 1)
+        .await
+        .expect("Should list tables");
 
     assert_eq!(tables.len(), 1, "Snapshot 1 should have 1 table");
     assert_eq!(tables[0].table_name, "users");
 
     // Snapshot 2 should see both tables
-    let tables = provider.list_tables(1, 2).expect("Should list tables");
+    let tables = provider
+        .list_tables(1, 2)
+        .await
+        .expect("Should list tables");
 
     assert_eq!(tables.len(), 2, "Snapshot 2 should have 2 tables");
 
@@ -648,6 +675,7 @@ async fn test_get_table_by_name() {
     // Should find users table
     let table = provider
         .get_table_by_name(1, "users", 1)
+        .await
         .expect("Should get table by name");
 
     assert!(table.is_some(), "Should find users table");
@@ -658,6 +686,7 @@ async fn test_get_table_by_name() {
     // Should not find non-existent table
     let table = provider
         .get_table_by_name(1, "nonexistent", 1)
+        .await
         .expect("Should handle non-existent table");
 
     assert!(table.is_none(), "Should not find nonexistent table");
@@ -674,6 +703,7 @@ async fn test_table_exists() {
     // users table should exist
     let exists = provider
         .table_exists(1, "users", 1)
+        .await
         .expect("Should check if table exists");
 
     assert!(exists, "users table should exist");
@@ -681,6 +711,7 @@ async fn test_table_exists() {
     // nonexistent table should not exist
     let exists = provider
         .table_exists(1, "nonexistent", 1)
+        .await
         .expect("Should check if table exists");
 
     assert!(!exists, "nonexistent table should not exist");
@@ -688,6 +719,7 @@ async fn test_table_exists() {
     // products table should not exist in snapshot 1
     let exists = provider
         .table_exists(1, "products", 1)
+        .await
         .expect("Should check if table exists");
 
     assert!(!exists, "products table should not exist in snapshot 1");
@@ -695,6 +727,7 @@ async fn test_table_exists() {
     // products table should exist in snapshot 2
     let exists = provider
         .table_exists(1, "products", 2)
+        .await
         .expect("Should check if table exists");
 
     assert!(exists, "products table should exist in snapshot 2");
@@ -710,6 +743,7 @@ async fn test_get_table_structure() {
 
     let columns = provider
         .get_table_structure(1)
+        .await
         .expect("Should get table structure");
 
     assert_eq!(columns.len(), 3, "users table should have 3 columns");
@@ -737,6 +771,7 @@ async fn test_get_table_files_for_select() {
 
     let files = provider
         .get_table_files_for_select(1, 1)
+        .await
         .expect("Should get table files");
 
     assert_eq!(files.len(), 2, "Should have 2 data files");
@@ -773,14 +808,20 @@ async fn test_list_all_tables() {
         .expect("Failed to populate test data");
 
     // Snapshot 1 should only see 1 table
-    let tables = provider.list_all_tables(1).expect("Should list all tables");
+    let tables = provider
+        .list_all_tables(1)
+        .await
+        .expect("Should list all tables");
 
     assert_eq!(tables.len(), 1, "Snapshot 1 should have 1 table");
     assert_eq!(tables[0].schema_name, "test_schema");
     assert_eq!(tables[0].table.table_name, "users");
 
     // Snapshot 2 should see 2 tables
-    let tables = provider.list_all_tables(2).expect("Should list all tables");
+    let tables = provider
+        .list_all_tables(2)
+        .await
+        .expect("Should list all tables");
 
     assert_eq!(tables.len(), 2, "Snapshot 2 should have 2 tables");
 }
@@ -795,6 +836,7 @@ async fn test_list_all_columns() {
 
     let columns = provider
         .list_all_columns(1)
+        .await
         .expect("Should list all columns");
 
     assert_eq!(columns.len(), 3, "Should have 3 columns from users table");
@@ -815,7 +857,10 @@ async fn test_list_all_files() {
         .await
         .expect("Failed to populate test data");
 
-    let files = provider.list_all_files(1).expect("Should list all files");
+    let files = provider
+        .list_all_files(1)
+        .await
+        .expect("Should list all files");
 
     assert_eq!(files.len(), 2, "Should have 2 files");
 
@@ -845,11 +890,16 @@ async fn test_concurrent_access() {
         let task = tokio::spawn(async move {
             let _snapshot = provider
                 .get_current_snapshot()
+                .await
                 .expect("Should get snapshot");
-            let _schemas = provider.list_schemas(1).expect("Should list schemas");
-            let _tables = provider.list_tables(1, 1).expect("Should list tables");
+            let _schemas = provider.list_schemas(1).await.expect("Should list schemas");
+            let _tables = provider
+                .list_tables(1, 1)
+                .await
+                .expect("Should list tables");
             let _columns = provider
                 .get_table_structure(1)
+                .await
                 .expect("Should get structure");
         });
         tasks.push(task);
@@ -868,7 +918,9 @@ async fn test_datafusion_integration() {
         .await
         .expect("Failed to populate test data");
 
-    let catalog = DuckLakeCatalog::new(provider).expect("Should create catalog");
+    let catalog = DuckLakeCatalog::new(provider)
+        .await
+        .expect("Should create catalog");
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -891,7 +943,9 @@ async fn test_query_real_parquet_files() {
         .await
         .expect("Failed to populate from DuckDB catalog");
 
-    let catalog = DuckLakeCatalog::new(provider).expect("Should create catalog");
+    let catalog = DuckLakeCatalog::new(provider)
+        .await
+        .expect("Should create catalog");
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -950,7 +1004,9 @@ async fn test_query_with_filter() {
         .await
         .expect("Failed to populate from DuckDB catalog");
 
-    let catalog = DuckLakeCatalog::new(provider).expect("Should create catalog");
+    let catalog = DuckLakeCatalog::new(provider)
+        .await
+        .expect("Should create catalog");
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 

@@ -26,7 +26,7 @@ pub struct DeleteFilterExec {
     /// Set of deleted row positions for this file (shared across streams)
     deleted_positions: Arc<HashSet<i64>>,
     /// Cached plan properties
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
 }
 
 impl DeleteFilterExec {
@@ -79,7 +79,7 @@ impl ExecutionPlan for DeleteFilterExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 

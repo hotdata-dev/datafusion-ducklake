@@ -87,7 +87,7 @@ pub struct AppendCDCColumnsExec {
     /// Output schema (projected input schema + requested CDC columns)
     output_schema: SchemaRef,
     /// Cached plan properties with updated schema
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
 }
 
 impl AppendCDCColumnsExec {
@@ -106,12 +106,12 @@ impl AppendCDCColumnsExec {
         // Future optimization: carry forward equivalences for projected table columns.
         let eq_properties = EquivalenceProperties::new(output_schema.clone());
 
-        let properties = PlanProperties::new(
+        let properties = Arc::new(PlanProperties::new(
             eq_properties,
             input.output_partitioning().clone(),
             input.pipeline_behavior(),
             input.boundedness(),
-        );
+        ));
 
         Self {
             input,
@@ -156,7 +156,7 @@ impl ExecutionPlan for AppendCDCColumnsExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
@@ -553,6 +553,7 @@ impl TableProvider for TableChangesTable {
                 self.start_snapshot,
                 self.end_snapshot,
             )
+            .await
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         // Handle empty case

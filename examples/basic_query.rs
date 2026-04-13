@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             println!("Connecting to PostgreSQL catalog: {}", catalog_source);
             let provider = Arc::new(PostgresMetadataProvider::new(catalog_source).await?);
-            let snapshot_id = provider.get_current_snapshot()?;
+            let snapshot_id = provider.get_current_snapshot().await?;
             println!("Current snapshot ID: {}", snapshot_id);
             run_query(provider, snapshot_id, sql).await?;
         }
@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             println!("Connecting to MySQL catalog: {}", catalog_source);
             let provider = Arc::new(MySqlMetadataProvider::new(catalog_source).await?);
-            let snapshot_id = provider.get_current_snapshot()?;
+            let snapshot_id = provider.get_current_snapshot().await?;
             println!("Current snapshot ID: {}", snapshot_id);
             run_query(provider, snapshot_id, sql).await?;
         }
@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             println!("Connecting to SQLite catalog: {}", catalog_source);
             let provider = Arc::new(SqliteMetadataProvider::new(catalog_source).await?);
-            let snapshot_id = provider.get_current_snapshot()?;
+            let snapshot_id = provider.get_current_snapshot().await?;
             println!("Current snapshot ID: {}", snapshot_id);
             run_query(provider, snapshot_id, sql).await?;
         }
@@ -139,8 +139,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "metadata-duckdb")]
         {
             println!("Connecting to DuckDB catalog: {}", catalog_source);
-            let provider = Arc::new(DuckdbMetadataProvider::new(catalog_source)?);
-            let snapshot_id = provider.get_current_snapshot()?;
+            let provider = Arc::new(DuckdbMetadataProvider::new(catalog_source).await?);
+            let snapshot_id = provider.get_current_snapshot().await?;
             println!("Current snapshot ID: {}", snapshot_id);
             run_query(provider, snapshot_id, sql).await?;
         }
@@ -180,7 +180,8 @@ async fn run_query(
     // Create the DuckLake catalog bound to the snapshot
     // This ensures all queries through this catalog see consistent data
     // from this specific snapshot, even if the underlying data changes
-    let ducklake_catalog = DuckLakeCatalog::with_snapshot(provider.clone(), snapshot_id)?;
+    let ducklake_catalog =
+        Arc::new(DuckLakeCatalog::with_snapshot(provider.clone(), snapshot_id).await?);
 
     println!("✓ Connected to DuckLake catalog");
 
@@ -190,10 +191,10 @@ async fn run_query(
     let ctx = SessionContext::new_with_config_rt(config, runtime.clone());
 
     // Register the DuckLake catalog (standard DataFusion pattern)
-    ctx.register_catalog("ducklake", Arc::new(ducklake_catalog));
+    ctx.register_catalog("ducklake", ducklake_catalog.clone());
 
     // Register table functions (ducklake_snapshots, ducklake_table_info, ducklake_list_files)
-    register_ducklake_functions(&ctx, provider);
+    register_ducklake_functions(&ctx, ducklake_catalog.clone());
 
     println!("✓ Registered DuckLake catalog with DataFusion");
     println!(

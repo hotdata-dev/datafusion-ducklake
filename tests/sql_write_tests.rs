@@ -43,7 +43,9 @@ async fn create_writable_catalog() -> (SessionContext, TempDir) {
 
     // Create provider and catalog with writer
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer))
+        .await
+        .unwrap();
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -57,7 +59,7 @@ async fn create_read_context(temp_dir: &TempDir) -> SessionContext {
     let conn_str = format!("sqlite:{}", db_path.display());
 
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::new(provider).unwrap();
+    let catalog = DuckLakeCatalog::new(provider).await.unwrap();
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -161,7 +163,9 @@ async fn test_insert_into_existing_table() {
 
         let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
         let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-        let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+        let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer))
+            .await
+            .unwrap();
 
         let ctx = SessionContext::new();
         ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -253,7 +257,7 @@ async fn test_insert_into_read_only_fails() {
 
     // Create read-only catalog (no writer)
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::new(provider).unwrap(); // No writer!
+    let catalog = DuckLakeCatalog::new(provider).await.unwrap(); // No writer!
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -338,7 +342,9 @@ async fn test_insert_overwrite() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer))
+        .await
+        .unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));
@@ -419,7 +425,9 @@ async fn test_sql_insert_values() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer))
+        .await
+        .unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));
@@ -493,7 +501,9 @@ async fn test_schema_evolution_via_sql() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer))
+        .await
+        .unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));
@@ -590,7 +600,9 @@ async fn test_insert_from_query_with_filter() {
 
     let writer = SqliteMetadataWriter::new(&conn_str).await.unwrap();
     let provider = SqliteMetadataProvider::new(&conn_str).await.unwrap();
-    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer)).unwrap();
+    let catalog = DuckLakeCatalog::with_writer(Arc::new(provider), Arc::new(writer))
+        .await
+        .unwrap();
 
     let ctx2 = SessionContext::new();
     ctx2.register_catalog("ducklake", Arc::new(catalog));

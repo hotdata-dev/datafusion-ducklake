@@ -62,7 +62,7 @@ pub struct HybridDuckLakeDB {
 }
 
 impl HybridDuckLakeDB {
-    pub fn new(catalog_path: PathBuf) -> Result<Self, HybridError> {
+    pub async fn new(catalog_path: PathBuf) -> Result<Self, HybridError> {
         // Create data files directory
         let data_path = catalog_path.with_extension("files");
         std::fs::create_dir_all(&data_path)
@@ -83,8 +83,8 @@ impl HybridDuckLakeDB {
 
         // Create DataFusion context for READ operations
         let ctx = SessionContext::new();
-        let metadata_provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-        let catalog = Arc::new(DuckLakeCatalog::new(metadata_provider)?);
+        let metadata_provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+        let catalog = Arc::new(DuckLakeCatalog::new(metadata_provider).await?);
         ctx.register_catalog("ducklake", catalog);
 
         Ok(Self {
@@ -144,16 +144,16 @@ impl HybridDuckLakeDB {
     }
 
     /// Refresh catalog snapshot after a write
-    fn refresh_catalog(&self) -> Result<(), HybridError> {
-        let mut ctx_guard = self.datafusion_ctx.lock().unwrap();
-
+    async fn refresh_catalog(&self) -> Result<(), HybridError> {
         // Create new session context with fresh catalog
         let new_ctx = SessionContext::new();
-        let metadata_provider = DuckdbMetadataProvider::new(self.catalog_path.to_str().unwrap())?;
-        let catalog = Arc::new(DuckLakeCatalog::new(metadata_provider)?);
+        let metadata_provider =
+            DuckdbMetadataProvider::new(self.catalog_path.to_str().unwrap()).await?;
+        let catalog = Arc::new(DuckLakeCatalog::new(metadata_provider).await?);
         new_ctx.register_catalog("ducklake", catalog);
 
         // Replace the context
+        let mut ctx_guard = self.datafusion_ctx.lock().unwrap();
         *ctx_guard = new_ctx;
 
         Ok(())
@@ -194,7 +194,7 @@ impl AsyncDB for HybridDuckLakeDB {
             self.execute_write(sql)?;
 
             // Refresh catalog to pick up changes
-            self.refresh_catalog()?;
+            self.refresh_catalog().await?;
 
             // Return success
             Ok(DBOutput::StatementComplete(0))
