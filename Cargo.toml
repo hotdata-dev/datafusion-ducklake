@@ -37,7 +37,7 @@ hex = { version = "0.4", optional = true }
 uuid = { version = "1.0", features = ["v4"], optional = true }
 
 # Metadata providers (optional)
-duckdb = { version = "1.4.1", features = ["bundled"], optional = true }
+duckdb = { version = "1.4.1", optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio"], optional = true }
 
 [dev-dependencies]
@@ -60,6 +60,11 @@ metadata-duckdb = ["dep:duckdb"]
 metadata-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
 metadata-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
 metadata-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
+
+# Opt-in to bundled DuckDB compilation (compiles DuckDB C++ from source).
+# By default, `metadata-duckdb` dynamically links against a system libduckdb,
+# which is much faster to build. Enable this feature to statically bundle DuckDB.
+duckdb-bundled = ["duckdb/bundled"]
 
 # Encryption support for Parquet files
 encryption = ["parquet/encryption", "datafusion/parquet_encryption", "dep:base64", "dep:hex"]
