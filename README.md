@@ -82,6 +82,7 @@ This project is under active development. The roadmap below reflects major areas
 | Feature | Description | Default |
 |---------|-------------|---------|
 | `metadata-duckdb` | DuckDB catalog backend | ✅ |
+| `duckdb-bundled` | Statically compile and bundle DuckDB (disable for dynamic linking) | ✅ |
 | `metadata-postgres` | PostgreSQL catalog backend | |
 | `metadata-mysql` | MySQL catalog backend | |
 | `metadata-sqlite` | SQLite catalog backend | |
@@ -89,8 +90,12 @@ This project is under active development. The roadmap below reflects major areas
 | `write` | Write support (INSERT INTO) | |
 
 ```bash
-# DuckDB only (default)
+# DuckDB only (default, bundled build)
 cargo build
+
+# DuckDB dynamically linked against a system libduckdb
+# (requires libduckdb installed; set DUCKDB_LIB_DIR and DUCKDB_INCLUDE_DIR)
+cargo build --no-default-features --features metadata-duckdb
 
 # PostgreSQL only
 cargo build --no-default-features --features metadata-postgres
