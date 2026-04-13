@@ -85,9 +85,9 @@ jobs:
       - name: Run tests
         run: |
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            cargo test --features skip-tests-with-docker,duckdb-bundled
+            cargo test --features skip-tests-with-docker
           else
-            cargo test --features duckdb-bundled
+            cargo test
           fi
 
       - name: Check documentation

@@ -50,7 +50,7 @@ aws-credential-types = "1.2"
 sqllogictest = "0.23"
 
 [features]
-default = ["metadata-duckdb"]
+default = ["metadata-duckdb", "duckdb-bundled"]
 
 # Allow skipping tests that use docker (in CI, macos doesn't support docker).
 skip-tests-with-docker = []
@@ -61,10 +61,10 @@ metadata-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
 metadata-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
 metadata-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
 
-# Opt-in to bundled DuckDB compilation (compiles DuckDB C++ from source).
-# By default, `metadata-duckdb` dynamically links against a system libduckdb,
-# which is much faster to build. Enable this feature to statically bundle DuckDB.
-duckdb-bundled = ["duckdb/bundled"]
+# Compile DuckDB C++ from source and statically bundle it. Enabled by default.
+# Consumers who want to dynamically link against a system libduckdb can disable
+# this by using `default-features = false, features = ["metadata-duckdb"]`.
+duckdb-bundled = ["metadata-duckdb", "duckdb/bundled"]
 
 # Encryption support for Parquet files
 encryption = ["parquet/encryption", "datafusion/parquet_encryption", "dep:base64", "dep:hex"]
