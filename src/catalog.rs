@@ -310,6 +310,8 @@ impl DuckLakeCatalog {
                 table_path.clone(),
                 table_columns,
                 table_files,
+                Some(Arc::clone(&provider)),
+                Some(snapshot_id),
             )?;
 
             #[cfg(feature = "write")]
@@ -549,6 +551,7 @@ mod tests {
                 schema_name: "main".to_string(),
                 table_name: "items".to_string(),
                 file: DuckLakeTableFile {
+                    data_file_id: Some(1),
                     file: DuckLakeFileData::new("items.parquet".to_string(), true, 123),
                     delete_file: None,
                     row_id_start: None,

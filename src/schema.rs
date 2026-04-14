@@ -206,6 +206,8 @@ impl SchemaProvider for DuckLakeSchema {
                 table_path.clone(),
                 ducklake_columns,
                 Vec::new(),
+                None,
+                Some(setup.snapshot_id),
             )
             .map_err(|e| DataFusionError::External(Box::new(e)))?
             .with_writer(self.schema_name.clone(), Arc::clone(writer)),

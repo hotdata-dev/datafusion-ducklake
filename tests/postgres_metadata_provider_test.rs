@@ -79,6 +79,8 @@ async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
             column_order INTEGER NOT NULL,
             nulls_allowed BOOLEAN,
             parent_column BIGINT,
+            begin_snapshot BIGINT NOT NULL DEFAULT 1,
+            end_snapshot BIGINT,
             FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
         )",
     )
@@ -89,10 +91,16 @@ async fn init_schema(pool: &PgPool) -> anyhow::Result<()> {
         "CREATE TABLE IF NOT EXISTS ducklake_data_file (
             data_file_id BIGINT PRIMARY KEY,
             table_id BIGINT NOT NULL,
+            begin_snapshot BIGINT NOT NULL DEFAULT 1,
+            end_snapshot BIGINT,
             path VARCHAR NOT NULL,
             path_is_relative BOOLEAN NOT NULL,
             file_size_bytes BIGINT NOT NULL,
             footer_size BIGINT,
+            encryption_key VARCHAR,
+            record_count BIGINT DEFAULT 0,
+            row_id_start BIGINT DEFAULT 0,
+            mapping_id BIGINT,
             FOREIGN KEY (table_id) REFERENCES ducklake_table(table_id)
         )",
     )

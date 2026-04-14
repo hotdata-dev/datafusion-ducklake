@@ -507,6 +507,8 @@ impl MetadataWriter for SqliteMetadataWriter {
                 schema_id,
                 table_id,
                 column_ids,
+                schema_version: None,
+                next_row_id: None,
             })
         })
     }

@@ -1,15 +1,18 @@
 //! PostgreSQL metadata provider for DuckLake catalogs.
 
 use crate::Result;
+use crate::inlining::{
+    CatalogInliningReader, InlineRow, InlinedFileDelete, InlinedTableRef,
+};
 use crate::metadata_provider::{
     ColumnWithTable, DataFileChange, DeleteFileChange, DuckLakeFileData, DuckLakeTableColumn,
     DuckLakeTableFile, FileWithTable, MetadataProvider, SchemaMetadata, SnapshotMetadata,
     TableMetadata, TableWithSchema, reconstruct_list_columns, reconstruct_list_columns_with_table,
 };
 use async_trait::async_trait;
+use crate::types::ducklake_to_arrow_type;
 use sqlx::Row;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::types::chrono::NaiveDateTime;
 
 macro_rules! bind_repeat {
     ($query:expr, $value:expr, 1) => {
@@ -64,10 +67,42 @@ impl PostgresMetadataProvider {
             pool,
         })
     }
+
+    fn quote_ident(identifier: &str) -> String {
+        format!("\"{}\"", identifier.replace('"', "\"\""))
+    }
+
+    fn build_inline_projection(columns: &[DuckLakeTableColumn]) -> Result<String> {
+        let mut projection = vec!["row_id".to_string()];
+
+        for (index, column) in columns.iter().enumerate() {
+            let alias = format!("col{}", index + 1);
+            let quoted = Self::quote_ident(&column.column_name);
+            let expr = match ducklake_to_arrow_type(&column.column_type)? {
+                arrow::datatypes::DataType::Utf8
+                | arrow::datatypes::DataType::LargeUtf8
+                | arrow::datatypes::DataType::Binary
+                | arrow::datatypes::DataType::LargeBinary
+                | arrow::datatypes::DataType::FixedSizeBinary(_) => {
+                    format!(
+                        "CASE WHEN {quoted} IS NULL THEN NULL ELSE encode({quoted}, 'hex') END AS {alias}"
+                    )
+                },
+                _ => format!("CAST({quoted} AS TEXT) AS {alias}"),
+            };
+            projection.push(expr);
+        }
+
+        Ok(projection.join(", "))
+    }
 }
 
 #[async_trait]
 impl MetadataProvider for PostgresMetadataProvider {
+    fn catalog_inlining_reader(&self) -> Option<&dyn CatalogInliningReader> {
+        Some(self)
+    }
+
     async fn get_current_snapshot(&self) -> Result<i64> {
         let row = sqlx::query("SELECT COALESCE(MAX(snapshot_id), 0) FROM ducklake_snapshot")
             .fetch_one(&self.pool)
@@ -94,7 +129,7 @@ impl MetadataProvider for PostgresMetadataProvider {
 
     async fn list_snapshots(&self) -> Result<Vec<SnapshotMetadata>> {
         let rows = sqlx::query(
-            "SELECT snapshot_id, snapshot_time
+            "SELECT snapshot_id, CAST(snapshot_time AS VARCHAR)
              FROM ducklake_snapshot ORDER BY snapshot_id",
         )
         .fetch_all(&self.pool)
@@ -102,14 +137,9 @@ impl MetadataProvider for PostgresMetadataProvider {
 
         rows.into_iter()
             .map(|row| {
-                let snapshot_id: i64 = row.try_get(0)?;
-                let timestamp: Option<NaiveDateTime> = row.try_get(1)?;
-                let timestamp_str = timestamp
-                    .map(|ts: NaiveDateTime| ts.format("%Y-%m-%d %H:%M:%S%.6f").to_string());
-
                 Ok(SnapshotMetadata {
-                    snapshot_id,
-                    timestamp: timestamp_str,
+                    snapshot_id: row.try_get(0)?,
+                    timestamp: row.try_get(1)?,
                 })
             })
             .collect()
@@ -205,6 +235,9 @@ impl MetadataProvider for PostgresMetadataProvider {
                 data.file_size_bytes AS data_file_size,
                 data.footer_size AS data_footer_size,
                 data.encryption_key AS data_encryption_key,
+                data.row_id_start,
+                data.begin_snapshot,
+                data.record_count,
                 del.delete_file_id,
                 del.path AS delete_file_path,
                 del.path_is_relative AS delete_path_is_relative,
@@ -241,24 +274,25 @@ impl MetadataProvider for PostgresMetadataProvider {
                     encryption_key: row.try_get(5)?,
                 };
 
-                let delete_file = if row.try_get::<Option<i64>, _>(6)?.is_some() {
+                let delete_file = if row.try_get::<Option<i64>, _>(9)?.is_some() {
                     Some(DuckLakeFileData {
-                        path: row.try_get(7)?,
-                        path_is_relative: row.try_get(8)?,
-                        file_size_bytes: row.try_get(9)?,
-                        footer_size: row.try_get(10)?,
-                        encryption_key: row.try_get(11)?,
+                        path: row.try_get(10)?,
+                        path_is_relative: row.try_get(11)?,
+                        file_size_bytes: row.try_get(12)?,
+                        footer_size: row.try_get(13)?,
+                        encryption_key: row.try_get(14)?,
                     })
                 } else {
                     None
                 };
 
                 Ok(DuckLakeTableFile {
+                    data_file_id: row.try_get(0)?,
                     file: data_file,
                     delete_file,
-                    row_id_start: None,
-                    snapshot_id: None,
-                    max_row_count: None,
+                    row_id_start: row.try_get(6)?,
+                    snapshot_id: row.try_get(7)?,
+                    max_row_count: row.try_get(8)?,
                 })
             })
             .collect()
@@ -388,8 +422,12 @@ impl MetadataProvider for PostgresMetadataProvider {
                AND ($2 < s.end_snapshot OR s.end_snapshot IS NULL)
                AND $3 >= t.begin_snapshot
                AND ($4 < t.end_snapshot OR t.end_snapshot IS NULL)
+               AND $5 >= c.begin_snapshot
+               AND ($6 < c.end_snapshot OR c.end_snapshot IS NULL)
              ORDER BY s.schema_name, t.table_name, c.column_order",
         )
+        .bind(snapshot_id)
+        .bind(snapshot_id)
         .bind(snapshot_id)
         .bind(snapshot_id)
         .bind(snapshot_id)
@@ -434,6 +472,9 @@ impl MetadataProvider for PostgresMetadataProvider {
                     data.file_size_bytes AS data_file_size,
                     data.footer_size AS data_footer_size,
                     data.encryption_key AS data_encryption_key,
+                    data.row_id_start,
+                    data.begin_snapshot,
+                    data.record_count,
                     del.delete_file_id,
                     del.path AS delete_file_path,
                     del.path_is_relative AS delete_path_is_relative,
@@ -478,13 +519,13 @@ impl MetadataProvider for PostgresMetadataProvider {
                     encryption_key: row.try_get(7)?,
                 };
 
-                let delete_file = if row.try_get::<Option<i64>, _>(8)?.is_some() {
+                let delete_file = if row.try_get::<Option<i64>, _>(11)?.is_some() {
                     Some(DuckLakeFileData {
-                        path: row.try_get(9)?,
-                        path_is_relative: row.try_get(10)?,
-                        file_size_bytes: row.try_get(11)?,
-                        footer_size: row.try_get(12)?,
-                        encryption_key: row.try_get(13)?,
+                        path: row.try_get(12)?,
+                        path_is_relative: row.try_get(13)?,
+                        file_size_bytes: row.try_get(14)?,
+                        footer_size: row.try_get(15)?,
+                        encryption_key: row.try_get(16)?,
                     })
                 } else {
                     None
@@ -494,11 +535,12 @@ impl MetadataProvider for PostgresMetadataProvider {
                     schema_name: row.try_get(0)?,
                     table_name: row.try_get(1)?,
                     file: DuckLakeTableFile {
+                        data_file_id: row.try_get(2)?,
                         file: data_file,
                         delete_file,
-                        row_id_start: None,
-                        snapshot_id: None,
-                        max_row_count: row.try_get(14)?,
+                        row_id_start: row.try_get(8)?,
+                        snapshot_id: row.try_get(9)?,
+                        max_row_count: row.try_get(10)?,
                     },
                 })
             })
@@ -674,6 +716,162 @@ WHERE data.table_id = $1
                     previous_delete_file_size_bytes: row.try_get(13)?,
                     previous_delete_footer_size: row.try_get(14)?,
                     snapshot_id: row.try_get(15)?,
+                })
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl CatalogInliningReader for PostgresMetadataProvider {
+    async fn get_inlined_table_refs(&self, table_id: i64) -> Result<Vec<InlinedTableRef>> {
+        let rows = sqlx::query(
+            "SELECT table_name, schema_version
+             FROM ducklake_inlined_data_tables
+             WHERE table_id = $1
+             ORDER BY schema_version",
+        )
+        .bind(table_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(InlinedTableRef {
+                    table_name: row.try_get(0)?,
+                    schema_version: row.try_get(1)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn get_historical_schema(
+        &self,
+        table_id: i64,
+        schema_version: i64,
+    ) -> Result<Vec<DuckLakeTableColumn>> {
+        let begin_snapshot_row = sqlx::query(
+            "SELECT begin_snapshot
+             FROM ducklake_schema_versions
+             WHERE table_id = $1 AND schema_version = $2",
+        )
+        .bind(table_id)
+        .bind(schema_version)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let begin_snapshot: i64 = begin_snapshot_row
+            .ok_or_else(|| {
+                crate::DuckLakeError::InvalidSnapshot(format!(
+                    "Missing schema version {} for table {}",
+                    schema_version, table_id
+                ))
+            })?
+            .try_get(0)?;
+
+        let rows = sqlx::query(
+            "SELECT column_id, column_name, column_type, nulls_allowed, parent_column
+             FROM ducklake_column
+             WHERE table_id = $1
+               AND $2 >= begin_snapshot
+               AND ($3 < end_snapshot OR end_snapshot IS NULL)
+             ORDER BY column_order",
+        )
+        .bind(table_id)
+        .bind(begin_snapshot)
+        .bind(begin_snapshot)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let raw: Result<Vec<(DuckLakeTableColumn, Option<i64>)>> = rows
+            .into_iter()
+            .map(|row| {
+                Ok((
+                    DuckLakeTableColumn::new(
+                        row.try_get(0)?,
+                        row.try_get(1)?,
+                        row.try_get(2)?,
+                        row.try_get::<Option<bool>, _>(3)?.unwrap_or(true),
+                    ),
+                    row.try_get(4)?,
+                ))
+            })
+            .collect();
+
+        Ok(reconstruct_list_columns(raw?))
+    }
+
+    async fn read_visible_inlined_rows(
+        &self,
+        table_name: &str,
+        columns: &[DuckLakeTableColumn],
+        snapshot_id: i64,
+    ) -> Result<Vec<InlineRow>> {
+        let projection = Self::build_inline_projection(columns)?;
+        let query = format!(
+            "SELECT {projection}
+             FROM {} AS inlined_data
+             WHERE $1 >= begin_snapshot
+               AND ($2 < end_snapshot OR end_snapshot IS NULL)
+             ORDER BY row_id",
+            Self::quote_ident(table_name)
+        );
+
+        let rows = sqlx::query(&query)
+            .bind(snapshot_id)
+            .bind(snapshot_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let row_id: i64 = row.try_get(0)?;
+                let mut values = Vec::with_capacity(columns.len());
+                for index in 0..columns.len() {
+                    values.push(row.try_get::<Option<String>, _>(index + 1)?);
+                }
+                Ok(InlineRow {
+                    row_id,
+                    values,
+                })
+            })
+            .collect()
+    }
+
+    async fn get_inlined_file_deletes(
+        &self,
+        table_id: i64,
+        snapshot_id: i64,
+    ) -> Result<Vec<InlinedFileDelete>> {
+        let delete_table_name = format!("ducklake_inlined_delete_{}", table_id);
+        let exists = sqlx::query("SELECT to_regclass($1)")
+            .bind(&delete_table_name)
+            .fetch_one(&self.pool)
+            .await?;
+
+        if exists.try_get::<Option<String>, _>(0)?.is_none() {
+            return Ok(Vec::new());
+        }
+
+        let query = format!(
+            "SELECT file_id, row_id, begin_snapshot
+             FROM {}
+             WHERE begin_snapshot <= $1
+             ORDER BY file_id, row_id",
+            Self::quote_ident(&delete_table_name)
+        );
+
+        let rows = sqlx::query(&query)
+            .bind(snapshot_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(InlinedFileDelete {
+                    file_id: row.try_get(0)?,
+                    row_id: row.try_get(1)?,
+                    begin_snapshot: row.try_get(2)?,
                 })
             })
             .collect()

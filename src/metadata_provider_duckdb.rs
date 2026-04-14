@@ -224,6 +224,7 @@ impl DuckdbMetadataProvider {
                     let _delete_count: Option<i64> = row.get(12)?;
 
                     Ok(DuckLakeTableFile {
+                        data_file_id: Some(row.get(0)?),
                         file: data_file,
                         delete_file,
                         row_id_start: None,
@@ -411,10 +412,11 @@ impl DuckdbMetadataProvider {
                     Ok(FileWithTable {
                         schema_name,
                         table_name,
-                        file: DuckLakeTableFile {
-                            file: data_file,
-                            delete_file,
-                            row_id_start: None,
+                    file: DuckLakeTableFile {
+                        data_file_id: Some(row.get(2)?),
+                        file: data_file,
+                        delete_file,
+                        row_id_start: None,
                             snapshot_id: None,
                             max_row_count,
                         },

@@ -286,6 +286,8 @@ impl TableWriteSession {
             schema_id: self.schema_id,
             files_written: 1,
             records_written: self.row_count,
+            schema_version: None,
+            next_row_id: None,
         })
     }
 }

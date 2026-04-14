@@ -41,6 +41,7 @@ pub mod delete_filter;
 pub mod encryption;
 pub mod error;
 pub mod information_schema;
+pub mod inlining;
 pub mod metadata_provider;
 pub mod path_resolver;
 pub mod schema;
@@ -65,6 +66,8 @@ pub mod metadata_provider_sqlite;
 pub mod insert_exec;
 #[cfg(feature = "write")]
 pub mod metadata_writer;
+#[cfg(feature = "write-postgres")]
+pub mod metadata_writer_postgres;
 #[cfg(feature = "write-sqlite")]
 pub mod metadata_writer_sqlite;
 #[cfg(feature = "write")]
@@ -76,6 +79,9 @@ pub type Result<T> = std::result::Result<T, DuckLakeError>;
 // Re-export main types for convenience
 pub use catalog::DuckLakeCatalog;
 pub use error::DuckLakeError;
+pub use inlining::{CatalogInliningReader, InlinedFileDelete, InlinedTableRef};
+#[cfg(feature = "write")]
+pub use inlining::CatalogInliningWriter;
 pub use metadata_provider::MetadataProvider;
 pub use schema::DuckLakeSchema;
 pub use table::DuckLakeTable;
@@ -98,6 +104,8 @@ pub use insert_exec::DuckLakeInsertExec;
 pub use metadata_writer::{
     ColumnDef, DataFileInfo, MetadataWriter, WriteMode, WriteResult, WriteSetupResult,
 };
+#[cfg(feature = "write-postgres")]
+pub use metadata_writer_postgres::PostgresMetadataWriter;
 #[cfg(feature = "write-sqlite")]
 pub use metadata_writer_sqlite::SqliteMetadataWriter;
 #[cfg(feature = "write")]

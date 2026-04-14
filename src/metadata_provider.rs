@@ -1,8 +1,9 @@
-#[cfg(feature = "write-sqlite")]
+#[cfg(feature = "write")]
 use crate::DuckLakeError;
+use crate::inlining::CatalogInliningReader;
 use crate::Result;
 use async_trait::async_trait;
-#[cfg(feature = "write-sqlite")]
+#[cfg(feature = "write")]
 use std::future::Future;
 
 // SQL queries for DuckLake catalog tables
@@ -483,6 +484,8 @@ impl DuckLakeFileData {
 /// Represents a data file and its associated delete file (if any) for a DuckLake table
 #[derive(Debug, Clone)]
 pub struct DuckLakeTableFile {
+    /// Unique identifier for this file in the catalog
+    pub data_file_id: Option<i64>,
     /// Metadata for the data file
     pub file: DuckLakeFileData,
     /// Optional associated delete file containing deleted row positions
@@ -498,6 +501,7 @@ pub struct DuckLakeTableFile {
 impl DuckLakeTableFile {
     pub fn new(file: DuckLakeFileData) -> Self {
         Self {
+            data_file_id: None,
             file,
             delete_file: None,
             row_id_start: None,
@@ -548,6 +552,11 @@ pub struct DeleteFileChange {
 
 #[async_trait]
 pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
+    /// Optional backend-specific inlining support.
+    fn catalog_inlining_reader(&self) -> Option<&dyn CatalogInliningReader> {
+        None
+    }
+
     /// Get the current snapshot ID (dynamic, not cached)
     async fn get_current_snapshot(&self) -> Result<i64>;
 
@@ -629,7 +638,7 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
 }
 
 /// Runs async metadata work from sync-only call sites imposed by DataFusion APIs.
-#[cfg(feature = "write-sqlite")]
+#[cfg(feature = "write")]
 pub(crate) fn sync_call<F, T>(future: F) -> Result<T>
 where
     F: Future<Output = Result<T>> + Send,
@@ -647,7 +656,7 @@ where
     }
 }
 
-#[cfg(feature = "write-sqlite")]
+#[cfg(feature = "write")]
 fn run_on_dedicated_runtime<F, T>(future: F) -> Result<T>
 where
     F: Future<Output = Result<T>> + Send,
@@ -664,7 +673,7 @@ where
     })
 }
 
-#[cfg(feature = "write-sqlite")]
+#[cfg(feature = "write")]
 fn run_on_fresh_runtime<F, T>(future: F) -> Result<T>
 where
     F: Future<Output = Result<T>> + Send,
