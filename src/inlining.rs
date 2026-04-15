@@ -4,24 +4,24 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use arrow::array::ArrayRef;
 use arrow::array::builder::{
     ArrayBuilder, BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder,
-    FixedSizeBinaryBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
-    Int64Builder, Int8Builder, LargeBinaryBuilder, LargeStringBuilder, ListBuilder,
-    StringBuilder, Time64MicrosecondBuilder, TimestampMicrosecondBuilder,
-    TimestampMillisecondBuilder, TimestampNanosecondBuilder, TimestampSecondBuilder,
-    UInt16Builder, UInt32Builder, UInt64Builder, UInt8Builder, make_builder,
+    FixedSizeBinaryBuilder, Float32Builder, Float64Builder, Int8Builder, Int16Builder,
+    Int32Builder, Int64Builder, LargeBinaryBuilder, LargeStringBuilder, ListBuilder, StringBuilder,
+    Time64MicrosecondBuilder, TimestampMicrosecondBuilder, TimestampMillisecondBuilder,
+    TimestampNanosecondBuilder, TimestampSecondBuilder, UInt8Builder, UInt16Builder, UInt32Builder,
+    UInt64Builder, make_builder,
 };
-use arrow::array::ArrayRef;
 use arrow::datatypes::{DataType, TimeUnit};
 use arrow::record_batch::RecordBatch;
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 use async_trait::async_trait;
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
 use crate::metadata_provider::DuckLakeTableColumn;
-use crate::types::{build_arrow_schema, ducklake_to_arrow_type};
 #[cfg(feature = "write")]
 use crate::metadata_writer::{ColumnDef, WriteMode, WriteResult};
+use crate::types::{build_arrow_schema, ducklake_to_arrow_type};
 use crate::{DuckLakeError, Result};
 
 /// Metadata entry for an inlined data table.
@@ -331,34 +331,42 @@ fn append_scalar_value(
         DataType::Timestamp(TimeUnit::Second, tz) => {
             let builder = downcast_builder::<TimestampSecondBuilder>(builder, data_type)?;
             match value {
-                Some(value) => builder.append_value(parse_timestamp(value, TimeUnit::Second, tz.is_some())?),
+                Some(value) => {
+                    builder.append_value(parse_timestamp(value, TimeUnit::Second, tz.is_some())?)
+                },
                 None => builder.append_null(),
             }
         },
         DataType::Timestamp(TimeUnit::Millisecond, tz) => {
             let builder = downcast_builder::<TimestampMillisecondBuilder>(builder, data_type)?;
             match value {
-                Some(value) => {
-                    builder.append_value(parse_timestamp(value, TimeUnit::Millisecond, tz.is_some())?)
-                },
+                Some(value) => builder.append_value(parse_timestamp(
+                    value,
+                    TimeUnit::Millisecond,
+                    tz.is_some(),
+                )?),
                 None => builder.append_null(),
             }
         },
         DataType::Timestamp(TimeUnit::Microsecond, tz) => {
             let builder = downcast_builder::<TimestampMicrosecondBuilder>(builder, data_type)?;
             match value {
-                Some(value) => {
-                    builder.append_value(parse_timestamp(value, TimeUnit::Microsecond, tz.is_some())?)
-                },
+                Some(value) => builder.append_value(parse_timestamp(
+                    value,
+                    TimeUnit::Microsecond,
+                    tz.is_some(),
+                )?),
                 None => builder.append_null(),
             }
         },
         DataType::Timestamp(TimeUnit::Nanosecond, tz) => {
             let builder = downcast_builder::<TimestampNanosecondBuilder>(builder, data_type)?;
             match value {
-                Some(value) => {
-                    builder.append_value(parse_timestamp(value, TimeUnit::Nanosecond, tz.is_some())?)
-                },
+                Some(value) => builder.append_value(parse_timestamp(
+                    value,
+                    TimeUnit::Nanosecond,
+                    tz.is_some(),
+                )?),
                 None => builder.append_null(),
             }
         },
@@ -375,7 +383,8 @@ fn append_scalar_value(
             ));
         },
         DataType::List(field) => {
-            let builder = downcast_builder::<ListBuilder<Box<dyn ArrayBuilder>>>(builder, data_type)?;
+            let builder =
+                downcast_builder::<ListBuilder<Box<dyn ArrayBuilder>>>(builder, data_type)?;
             match value {
                 Some(value) => {
                     for child in parse_list_literal(value)? {
@@ -475,11 +484,7 @@ fn decode_binary(value: &str, encoding: StringEncoding) -> Result<Vec<u8>> {
     }
 }
 
-fn decode_fixed_size_binary(
-    value: &str,
-    width: i32,
-    encoding: StringEncoding,
-) -> Result<Vec<u8>> {
+fn decode_fixed_size_binary(value: &str, width: i32, encoding: StringEncoding) -> Result<Vec<u8>> {
     let bytes = match encoding {
         StringEncoding::InlineStorage => decode_hex(value)?,
         StringEncoding::Literal => decode_hex(value.trim_matches('\''))?,
@@ -498,7 +503,7 @@ fn decode_fixed_size_binary(
 
 fn decode_hex(value: &str) -> Result<Vec<u8>> {
     let value = value.trim();
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(DuckLakeError::InvalidConfig(format!(
             "Invalid hex literal length for inline payload '{}'",
             value
@@ -521,10 +526,7 @@ fn decode_hex(value: &str) -> Result<Vec<u8>> {
 
 fn parse_date32(value: &str) -> Result<i32> {
     let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").map_err(|e| {
-        DuckLakeError::InvalidConfig(format!(
-            "Invalid inline date literal '{}': {}",
-            value, e
-        ))
+        DuckLakeError::InvalidConfig(format!("Invalid inline date literal '{}': {}", value, e))
     })?;
     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
     Ok((date - epoch).num_days() as i32)
@@ -534,12 +536,10 @@ fn parse_time64_micros(value: &str) -> Result<i64> {
     let time = NaiveTime::parse_from_str(value.trim(), "%H:%M:%S%.f")
         .or_else(|_| NaiveTime::parse_from_str(value.trim(), "%H:%M:%S"))
         .map_err(|e| {
-            DuckLakeError::InvalidConfig(format!(
-                "Invalid inline time literal '{}': {}",
-                value, e
-            ))
+            DuckLakeError::InvalidConfig(format!("Invalid inline time literal '{}': {}", value, e))
         })?;
-    Ok(i64::from(time.num_seconds_from_midnight()) * 1_000_000 + i64::from(time.nanosecond() / 1_000))
+    Ok(i64::from(time.num_seconds_from_midnight()) * 1_000_000
+        + i64::from(time.nanosecond() / 1_000))
 }
 
 fn parse_timestamp(value: &str, unit: TimeUnit, with_timezone: bool) -> Result<i64> {
@@ -550,14 +550,12 @@ fn parse_timestamp(value: &str, unit: TimeUnit, with_timezone: bool) -> Result<i
             TimeUnit::Second => timestamp.timestamp(),
             TimeUnit::Millisecond => timestamp.timestamp_millis(),
             TimeUnit::Microsecond => timestamp.timestamp_micros(),
-            TimeUnit::Nanosecond => timestamp
-                .timestamp_nanos_opt()
-                .ok_or_else(|| {
-                    DuckLakeError::InvalidConfig(format!(
-                        "Timestamp '{}' is out of range for nanosecond precision",
-                        trimmed
-                    ))
-                })?,
+            TimeUnit::Nanosecond => timestamp.timestamp_nanos_opt().ok_or_else(|| {
+                DuckLakeError::InvalidConfig(format!(
+                    "Timestamp '{}' is out of range for nanosecond precision",
+                    trimmed
+                ))
+            })?,
         });
     }
 
@@ -567,24 +565,19 @@ fn parse_timestamp(value: &str, unit: TimeUnit, with_timezone: bool) -> Result<i
         TimeUnit::Second => timestamp.timestamp(),
         TimeUnit::Millisecond => timestamp.timestamp_millis(),
         TimeUnit::Microsecond => timestamp.timestamp_micros(),
-        TimeUnit::Nanosecond => timestamp
-            .timestamp_nanos_opt()
-            .ok_or_else(|| {
-                DuckLakeError::InvalidConfig(format!(
-                    "Timestamp '{}' is out of range for nanosecond precision",
-                    trimmed
-                ))
-            })?,
+        TimeUnit::Nanosecond => timestamp.timestamp_nanos_opt().ok_or_else(|| {
+            DuckLakeError::InvalidConfig(format!(
+                "Timestamp '{}' is out of range for nanosecond precision",
+                trimmed
+            ))
+        })?,
     })
 }
 
 fn parse_naive_timestamp(value: &str) -> Result<NaiveDateTime> {
-    for format in [
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%S",
-    ] {
+    for format in
+        ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"]
+    {
         if let Ok(timestamp) = NaiveDateTime::parse_from_str(value, format) {
             return Ok(timestamp);
         }
@@ -643,7 +636,11 @@ fn parse_decimal128(value: &str, precision: u8, scale: i8) -> Result<i128> {
     }
 
     let digits = digits.trim_start_matches('0');
-    let digits = if digits.is_empty() { "0" } else { digits };
+    let digits = if digits.is_empty() {
+        "0"
+    } else {
+        digits
+    };
     if digits.len() > precision as usize {
         return Err(DuckLakeError::InvalidConfig(format!(
             "Decimal literal '{}' exceeds precision {}",
@@ -725,10 +722,7 @@ where
     T::Err: std::fmt::Display,
 {
     value.trim().parse::<T>().map_err(|e| {
-        DuckLakeError::InvalidConfig(format!(
-            "Invalid inline numeric literal '{}': {}",
-            value, e
-        ))
+        DuckLakeError::InvalidConfig(format!("Invalid inline numeric literal '{}': {}", value, e))
     })
 }
 
@@ -736,8 +730,8 @@ where
 mod tests {
     use super::*;
     use crate::metadata_provider::DuckLakeTableColumn;
-    use async_trait::async_trait;
     use arrow::array::Array;
+    use async_trait::async_trait;
 
     #[test]
     fn parses_list_literals_with_quotes_and_nulls() {

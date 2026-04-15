@@ -28,8 +28,8 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
-use datafusion::datasource::memory::MemorySourceConfig;
 use datafusion::datasource::listing::PartitionedFile;
+use datafusion::datasource::memory::MemorySourceConfig;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::source::DataSourceExec;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -169,6 +169,7 @@ impl DuckLakeTable {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_loaded_metadata(
         table_id: i64,
         table_name: impl Into<String>,
@@ -244,21 +245,21 @@ impl DuckLakeTable {
             return Ok(None);
         };
 
-        let batches = load_visible_inlined_batches(reader, self.table_id, snapshot_id, &self.columns)
-            .await
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let batches =
+            load_visible_inlined_batches(reader, self.table_id, snapshot_id, &self.columns)
+                .await
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
         if batches.is_empty() {
             return Ok(None);
         }
 
         let partitions = vec![batches];
-        let source = MemorySourceConfig::try_new(&partitions, self.schema.clone(), projection.cloned())?;
+        let source =
+            MemorySourceConfig::try_new(&partitions, self.schema.clone(), projection.cloned())?;
         Ok(Some(DataSourceExec::from_data_source(source)))
     }
 
-    async fn load_inlined_file_delete_rows(
-        &self,
-    ) -> DataFusionResult<HashMap<i64, HashSet<i64>>> {
+    async fn load_inlined_file_delete_rows(&self) -> DataFusionResult<HashMap<i64, HashSet<i64>>> {
         let Some(provider) = self.provider.as_ref() else {
             return Ok(HashMap::new());
         };
@@ -701,14 +702,12 @@ impl TableProvider for DuckLakeTable {
 
         // Separate files into two groups: with deletes and without deletes
         // This allows us to create a single efficient exec for files without deletes
-        let (files_with_deletes, files_without_deletes): (Vec<_>, Vec<_>) = self
-            .table_files
-            .iter()
-            .partition(|table_file| {
+        let (files_with_deletes, files_without_deletes): (Vec<_>, Vec<_>) =
+            self.table_files.iter().partition(|table_file| {
                 table_file.delete_file.is_some()
-                    || table_file
-                        .data_file_id
-                        .is_some_and(|file_id| inlined_deleted_positions_by_file.contains_key(&file_id))
+                    || table_file.data_file_id.is_some_and(|file_id| {
+                        inlined_deleted_positions_by_file.contains_key(&file_id)
+                    })
             });
 
         let mut execs: Vec<Arc<dyn ExecutionPlan>> = Vec::new();
