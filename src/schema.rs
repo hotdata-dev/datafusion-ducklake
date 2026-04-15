@@ -1,15 +1,20 @@
 //! DuckLake schema provider implementation
 
 use std::any::Any;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use datafusion::catalog::{SchemaProvider, TableProvider};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::error::Result as DataFusionResult;
 
-use crate::metadata_provider::MetadataProvider;
+use crate::catalog::CachedTable;
+#[cfg(feature = "write")]
+use crate::metadata_provider::{DuckLakeTableColumn, TableMetadata};
+#[cfg(feature = "write")]
 use crate::path_resolver::resolve_path;
+#[cfg(feature = "write")]
 use crate::table::DuckLakeTable;
 
 #[cfg(feature = "write")]
@@ -45,18 +50,18 @@ fn validate_table_name(name: &str) -> DataFusionResult<()> {
 /// DuckLake schema provider
 ///
 /// Represents a schema within a DuckLake catalog and provides access to tables.
-/// Uses dynamic metadata lookup - tables are queried on-demand from the catalog database.
-/// Caches snapshot_id received from catalog.schema() call for query consistency.
+/// Uses a snapshot-pinned table cache populated by the parent catalog.
 #[derive(Debug)]
 pub struct DuckLakeSchema {
-    schema_id: i64,
+    #[cfg(feature = "write")]
     schema_name: String,
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
+    #[cfg(feature = "write")]
     object_store_url: Arc<ObjectStoreUrl>,
-    provider: Arc<dyn MetadataProvider>,
-    /// Cached snapshot_id from catalog.schema() call
-    snapshot_id: i64,
+    /// Snapshot-pinned table cache shared with the parent catalog
+    tables: Arc<RwLock<HashMap<String, CachedTable>>>,
     /// Schema path for resolving relative table paths
+    #[cfg(feature = "write")]
     schema_path: String,
     /// Metadata writer for write operations (when write feature is enabled)
     #[cfg(feature = "write")]
@@ -65,20 +70,22 @@ pub struct DuckLakeSchema {
 
 impl DuckLakeSchema {
     /// Create a new DuckLake schema
-    pub fn new(
-        schema_id: i64,
-        schema_name: impl Into<String>,
-        provider: Arc<dyn MetadataProvider>,
-        snapshot_id: i64, // Received from catalog
-        object_store_url: Arc<ObjectStoreUrl>,
-        schema_path: String,
+    pub(crate) fn new(
+        #[cfg(feature = "write")] schema_name: impl Into<String>,
+        #[cfg(not(feature = "write"))] _schema_name: impl Into<String>,
+        tables: Arc<RwLock<HashMap<String, CachedTable>>>,
+        #[cfg(feature = "write")] object_store_url: Arc<ObjectStoreUrl>,
+        #[cfg(not(feature = "write"))] _object_store_url: Arc<ObjectStoreUrl>,
+        #[cfg(feature = "write")] schema_path: String,
+        #[cfg(not(feature = "write"))] _schema_path: String,
     ) -> Self {
         Self {
-            schema_id,
+            #[cfg(feature = "write")]
             schema_name: schema_name.into(),
-            provider,
-            snapshot_id,
+            tables,
+            #[cfg(feature = "write")]
             object_store_url,
+            #[cfg(feature = "write")]
             schema_path,
             #[cfg(feature = "write")]
             writer: None,
@@ -106,66 +113,34 @@ impl SchemaProvider for DuckLakeSchema {
     }
 
     fn table_names(&self) -> Vec<String> {
-        // Use cached snapshot_id
-        self.provider
-            .list_tables(self.schema_id, self.snapshot_id)
-            .inspect_err(|e| {
-                tracing::error!(
-                    error = %e,
-                    schema_id = %self.schema_id,
-                    snapshot_id = %self.snapshot_id,
-                    schema_name = %self.schema_name,
-                    "Failed to list tables from catalog"
-                )
-            })
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| t.table_name)
-            .collect()
+        let mut names: Vec<String> = self
+            .tables
+            .read()
+            .expect("Schema table cache poisoned")
+            .keys()
+            .cloned()
+            .collect();
+        names.sort();
+        names
     }
 
     async fn table(&self, name: &str) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
-        // Use cached snapshot_id
-        match self
-            .provider
-            .get_table_by_name(self.schema_id, name, self.snapshot_id)
-        {
-            Ok(Some(meta)) => {
-                // Resolve table path hierarchically using path_resolver utility
-                let table_path = resolve_path(&self.schema_path, &meta.path, meta.path_is_relative)
-                    .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+        let table = self
+            .tables
+            .read()
+            .expect("Schema table cache poisoned")
+            .get(name)
+            .cloned()
+            .map(|cached| -> Arc<dyn TableProvider> { cached.provider });
 
-                // Pass snapshot_id to table
-                let table = DuckLakeTable::new(
-                    meta.table_id,
-                    meta.table_name.clone(),
-                    self.provider.clone(),
-                    self.snapshot_id, // Propagate snapshot_id
-                    self.object_store_url.clone(),
-                    table_path,
-                )
-                .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
-
-                // Configure writer if this schema is writable
-                #[cfg(feature = "write")]
-                let table = if let Some(writer) = self.writer.as_ref() {
-                    table.with_writer(self.schema_name.clone(), Arc::clone(writer))
-                } else {
-                    table
-                };
-
-                Ok(Some(Arc::new(table) as Arc<dyn TableProvider>))
-            },
-            Ok(None) => Ok(None),
-            Err(e) => Err(datafusion::error::DataFusionError::External(Box::new(e))),
-        }
+        Ok(table)
     }
 
     fn table_exist(&self, name: &str) -> bool {
-        // Use cached snapshot_id
-        self.provider
-            .table_exists(self.schema_id, name, self.snapshot_id)
-            .unwrap_or(false)
+        self.tables
+            .read()
+            .expect("Schema table cache poisoned")
+            .contains_key(name)
     }
 
     /// Register a new table in this schema.
@@ -208,19 +183,54 @@ impl SchemaProvider for DuckLakeSchema {
         let table_path = resolve_path(&self.schema_path, &name, true)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        // Create writable DuckLakeTable
-        let writable_table = DuckLakeTable::new(
-            setup.table_id,
-            name,
-            self.provider.clone(),
-            setup.snapshot_id,
-            self.object_store_url.clone(),
-            table_path,
-        )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?
-        .with_writer(self.schema_name.clone(), Arc::clone(writer));
+        let ducklake_columns: Vec<DuckLakeTableColumn> = setup
+            .column_ids
+            .iter()
+            .zip(columns.iter())
+            .map(|(column_id, column)| {
+                DuckLakeTableColumn::new(
+                    *column_id,
+                    column.name().to_string(),
+                    column.ducklake_type().to_string(),
+                    column.is_nullable(),
+                )
+            })
+            .collect();
 
-        Ok(Some(Arc::new(writable_table) as Arc<dyn TableProvider>))
+        // Create writable DuckLakeTable
+        let writable_table = Arc::new(
+            DuckLakeTable::from_loaded_metadata(
+                setup.table_id,
+                name.clone(),
+                self.object_store_url.clone(),
+                table_path.clone(),
+                ducklake_columns,
+                Vec::new(),
+                None,
+                Some(setup.snapshot_id),
+            )
+            .map_err(|e| DataFusionError::External(Box::new(e)))?
+            .with_writer(self.schema_name.clone(), Arc::clone(writer)),
+        );
+
+        self.tables
+            .write()
+            .expect("Schema table cache poisoned")
+            .insert(
+                name.clone(),
+                CachedTable {
+                    metadata: TableMetadata {
+                        table_id: setup.table_id,
+                        table_name: name.clone(),
+                        path: name.clone(),
+                        path_is_relative: true,
+                    },
+                    table_path,
+                    provider: Arc::clone(&writable_table),
+                },
+            );
+
+        Ok(Some(writable_table as Arc<dyn TableProvider>))
     }
 }
 
@@ -261,6 +271,9 @@ mod tests {
         // Just slashes
         let result = validate_table_name("foo/bar");
         assert!(result.is_err());
+
+        assert!(validate_table_name("foo/bar").is_err());
+        assert!(validate_table_name("foo\\bar").is_err());
     }
 
     #[test]

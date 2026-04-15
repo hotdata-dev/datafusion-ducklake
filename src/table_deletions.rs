@@ -242,6 +242,7 @@ impl TableProvider for TableDeletionsTable {
                 self.start_snapshot,
                 self.end_snapshot,
             )
+            .await
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         // Handle empty case
@@ -298,7 +299,7 @@ pub struct DeletedRowsExec {
     /// Output schema (table columns + snapshot_id + change_type)
     output_schema: SchemaRef,
     /// Cached plan properties
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
 }
 
 impl DeletedRowsExec {
@@ -311,12 +312,12 @@ impl DeletedRowsExec {
         output_schema: SchemaRef,
     ) -> Self {
         let eq_properties = EquivalenceProperties::new(output_schema.clone());
-        let properties = PlanProperties::new(
+        let properties = Arc::new(PlanProperties::new(
             eq_properties,
             data_file_scan.output_partitioning().clone(),
             data_file_scan.pipeline_behavior(),
             data_file_scan.boundedness(),
-        );
+        ));
 
         Self {
             current_delete_scan,
@@ -357,7 +358,7 @@ impl ExecutionPlan for DeletedRowsExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 

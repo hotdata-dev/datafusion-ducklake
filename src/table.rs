@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::Result;
 use crate::column_rename::ColumnRenameExec;
 use crate::delete_filter::DeleteFilterExec;
+use crate::inlining::load_visible_inlined_batches;
 use crate::metadata_provider::{
     DuckLakeFileData, DuckLakeTableColumn, DuckLakeTableFile, MetadataProvider,
 };
@@ -28,6 +29,7 @@ use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
 use datafusion::datasource::listing::PartitionedFile;
+use datafusion::datasource::memory::MemorySourceConfig;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::source::DataSourceExec;
 use datafusion::error::{DataFusionError, Result as DataFusionResult};
@@ -100,8 +102,6 @@ pub struct DuckLakeTable {
     #[allow(dead_code)]
     table_id: i64,
     table_name: String,
-    #[allow(dead_code)]
-    provider: Arc<dyn MetadataProvider>,
     /// Object store URL for resolving file paths (e.g., s3://bucket/ or file:///)
     object_store_url: Arc<ObjectStoreUrl>,
     /// Table path for resolving relative file paths
@@ -112,6 +112,10 @@ pub struct DuckLakeTable {
     columns: Vec<DuckLakeTableColumn>,
     /// Table files with paths as stored in metadata (resolved on-the-fly when needed)
     table_files: Vec<DuckLakeTableFile>,
+    /// Metadata provider for lazy inline reads and inline delete filtering
+    provider: Option<Arc<dyn MetadataProvider>>,
+    /// Snapshot id pinned for this table instance
+    snapshot_id: Option<i64>,
     /// Cached schema mapping (read_schema, name_mapping) - computed once on first scan
     schema_mapping_cache: OnceCell<SchemaMappingCache>,
     /// Encryption factory for decrypting encrypted Parquet files (when encryption feature is enabled)
@@ -140,7 +144,7 @@ impl std::fmt::Debug for DuckLakeTable {
 
 impl DuckLakeTable {
     /// Create a new DuckLake table
-    pub fn new(
+    pub async fn new(
         table_id: i64,
         table_name: impl Into<String>,
         provider: Arc<dyn MetadataProvider>,
@@ -148,10 +152,36 @@ impl DuckLakeTable {
         object_store_url: Arc<ObjectStoreUrl>,
         table_path: String,
     ) -> Result<Self> {
-        // Load ALL metadata with this snapshot_id
-        let columns = provider.get_table_structure(table_id)?;
+        let table_name = table_name.into();
+        let columns = provider.get_table_structure(table_id).await?;
+        let table_files = provider
+            .get_table_files_for_select(table_id, snapshot_id)
+            .await?;
+        Self::from_loaded_metadata(
+            table_id,
+            table_name,
+            object_store_url,
+            table_path,
+            columns,
+            table_files,
+            Some(provider),
+            Some(snapshot_id),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_loaded_metadata(
+        table_id: i64,
+        table_name: impl Into<String>,
+        object_store_url: Arc<ObjectStoreUrl>,
+        table_path: String,
+        columns: Vec<DuckLakeTableColumn>,
+        table_files: Vec<DuckLakeTableFile>,
+        provider: Option<Arc<dyn MetadataProvider>>,
+        snapshot_id: Option<i64>,
+    ) -> Result<Self> {
+        let table_name = table_name.into();
         let schema = Arc::new(build_arrow_schema(&columns)?);
-        let table_files = provider.get_table_files_for_select(table_id, snapshot_id)?;
 
         // Build encryption factory from file encryption keys (when encryption feature is enabled)
         #[cfg(feature = "encryption")]
@@ -183,13 +213,14 @@ impl DuckLakeTable {
 
         Ok(Self {
             table_id,
-            table_name: table_name.into(),
-            provider,
+            table_name,
             object_store_url,
             table_path,
             schema,
             columns,
             table_files,
+            provider,
+            snapshot_id,
             #[cfg(feature = "encryption")]
             encryption_factory,
             schema_mapping_cache: OnceCell::new(),
@@ -198,6 +229,95 @@ impl DuckLakeTable {
             #[cfg(feature = "write")]
             writer: None,
         })
+    }
+
+    async fn build_inline_exec(
+        &self,
+        projection: Option<&Vec<usize>>,
+    ) -> DataFusionResult<Option<Arc<dyn ExecutionPlan>>> {
+        let Some(provider) = self.provider.as_ref() else {
+            return Ok(None);
+        };
+        let Some(snapshot_id) = self.snapshot_id else {
+            return Ok(None);
+        };
+        let Some(reader) = provider.catalog_inlining_reader() else {
+            return Ok(None);
+        };
+
+        let batches =
+            load_visible_inlined_batches(reader, self.table_id, snapshot_id, &self.columns)
+                .await
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        if batches.is_empty() {
+            return Ok(None);
+        }
+
+        let partitions = vec![batches];
+        let source =
+            MemorySourceConfig::try_new(&partitions, self.schema.clone(), projection.cloned())?;
+        Ok(Some(DataSourceExec::from_data_source(source)))
+    }
+
+    async fn load_inlined_file_delete_rows(&self) -> DataFusionResult<HashMap<i64, HashSet<i64>>> {
+        let Some(provider) = self.provider.as_ref() else {
+            return Ok(HashMap::new());
+        };
+        let Some(snapshot_id) = self.snapshot_id else {
+            return Ok(HashMap::new());
+        };
+        let Some(reader) = provider.catalog_inlining_reader() else {
+            return Ok(HashMap::new());
+        };
+
+        let deletes = reader
+            .get_inlined_file_deletes(self.table_id, snapshot_id)
+            .await
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        let mut deletes_by_file: HashMap<i64, HashSet<i64>> = HashMap::new();
+        for delete in deletes {
+            deletes_by_file
+                .entry(delete.file_id)
+                .or_default()
+                .insert(delete.row_id);
+        }
+
+        Ok(deletes_by_file)
+    }
+
+    fn inlined_deleted_positions_for_file(
+        &self,
+        table_file: &DuckLakeTableFile,
+        inlined_row_ids_by_file: &HashMap<i64, HashSet<i64>>,
+    ) -> HashSet<i64> {
+        let Some(file_id) = table_file.data_file_id else {
+            return HashSet::new();
+        };
+        let Some(row_ids) = inlined_row_ids_by_file.get(&file_id) else {
+            return HashSet::new();
+        };
+        let Some(row_id_start) = table_file.row_id_start else {
+            tracing::warn!(
+                file_id,
+                table = %self.table_name,
+                "Skipping inline file deletions because row_id_start is missing"
+            );
+            return HashSet::new();
+        };
+
+        let max_row_count = table_file.max_row_count.unwrap_or(i64::MAX);
+        row_ids
+            .iter()
+            .filter_map(|row_id| {
+                let relative = row_id - row_id_start;
+                if relative >= 0 && relative < max_row_count {
+                    Some(relative)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Resolve a file path (data or delete file) to its absolute path
@@ -451,6 +571,7 @@ impl DuckLakeTable {
         &self,
         state: &dyn Session,
         table_file: &DuckLakeTableFile,
+        inlined_deleted_positions: &HashSet<i64>,
         projection: Option<&Vec<usize>>,
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
@@ -491,22 +612,20 @@ impl DuckLakeTable {
 
         // Wrap with delete filter - we know there's a delete file since we partitioned
         // The metadata already tells us which delete file goes with this data file
-        let exec_after_delete: Arc<dyn ExecutionPlan> =
-            if let Some(ref delete_file) = table_file.delete_file {
-                let deleted_positions = self.read_delete_file_positions(state, delete_file).await?;
+        let mut deleted_positions = inlined_deleted_positions.clone();
+        if let Some(ref delete_file) = table_file.delete_file {
+            deleted_positions.extend(self.read_delete_file_positions(state, delete_file).await?);
+        }
 
-                if !deleted_positions.is_empty() {
-                    Arc::new(DeleteFilterExec::new(
-                        parquet_exec,
-                        table_file.file.path.clone(),
-                        Arc::new(deleted_positions),
-                    ))
-                } else {
-                    parquet_exec
-                }
-            } else {
-                parquet_exec
-            };
+        let exec_after_delete: Arc<dyn ExecutionPlan> = if deleted_positions.is_empty() {
+            parquet_exec
+        } else {
+            Arc::new(DeleteFilterExec::new(
+                parquet_exec,
+                table_file.file.path.clone(),
+                Arc::new(deleted_positions),
+            ))
+        };
 
         // Wrap with ColumnRenameExec if column names differ
         if !name_mapping.is_empty() {
@@ -566,12 +685,30 @@ impl TableProvider for DuckLakeTable {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // Separate files into two groups: with deletes and without deletes
-        // This allows us to create a single efficient exec for files without deletes
-        let (files_with_deletes, files_without_deletes): (Vec<_>, Vec<_>) = self
+        let inlined_row_ids_by_file = self.load_inlined_file_delete_rows().await?;
+        let inlined_deleted_positions_by_file: HashMap<i64, HashSet<i64>> = self
             .table_files
             .iter()
-            .partition(|tf| tf.delete_file.is_some());
+            .filter_map(|table_file| {
+                let positions =
+                    self.inlined_deleted_positions_for_file(table_file, &inlined_row_ids_by_file);
+                if positions.is_empty() {
+                    None
+                } else {
+                    table_file.data_file_id.map(|file_id| (file_id, positions))
+                }
+            })
+            .collect();
+
+        // Separate files into two groups: with deletes and without deletes
+        // This allows us to create a single efficient exec for files without deletes
+        let (files_with_deletes, files_without_deletes): (Vec<_>, Vec<_>) =
+            self.table_files.iter().partition(|table_file| {
+                table_file.delete_file.is_some()
+                    || table_file.data_file_id.is_some_and(|file_id| {
+                        inlined_deleted_positions_by_file.contains_key(&file_id)
+                    })
+            });
 
         let mut execs: Vec<Arc<dyn ExecutionPlan>> = Vec::new();
 
@@ -590,10 +727,25 @@ impl TableProvider for DuckLakeTable {
 
         // Only create separate execs for files with deletes
         for table_file in files_with_deletes {
+            let inline_positions = table_file
+                .data_file_id
+                .and_then(|file_id| inlined_deleted_positions_by_file.get(&file_id))
+                .cloned()
+                .unwrap_or_default();
             let exec = self
-                .build_exec_for_file_with_deletes(state, table_file, projection, limit)
+                .build_exec_for_file_with_deletes(
+                    state,
+                    table_file,
+                    &inline_positions,
+                    projection,
+                    limit,
+                )
                 .await?;
             execs.push(exec);
+        }
+
+        if let Some(inline_exec) = self.build_inline_exec(projection).await? {
+            execs.push(inline_exec);
         }
 
         // Handle empty tables (no data files)

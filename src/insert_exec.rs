@@ -18,6 +18,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::stream::{self, TryStreamExt};
 
+use crate::inlining::has_reserved_inline_column_names;
 use crate::metadata_writer::{MetadataWriter, WriteMode};
 use crate::table_writer::DuckLakeTableWriter;
 
@@ -39,7 +40,7 @@ pub struct DuckLakeInsertExec {
     arrow_schema: SchemaRef,
     write_mode: WriteMode,
     object_store_url: Arc<ObjectStoreUrl>,
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
 }
 
 impl DuckLakeInsertExec {
@@ -66,13 +67,13 @@ impl DuckLakeInsertExec {
         }
     }
 
-    fn compute_properties() -> PlanProperties {
-        PlanProperties::new(
+    fn compute_properties() -> Arc<PlanProperties> {
+        Arc::new(PlanProperties::new(
             EquivalenceProperties::new(make_insert_count_schema()),
             Partitioning::UnknownPartitioning(1),
             datafusion::physical_plan::execution_plan::EmissionType::Final,
             datafusion::physical_plan::execution_plan::Boundedness::Bounded,
-        )
+        ))
     }
 }
 
@@ -111,7 +112,7 @@ impl ExecutionPlan for DuckLakeInsertExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
@@ -169,6 +170,40 @@ impl ExecutionPlan for DuckLakeInsertExec {
                 return Ok(RecordBatch::try_new(output_schema, vec![count_array])?);
             }
 
+            let schema_without_metadata =
+                Schema::new(arrow_schema.fields().iter().cloned().collect::<Vec<_>>());
+            let column_defs = arrow_schema_to_column_defs(&schema_without_metadata)
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            let row_count = batches.iter().map(|batch| batch.num_rows() as u64).sum::<u64>();
+
+            if let Some(inline_writer) = writer.catalog_inlining_writer() {
+                let inline_limit = inline_writer
+                    .data_inlining_row_limit()
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                let supports_schema = inline_writer
+                    .supports_inline_columns(&column_defs)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                if inline_limit > 0
+                    && row_count as usize <= inline_limit
+                    && supports_schema
+                    && !has_reserved_inline_column_names(&column_defs)
+                {
+                    inline_writer
+                        .write_inlined_batches(
+                            &schema_name,
+                            &table_name,
+                            &column_defs,
+                            &batches,
+                            write_mode,
+                        )
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                    let count_array: ArrayRef = Arc::new(UInt64Array::from(vec![row_count]));
+                    return Ok(RecordBatch::try_new(output_schema, vec![count_array])?);
+                }
+            }
+
             // Get object store from runtime environment
             let object_store = context
                 .runtime_env()
@@ -176,9 +211,6 @@ impl ExecutionPlan for DuckLakeInsertExec {
 
             let table_writer = DuckLakeTableWriter::new(writer, object_store)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-            let schema_without_metadata =
-                Schema::new(arrow_schema.fields().iter().cloned().collect::<Vec<_>>());
 
             let mut session = table_writer
                 .begin_write(
@@ -211,6 +243,20 @@ impl ExecutionPlan for DuckLakeInsertExec {
             stream.map_err(|e: DataFusionError| e),
         )))
     }
+}
+
+fn arrow_schema_to_column_defs(schema: &Schema) -> crate::Result<Vec<crate::metadata_writer::ColumnDef>> {
+    schema
+        .fields()
+        .iter()
+        .map(|field| {
+            crate::metadata_writer::ColumnDef::from_arrow(
+                field.name(),
+                field.data_type(),
+                field.is_nullable(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

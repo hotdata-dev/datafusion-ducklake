@@ -10,10 +10,12 @@ use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
 use tempfile::TempDir;
 
-fn create_catalog(path: &str) -> DataFusionResult<Arc<DuckLakeCatalog>> {
+async fn create_catalog(path: &str) -> DataFusionResult<Arc<DuckLakeCatalog>> {
     let provider = DuckdbMetadataProvider::new(path)
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = DuckLakeCatalog::new(provider)
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     Ok(Arc::new(catalog))
 }
@@ -48,7 +50,7 @@ async fn test_missing_delete_file_returns_error() -> DataFusionResult<()> {
         !removed.is_empty(),
         "Should have removed at least one delete file"
     );
-    let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+    let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("test", catalog);
     let df = ctx
@@ -76,7 +78,7 @@ async fn test_delete_files_work_normally() -> DataFusionResult<()> {
         TempDir::new().map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog_path = temp_dir.path().join("normal_deletes.ducklake");
     common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
-    let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+    let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("test", catalog);
     let df = ctx
@@ -96,7 +98,7 @@ async fn test_missing_delete_file_count_query_errors() -> DataFusionResult<()> {
     common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
     let removed = remove_delete_files(temp_dir.path());
     assert!(!removed.is_empty());
-    let catalog = create_catalog(&catalog_path.to_string_lossy())?;
+    let catalog = create_catalog(&catalog_path.to_string_lossy()).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("test", catalog);
     let df = ctx.sql("SELECT COUNT(*) FROM test.main.products").await?;

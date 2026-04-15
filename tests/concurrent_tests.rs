@@ -90,9 +90,11 @@ async fn test_concurrent_select_queries() -> DataFusionResult<()> {
 
     // Create shared catalog (Arc allows sharing across tasks)
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(
         DuckLakeCatalog::new(provider)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
     );
 
@@ -163,9 +165,11 @@ async fn test_concurrent_count_queries() -> DataFusionResult<()> {
     common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(
         DuckLakeCatalog::new(provider)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
     );
 
@@ -233,9 +237,11 @@ async fn test_concurrent_mixed_queries() -> DataFusionResult<()> {
     common::create_catalog_with_updates(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(
         DuckLakeCatalog::new(provider)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
     );
 
@@ -348,9 +354,11 @@ async fn test_concurrent_delete_filtering() -> DataFusionResult<()> {
     common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(
         DuckLakeCatalog::new(provider)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
     );
 
@@ -426,9 +434,11 @@ async fn test_concurrent_metadata_access() -> DataFusionResult<()> {
     common::create_catalog_no_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(
         DuckLakeCatalog::new(provider)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
     );
 
@@ -491,9 +501,11 @@ async fn test_stress_concurrent_queries() -> DataFusionResult<()> {
     common::create_catalog_with_deletes(&catalog_path).map_err(common::to_datafusion_error)?;
 
     let provider = DuckdbMetadataProvider::new(catalog_path.to_string_lossy().to_string())
+        .await
         .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
     let catalog = Arc::new(
         DuckLakeCatalog::new(provider)
+            .await
             .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?,
     );
 

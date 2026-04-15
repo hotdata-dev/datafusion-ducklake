@@ -6,7 +6,7 @@ use std::sync::Arc;
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use object_store::path::Path as ObjectPath;
-use object_store::{ObjectStore, PutPayload};
+use object_store::{ObjectStore, ObjectStoreExt, PutPayload};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use uuid::Uuid;
@@ -286,6 +286,8 @@ impl TableWriteSession {
             schema_id: self.schema_id,
             files_written: 1,
             records_written: self.row_count,
+            schema_version: None,
+            next_row_id: None,
         })
     }
 }

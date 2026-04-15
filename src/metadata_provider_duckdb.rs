@@ -9,9 +9,10 @@ use crate::metadata_provider::{
     SchemaMetadata, SnapshotMetadata, TableMetadata, TableWithSchema, reconstruct_list_columns,
     reconstruct_list_columns_with_table,
 };
+use async_trait::async_trait;
 use duckdb::AccessMode::ReadOnly;
 use duckdb::{Config, Connection, params};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 /// DuckDB metadata provider
 ///
@@ -28,19 +29,21 @@ pub struct DuckdbMetadataProvider {
 
 impl DuckdbMetadataProvider {
     /// Create a new DuckDB metadata provider
-    pub fn new(catalog_path: impl Into<String>) -> crate::Result<Self> {
+    pub async fn new(catalog_path: impl Into<String>) -> crate::Result<Self> {
         let catalog_path = catalog_path.into();
-        let conn = Self::create_connection(&catalog_path)?;
+        let open_path = catalog_path.clone();
+        let conn = tokio::task::spawn_blocking(move || Self::create_connection(&open_path))
+            .await
+            .map_err(|e| {
+                DuckLakeError::Internal(format!(
+                    "DuckDB metadata provider initialization task failed: {e}"
+                ))
+            })??;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             catalog_path,
         })
-    }
-
-    /// Get a reference to the shared connection
-    fn connection(&self) -> MutexGuard<'_, Connection> {
-        self.conn.lock().expect("DuckDB connection mutex poisoned")
     }
 
     /// Create a new read-only connection to the catalog database
@@ -65,23 +68,34 @@ impl DuckdbMetadataProvider {
             },
         }
     }
-}
 
-impl MetadataProvider for DuckdbMetadataProvider {
-    fn get_current_snapshot(&self) -> crate::Result<i64> {
-        let conn = self.connection();
+    async fn run_blocking<T, F>(&self, task_name: &'static str, task: F) -> crate::Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> crate::Result<T> + Send + 'static,
+    {
+        let conn = Arc::clone(&self.conn);
+        tokio::task::spawn_blocking(move || {
+            let guard = conn.lock().expect("DuckDB connection mutex poisoned");
+            task(&guard)
+        })
+        .await
+        .map_err(|e| {
+            DuckLakeError::Internal(format!("DuckDB blocking task '{task_name}' failed: {e}"))
+        })?
+    }
+
+    fn get_current_snapshot_impl(conn: &Connection) -> crate::Result<i64> {
         let snapshot_id: i64 = conn.query_row(SQL_GET_LATEST_SNAPSHOT, [], |row| row.get(0))?;
         Ok(snapshot_id)
     }
 
-    fn get_data_path(&self) -> crate::Result<String> {
-        let conn = self.connection();
+    fn get_data_path_impl(conn: &Connection) -> crate::Result<String> {
         let data_path: String = conn.query_row(SQL_GET_DATA_PATH, [], |row| row.get(0))?;
         Ok(data_path)
     }
 
-    fn list_snapshots(&self) -> crate::Result<Vec<SnapshotMetadata>> {
-        let conn = self.connection();
+    fn list_snapshots_impl(conn: &Connection) -> crate::Result<Vec<SnapshotMetadata>> {
         let mut stmt = conn.prepare(SQL_LIST_SNAPSHOTS)?;
 
         let snapshots = stmt
@@ -98,8 +112,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(snapshots)
     }
 
-    fn list_schemas(&self, snapshot_id: i64) -> crate::Result<Vec<SchemaMetadata>> {
-        let conn = self.connection();
+    fn list_schemas_impl(
+        conn: &Connection,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<SchemaMetadata>> {
         let mut stmt = conn.prepare(SQL_LIST_SCHEMAS)?;
 
         let schemas = stmt
@@ -120,8 +136,11 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(schemas)
     }
 
-    fn list_tables(&self, schema_id: i64, snapshot_id: i64) -> crate::Result<Vec<TableMetadata>> {
-        let conn = self.connection();
+    fn list_tables_impl(
+        conn: &Connection,
+        schema_id: i64,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<TableMetadata>> {
         let mut stmt = conn.prepare(SQL_LIST_TABLES)?;
 
         let tables = stmt
@@ -142,8 +161,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(tables)
     }
 
-    fn get_table_structure(&self, table_id: i64) -> crate::Result<Vec<DuckLakeTableColumn>> {
-        let conn = self.connection();
+    fn get_table_structure_impl(
+        conn: &Connection,
+        table_id: i64,
+    ) -> crate::Result<Vec<DuckLakeTableColumn>> {
         let mut stmt = conn.prepare(SQL_GET_TABLE_COLUMNS)?;
 
         let raw_columns: Vec<(DuckLakeTableColumn, Option<i64>)> = stmt
@@ -168,19 +189,17 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(reconstruct_list_columns(raw_columns))
     }
 
-    fn get_table_files_for_select(
-        &self,
+    fn get_table_files_for_select_impl(
+        conn: &Connection,
         table_id: i64,
         snapshot_id: i64,
     ) -> crate::Result<Vec<DuckLakeTableFile>> {
-        let conn = self.connection();
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES)?;
 
         let files = stmt
             .query_map(
                 [table_id, snapshot_id, snapshot_id, table_id, snapshot_id, snapshot_id],
                 |row| {
-                    // Parse data file (columns 0-5)
                     let _data_file_id: i64 = row.get(0)?;
                     let data_file = DuckLakeFileData {
                         path: row.get(1)?,
@@ -190,7 +209,6 @@ impl MetadataProvider for DuckdbMetadataProvider {
                         encryption_key: row.get(5)?,
                     };
 
-                    // Parse delete file (columns 6-12) if exists
                     let delete_file = if let Ok(Some(_)) = row.get::<_, Option<i64>>(6) {
                         Some(DuckLakeFileData {
                             path: row.get(7)?,
@@ -206,11 +224,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
                     let _delete_count: Option<i64> = row.get(12)?;
 
                     Ok(DuckLakeTableFile {
+                        data_file_id: Some(row.get(0)?),
                         file: data_file,
                         delete_file,
                         row_id_start: None,
                         snapshot_id: Some(snapshot_id),
-                        max_row_count: None, // Set to None until we have actual row count from data file metadata
+                        max_row_count: None,
                     })
                 },
             )?
@@ -219,14 +238,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(files)
     }
 
-    fn get_schema_by_name(
-        &self,
+    fn get_schema_by_name_impl(
+        conn: &Connection,
         name: &str,
         snapshot_id: i64,
     ) -> crate::Result<Option<SchemaMetadata>> {
-        let conn = self.connection();
         let mut stmt = conn.prepare(SQL_GET_SCHEMA_BY_NAME)?;
-
         let mut rows = stmt.query(params![name, snapshot_id, snapshot_id])?;
 
         if let Some(row) = rows.next()? {
@@ -245,15 +262,13 @@ impl MetadataProvider for DuckdbMetadataProvider {
         }
     }
 
-    fn get_table_by_name(
-        &self,
+    fn get_table_by_name_impl(
+        conn: &Connection,
         schema_id: i64,
         name: &str,
         snapshot_id: i64,
     ) -> crate::Result<Option<TableMetadata>> {
-        let conn = self.connection();
         let mut stmt = conn.prepare(SQL_GET_TABLE_BY_NAME)?;
-
         let mut rows = stmt.query(params![&schema_id, &name, &snapshot_id, &snapshot_id])?;
 
         if let Some(row) = rows.next()? {
@@ -272,8 +287,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
         }
     }
 
-    fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> crate::Result<bool> {
-        let conn = self.connection();
+    fn table_exists_impl(
+        conn: &Connection,
+        schema_id: i64,
+        name: &str,
+        snapshot_id: i64,
+    ) -> crate::Result<bool> {
         let exists: bool = conn.query_row(
             SQL_TABLE_EXISTS,
             params![schema_id, &name, &snapshot_id, &snapshot_id],
@@ -282,8 +301,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(exists)
     }
 
-    fn list_all_tables(&self, snapshot_id: i64) -> crate::Result<Vec<TableWithSchema>> {
-        let conn = self.connection();
+    fn list_all_tables_impl(
+        conn: &Connection,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<TableWithSchema>> {
         let mut stmt = conn.prepare(SQL_LIST_ALL_TABLES)?;
 
         let tables = stmt
@@ -308,8 +329,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(tables)
     }
 
-    fn list_all_columns(&self, snapshot_id: i64) -> crate::Result<Vec<ColumnWithTable>> {
-        let conn = self.connection();
+    fn list_all_columns_impl(
+        conn: &Connection,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<ColumnWithTable>> {
         let mut stmt = conn.prepare(SQL_LIST_ALL_COLUMNS)?;
 
         let raw_columns: Vec<(ColumnWithTable, Option<i64>)> = stmt
@@ -341,8 +364,10 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(reconstruct_list_columns_with_table(raw_columns))
     }
 
-    fn list_all_files(&self, snapshot_id: i64) -> crate::Result<Vec<FileWithTable>> {
-        let conn = self.connection();
+    fn list_all_files_impl(
+        conn: &Connection,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<FileWithTable>> {
         let mut stmt = conn.prepare(SQL_LIST_ALL_FILES)?;
 
         let files = stmt
@@ -361,7 +386,6 @@ impl MetadataProvider for DuckdbMetadataProvider {
                     let schema_name: String = row.get(0)?;
                     let table_name: String = row.get(1)?;
 
-                    // Parse data file (skip column 2: data_file_id, only used for JOIN)
                     let data_file = DuckLakeFileData {
                         path: row.get(3)?,
                         path_is_relative: row.get(4)?,
@@ -370,7 +394,6 @@ impl MetadataProvider for DuckdbMetadataProvider {
                         encryption_key: row.get(7)?,
                     };
 
-                    // Parse optional delete file (column 8: delete_file_id, check if exists but don't store)
                     let delete_file =
                         if let Ok(Some(_delete_file_id)) = row.get::<_, Option<i64>>(8) {
                             Some(DuckLakeFileData {
@@ -389,10 +412,11 @@ impl MetadataProvider for DuckdbMetadataProvider {
                     Ok(FileWithTable {
                         schema_name,
                         table_name,
-                        file: DuckLakeTableFile {
-                            file: data_file,
-                            delete_file,
-                            row_id_start: None,
+                    file: DuckLakeTableFile {
+                        data_file_id: Some(row.get(2)?),
+                        file: data_file,
+                        delete_file,
+                        row_id_start: None,
                             snapshot_id: None,
                             max_row_count,
                         },
@@ -404,13 +428,12 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(files)
     }
 
-    fn get_data_files_added_between_snapshots(
-        &self,
+    fn get_data_files_added_between_snapshots_impl(
+        conn: &Connection,
         table_id: i64,
         start_snapshot: i64,
         end_snapshot: i64,
     ) -> crate::Result<Vec<DataFileChange>> {
-        let conn = self.connection();
         let mut stmt = conn.prepare(SQL_GET_DATA_FILES_ADDED_BETWEEN_SNAPSHOTS)?;
 
         let files = stmt
@@ -429,19 +452,17 @@ impl MetadataProvider for DuckdbMetadataProvider {
         Ok(files)
     }
 
-    fn get_delete_files_added_between_snapshots(
-        &self,
+    fn get_delete_files_added_between_snapshots_impl(
+        conn: &Connection,
         table_id: i64,
         start_snapshot: i64,
         end_snapshot: i64,
     ) -> crate::Result<Vec<DeleteFileChange>> {
-        let conn = self.connection();
         let mut stmt = conn.prepare(SQL_GET_DELETE_FILES_ADDED_BETWEEN_SNAPSHOTS)?;
 
         let files = stmt
             .query_map(params![table_id, start_snapshot, end_snapshot], |row| {
                 Ok(DeleteFileChange {
-                    // data file
                     data_file_path: row.get(0)?,
                     data_file_path_is_relative: row.get(1)?,
                     data_file_size_bytes: row.get(2)?,
@@ -449,25 +470,166 @@ impl MetadataProvider for DuckdbMetadataProvider {
                     data_row_id_start: row.get(4)?,
                     data_record_count: row.get(5)?,
                     data_mapping_id: row.get(6)?,
-
-                    // current delete
                     current_delete_path: row.get(7)?,
                     current_delete_path_is_relative: row.get(8)?,
                     current_delete_file_size_bytes: row.get(9)?,
                     current_delete_footer_size: row.get(10)?,
-
-                    // previous delete
                     previous_delete_path: row.get(11)?,
                     previous_delete_path_is_relative: row.get(12)?,
                     previous_delete_file_size_bytes: row.get(13)?,
                     previous_delete_footer_size: row.get(14)?,
-
-                    // snapshot
                     snapshot_id: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(files)
+    }
+}
+
+#[async_trait]
+impl MetadataProvider for DuckdbMetadataProvider {
+    async fn get_current_snapshot(&self) -> crate::Result<i64> {
+        self.run_blocking("get_current_snapshot", Self::get_current_snapshot_impl)
+            .await
+    }
+
+    async fn get_data_path(&self) -> crate::Result<String> {
+        self.run_blocking("get_data_path", Self::get_data_path_impl)
+            .await
+    }
+
+    async fn list_snapshots(&self) -> crate::Result<Vec<SnapshotMetadata>> {
+        self.run_blocking("list_snapshots", Self::list_snapshots_impl)
+            .await
+    }
+
+    async fn list_schemas(&self, snapshot_id: i64) -> crate::Result<Vec<SchemaMetadata>> {
+        self.run_blocking("list_schemas", move |conn| {
+            Self::list_schemas_impl(conn, snapshot_id)
+        })
+        .await
+    }
+
+    async fn list_tables(
+        &self,
+        schema_id: i64,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<TableMetadata>> {
+        self.run_blocking("list_tables", move |conn| {
+            Self::list_tables_impl(conn, schema_id, snapshot_id)
+        })
+        .await
+    }
+
+    async fn get_table_structure(&self, table_id: i64) -> crate::Result<Vec<DuckLakeTableColumn>> {
+        self.run_blocking("get_table_structure", move |conn| {
+            Self::get_table_structure_impl(conn, table_id)
+        })
+        .await
+    }
+
+    async fn get_table_files_for_select(
+        &self,
+        table_id: i64,
+        snapshot_id: i64,
+    ) -> crate::Result<Vec<DuckLakeTableFile>> {
+        self.run_blocking("get_table_files_for_select", move |conn| {
+            Self::get_table_files_for_select_impl(conn, table_id, snapshot_id)
+        })
+        .await
+    }
+
+    async fn get_schema_by_name(
+        &self,
+        name: &str,
+        snapshot_id: i64,
+    ) -> crate::Result<Option<SchemaMetadata>> {
+        let name = name.to_string();
+        self.run_blocking("get_schema_by_name", move |conn| {
+            Self::get_schema_by_name_impl(conn, &name, snapshot_id)
+        })
+        .await
+    }
+
+    async fn get_table_by_name(
+        &self,
+        schema_id: i64,
+        name: &str,
+        snapshot_id: i64,
+    ) -> crate::Result<Option<TableMetadata>> {
+        let name = name.to_string();
+        self.run_blocking("get_table_by_name", move |conn| {
+            Self::get_table_by_name_impl(conn, schema_id, &name, snapshot_id)
+        })
+        .await
+    }
+
+    async fn table_exists(
+        &self,
+        schema_id: i64,
+        name: &str,
+        snapshot_id: i64,
+    ) -> crate::Result<bool> {
+        let name = name.to_string();
+        self.run_blocking("table_exists", move |conn| {
+            Self::table_exists_impl(conn, schema_id, &name, snapshot_id)
+        })
+        .await
+    }
+
+    async fn list_all_tables(&self, snapshot_id: i64) -> crate::Result<Vec<TableWithSchema>> {
+        self.run_blocking("list_all_tables", move |conn| {
+            Self::list_all_tables_impl(conn, snapshot_id)
+        })
+        .await
+    }
+
+    async fn list_all_columns(&self, snapshot_id: i64) -> crate::Result<Vec<ColumnWithTable>> {
+        self.run_blocking("list_all_columns", move |conn| {
+            Self::list_all_columns_impl(conn, snapshot_id)
+        })
+        .await
+    }
+
+    async fn list_all_files(&self, snapshot_id: i64) -> crate::Result<Vec<FileWithTable>> {
+        self.run_blocking("list_all_files", move |conn| {
+            Self::list_all_files_impl(conn, snapshot_id)
+        })
+        .await
+    }
+
+    async fn get_data_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> crate::Result<Vec<DataFileChange>> {
+        self.run_blocking("get_data_files_added_between_snapshots", move |conn| {
+            Self::get_data_files_added_between_snapshots_impl(
+                conn,
+                table_id,
+                start_snapshot,
+                end_snapshot,
+            )
+        })
+        .await
+    }
+
+    async fn get_delete_files_added_between_snapshots(
+        &self,
+        table_id: i64,
+        start_snapshot: i64,
+        end_snapshot: i64,
+    ) -> crate::Result<Vec<DeleteFileChange>> {
+        self.run_blocking("get_delete_files_added_between_snapshots", move |conn| {
+            Self::get_delete_files_added_between_snapshots_impl(
+                conn,
+                table_id,
+                start_snapshot,
+                end_snapshot,
+            )
+        })
+        .await
     }
 }

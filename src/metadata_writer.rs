@@ -3,6 +3,7 @@
 //! This module provides the `MetadataWriter` trait for writing metadata to DuckLake catalogs,
 //! along with helper types for column definitions and data file registration.
 
+use crate::inlining::CatalogInliningWriter;
 use crate::{DuckLakeError, Result};
 
 /// Maximum allowed length for catalog entity names (schemas, tables, columns).
@@ -187,6 +188,10 @@ pub struct WriteResult {
     pub files_written: usize,
     /// Total records written
     pub records_written: i64,
+    /// Active schema version for the write, when known.
+    pub schema_version: Option<i64>,
+    /// Next row id after the write, when tracked by the backend.
+    pub next_row_id: Option<i64>,
 }
 
 /// Result of a transactional write setup operation.
@@ -200,12 +205,21 @@ pub struct WriteSetupResult {
     pub table_id: i64,
     /// Column IDs in order
     pub column_ids: Vec<i64>,
+    /// Active schema version for the write, when known.
+    pub schema_version: Option<i64>,
+    /// Next row id before the write, when tracked by the backend.
+    pub next_row_id: Option<i64>,
 }
 
 /// Trait for writing metadata to DuckLake catalogs.
 ///
 /// Implementations must be thread-safe (`Send + Sync`).
 pub trait MetadataWriter: Send + Sync + std::fmt::Debug {
+    /// Optional backend-specific inline write support.
+    fn catalog_inlining_writer(&self) -> Option<&dyn CatalogInliningWriter> {
+        None
+    }
+
     /// Create a new snapshot and return its ID.
     fn create_snapshot(&self) -> Result<i64>;
 

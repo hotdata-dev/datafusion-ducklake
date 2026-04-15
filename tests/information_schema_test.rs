@@ -19,8 +19,8 @@ async fn test_information_schema_snapshots() -> Result<(), Box<dyn std::error::E
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -46,8 +46,8 @@ async fn test_information_schema_schemata() -> Result<(), Box<dyn std::error::Er
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -72,8 +72,8 @@ async fn test_information_schema_tables() -> Result<(), Box<dyn std::error::Erro
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -98,8 +98,8 @@ async fn test_information_schema_columns() -> Result<(), Box<dyn std::error::Err
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -125,8 +125,8 @@ async fn test_information_schema_filtering() -> Result<(), Box<dyn std::error::E
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -149,8 +149,8 @@ async fn test_information_schema_aggregation() -> Result<(), Box<dyn std::error:
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -173,8 +173,8 @@ async fn test_information_schema_join() -> Result<(), Box<dyn std::error::Error>
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -204,8 +204,8 @@ async fn test_information_schema_projection() -> Result<(), Box<dyn std::error::
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -231,8 +231,8 @@ async fn test_information_schema_all_tables_exist() -> Result<(), Box<dyn std::e
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -261,8 +261,8 @@ async fn test_information_schema_in_schema_list() -> Result<(), Box<dyn std::err
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -289,8 +289,8 @@ async fn test_information_schema_files() -> Result<(), Box<dyn std::error::Error
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -319,8 +319,8 @@ async fn test_information_schema_files_filtering() -> Result<(), Box<dyn std::er
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
@@ -345,11 +345,12 @@ async fn test_ducklake_snapshots_function() -> Result<(), Box<dyn std::error::Er
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
     let ctx = SessionContext::new();
+    let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
 
     // Register table functions
-    register_ducklake_functions(&ctx, Arc::new(provider));
+    register_ducklake_functions(&ctx, catalog);
 
     // Query using function syntax
     let df = ctx.sql("SELECT * FROM ducklake_snapshots()").await?;
@@ -367,10 +368,11 @@ async fn test_ducklake_table_info_function() -> Result<(), Box<dyn std::error::E
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
     let ctx = SessionContext::new();
+    let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
 
-    register_ducklake_functions(&ctx, Arc::new(provider));
+    register_ducklake_functions(&ctx, catalog);
 
     let df = ctx
         .sql("SELECT table_name, file_count, file_size_bytes FROM ducklake_table_info()")
@@ -389,10 +391,11 @@ async fn test_ducklake_list_files_function() -> Result<(), Box<dyn std::error::E
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
     let ctx = SessionContext::new();
+    let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
 
-    register_ducklake_functions(&ctx, Arc::new(provider));
+    register_ducklake_functions(&ctx, catalog);
 
     let df = ctx
         .sql("SELECT file_path, file_size_bytes FROM ducklake_list_files()")
@@ -411,10 +414,11 @@ async fn test_table_info_aggregation() -> Result<(), Box<dyn std::error::Error>>
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
     let ctx = SessionContext::new();
+    let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
 
-    register_ducklake_functions(&ctx, Arc::new(provider));
+    register_ducklake_functions(&ctx, catalog);
 
     // Get total storage
     let df = ctx
@@ -434,10 +438,11 @@ async fn test_function_rejects_arguments() -> Result<(), Box<dyn std::error::Err
 
     common::create_catalog_no_deletes(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
     let ctx = SessionContext::new();
+    let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
 
-    register_ducklake_functions(&ctx, Arc::new(provider));
+    register_ducklake_functions(&ctx, catalog);
 
     // These functions should reject arguments
     let result = ctx.sql("SELECT * FROM ducklake_snapshots('arg')").await;
