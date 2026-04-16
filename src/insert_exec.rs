@@ -39,7 +39,7 @@ pub struct DuckLakeInsertExec {
     arrow_schema: SchemaRef,
     write_mode: WriteMode,
     object_store_url: Arc<ObjectStoreUrl>,
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
 }
 
 impl DuckLakeInsertExec {
@@ -66,13 +66,13 @@ impl DuckLakeInsertExec {
         }
     }
 
-    fn compute_properties() -> PlanProperties {
-        PlanProperties::new(
+    fn compute_properties() -> Arc<PlanProperties> {
+        Arc::new(PlanProperties::new(
             EquivalenceProperties::new(make_insert_count_schema()),
             Partitioning::UnknownPartitioning(1),
             datafusion::physical_plan::execution_plan::EmissionType::Final,
             datafusion::physical_plan::execution_plan::Boundedness::Bounded,
-        )
+        ))
     }
 }
 
@@ -111,7 +111,7 @@ impl ExecutionPlan for DuckLakeInsertExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
