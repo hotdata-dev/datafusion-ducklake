@@ -34,7 +34,7 @@ pub struct ColumnRenameExec {
     /// Reverse mapping: new name -> old name, for looking up input columns
     reverse_mapping: Arc<HashMap<String, String>>,
     /// Cached plan properties with updated schema
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
 }
 
 impl ColumnRenameExec {
@@ -45,12 +45,12 @@ impl ColumnRenameExec {
     ) -> Self {
         // PlanProperties must use output schema for DataFusion schema validation
         let eq_props = EquivalenceProperties::new(Arc::clone(&output_schema));
-        let properties = PlanProperties::new(
+        let properties = Arc::new(PlanProperties::new(
             eq_props,
             input.output_partitioning().clone(),
             input.pipeline_behavior(),
             Boundedness::Bounded,
-        );
+        ));
 
         // Pre-compute reverse mapping once (new_name -> old_name)
         let reverse_mapping: HashMap<String, String> = name_mapping
@@ -83,7 +83,7 @@ impl ExecutionPlan for ColumnRenameExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 

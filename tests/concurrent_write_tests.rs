@@ -8,6 +8,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use datafusion_ducklake::metadata_writer::MetadataWriter;
 use datafusion_ducklake::{DuckLakeTableWriter, SqliteMetadataWriter, WriteMode};
+use object_store::ObjectStoreExt;
 use object_store::local::LocalFileSystem;
 use tempfile::TempDir;
 
