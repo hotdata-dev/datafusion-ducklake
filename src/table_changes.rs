@@ -553,6 +553,7 @@ impl TableProvider for TableChangesTable {
                 self.start_snapshot,
                 self.end_snapshot,
             )
+            .await
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         // Handle empty case

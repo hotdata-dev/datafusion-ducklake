@@ -110,7 +110,9 @@ async fn run_hybrid_test(test_file: &str) -> Result<(), Box<dyn std::error::Erro
     let catalog_path = temp_dir.path().join("test.ducklake");
 
     // Create hybrid DB adapter wrapped in Arc for cloning
-    let db = std::sync::Arc::new(std::sync::Mutex::new(HybridDuckLakeDB::new(catalog_path)?));
+    let db = std::sync::Arc::new(std::sync::Mutex::new(
+        HybridDuckLakeDB::new(catalog_path).await?,
+    ));
 
     // Read and preprocess test file
     let original_content = std::fs::read_to_string(test_file)?;

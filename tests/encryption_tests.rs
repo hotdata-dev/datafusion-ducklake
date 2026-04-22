@@ -114,6 +114,7 @@ fn create_catalog_with_encrypted_file(
             column_type VARCHAR NOT NULL,
             column_order INTEGER NOT NULL,
             nulls_allowed BOOLEAN DEFAULT true,
+            parent_column BIGINT,
             begin_snapshot BIGINT NOT NULL,
             end_snapshot BIGINT
         );
@@ -241,19 +242,23 @@ async fn test_read_pme_encrypted_parquet() -> anyhow::Result<()> {
     // Step 3: Create DataFusion context and register DuckLake catalog
     let ctx = SessionContext::new();
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
 
     // Debug: Check what files are returned by the provider
-    let snapshot_id = provider.get_current_snapshot()?;
+    let snapshot_id = provider.get_current_snapshot().await?;
     println!("DEBUG: Current snapshot_id={}", snapshot_id);
 
     // Debug: Get table files directly from provider
     // First need to get table_id
-    let schemas = provider.list_schemas(snapshot_id)?;
+    let schemas = provider.list_schemas(snapshot_id).await?;
     println!("DEBUG: Schemas={:?}", schemas);
-    let tables = provider.list_tables(schemas[0].schema_id, snapshot_id)?;
+    let tables = provider
+        .list_tables(schemas[0].schema_id, snapshot_id)
+        .await?;
     println!("DEBUG: Tables={:?}", tables);
-    let table_files = provider.get_table_files_for_select(tables[0].table_id, snapshot_id)?;
+    let table_files = provider
+        .get_table_files_for_select(tables[0].table_id, snapshot_id)
+        .await?;
     println!("DEBUG: Table files count={}", table_files.len());
     for tf in &table_files {
         println!(
@@ -262,7 +267,7 @@ async fn test_read_pme_encrypted_parquet() -> anyhow::Result<()> {
         );
     }
 
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
     // Step 4: Query the encrypted table
@@ -317,8 +322,8 @@ async fn test_read_encrypted_parquet_without_key_fails() -> anyhow::Result<()> {
     // Create DataFusion context and register DuckLake catalog
     let ctx = SessionContext::new();
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
     // Query should fail because file is encrypted but no key provided
@@ -363,8 +368,8 @@ async fn test_read_encrypted_parquet_with_wrong_key_fails() -> anyhow::Result<()
     // Create DataFusion context and register DuckLake catalog
     let ctx = SessionContext::new();
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
     ctx.register_catalog("ducklake", Arc::new(catalog));
 
     // Query should fail because key is wrong

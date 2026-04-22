@@ -131,8 +131,8 @@ async fn test_select_all_after_rename() -> Result<()> {
 
     create_catalog_with_renamed_column(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -165,8 +165,8 @@ async fn test_select_renamed_column_only() -> Result<()> {
 
     create_catalog_with_renamed_column(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -192,8 +192,8 @@ async fn test_filter_on_renamed_column() -> Result<()> {
 
     create_catalog_with_renamed_column(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -224,8 +224,8 @@ async fn test_aggregation_on_renamed_column() -> Result<()> {
 
     create_catalog_with_renamed_column(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -257,8 +257,8 @@ async fn test_multiple_renamed_columns() -> Result<()> {
 
     create_catalog_with_multiple_renames(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -292,8 +292,8 @@ async fn test_count_after_rename() -> Result<()> {
 
     create_catalog_with_renamed_column(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));
@@ -323,8 +323,8 @@ async fn test_schema_shows_renamed_columns() -> Result<()> {
 
     create_catalog_with_renamed_column(&catalog_path)?;
 
-    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())?;
-    let catalog = DuckLakeCatalog::new(provider)?;
+    let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).await?;
+    let catalog = DuckLakeCatalog::new(provider).await?;
 
     let ctx = SessionContext::new();
     ctx.register_catalog("ducklake", Arc::new(catalog));

@@ -133,13 +133,14 @@ cargo run --example basic_query --features metadata-sqlite -- \
 
 ### Integration
 ```rust
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
 use datafusion_ducklake::{DuckLakeCatalog, DuckdbMetadataProvider};
 use std::sync::Arc;
 
 // Create metadata provider
-let provider = DuckdbMetadataProvider::new("catalog.db")?;
+let provider = DuckdbMetadataProvider::new("catalog.db").await?;
 
 // Create runtime (register object stores if using S3/MinIO)
 let runtime = Arc::new(RuntimeEnv::default());
@@ -158,7 +159,7 @@ let s3: Arc<dyn ObjectStore> = Arc::new(
 runtime.register_object_store(&Url::parse("s3://ducklake-data/")?, s3);
 
 // Create DuckLake catalog
-let catalog = DuckLakeCatalog::new(provider)?;
+let catalog = DuckLakeCatalog::new(provider).await?;
 
 // Create session and register catalog
 let ctx = SessionContext::new_with_config_rt(
@@ -170,7 +171,8 @@ ctx.register_catalog("ducklake", Arc::new(catalog));
 // Query
 let df = ctx.sql("SELECT * FROM ducklake.main.my_table").await?;
 df.show().await?;
-
+# Ok(())
+# }
 
 ```
 ### Project Status
