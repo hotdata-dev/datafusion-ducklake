@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-05
+
+### Added
+- Implement `TableProvider::statistics()` on `DuckLakeTable`, populating `total_byte_size` from per-file metadata cached on the table (#112). Mirrors DuckLake's `ducklake_table_info` aggregate exactly. Marked `Precision::Inexact` since the catalog tracks compressed parquet bytes while DataFusion documents `total_byte_size` as uncompressed Arrow output. Enables cost-based optimisation hints and provides a cheap surface for size-aware consumers (e.g. pre-flight ingest guards).
+
+### Changed
+- README: revise Discord community link (#111)
+
 ## [0.2.0] - 2026-04-22
 
 ### Changed
@@ -116,6 +124,7 @@ Initial release.
 - Filter pushdown to Parquet
 - Query-scoped snapshot isolation
 
+[0.2.1]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/hotdata-dev/datafusion-ducklake/compare/v0.1.0...v0.1.1
