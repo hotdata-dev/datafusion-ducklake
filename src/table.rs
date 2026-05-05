@@ -27,6 +27,8 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
+use datafusion::common::Statistics;
+use datafusion::common::stats::Precision;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileGroup, FileScanConfigBuilder, ParquetSource};
 use datafusion::datasource::source::DataSourceExec;
@@ -537,6 +539,46 @@ impl TableProvider for DuckLakeTable {
 
     fn table_type(&self) -> TableType {
         TableType::Base
+    }
+
+    fn statistics(&self) -> Option<Statistics> {
+        // Aggregate per-file byte sizes from the cached `table_files`. Mirrors
+        // DuckLake's own `ducklake_table_info` aggregate exactly:
+        //
+        //     total_byte_size == SUM(data_file.file_size_bytes)
+        //                       - SUM(delete_file.file_size_bytes)
+        //
+        // The values come from the ducklake catalog, so this is the same
+        // source of truth `ducklake_table_info` uses — no extra round trips
+        // and the numbers will match byte-for-byte.
+        //
+        // Marked `Precision::Inexact` because DataFusion documents
+        // `total_byte_size` as the *uncompressed Arrow output* size, while
+        // the catalog tracks *compressed parquet* bytes. For wide
+        // column types (List(Float64) embeddings) the two are nearly
+        // identical; for narrow scalar schemas the on-disk number is 3-5x
+        // smaller than Arrow output. Reporting compressed bytes Inexact
+        // gives consumers a useful lower-bound estimate without misleading
+        // the optimiser into thinking it's exact Arrow size. When
+        // `record_count` is plumbed through `DuckLakeFileData`, a follow-up
+        // can populate `num_rows` and use `calculate_total_byte_size` for a
+        // closer Arrow-side estimate.
+        let data_bytes: i64 = self
+            .table_files
+            .iter()
+            .map(|f| f.file.file_size_bytes)
+            .sum();
+        let delete_bytes: i64 = self
+            .table_files
+            .iter()
+            .filter_map(|f| f.delete_file.as_ref())
+            .map(|df| df.file_size_bytes)
+            .sum();
+        let net_bytes = (data_bytes - delete_bytes).max(0) as usize;
+
+        let mut stats = Statistics::new_unknown(&self.schema);
+        stats.total_byte_size = Precision::Inexact(net_bytes);
+        Some(stats)
     }
 
     fn supports_filters_pushdown(
