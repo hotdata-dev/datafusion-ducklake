@@ -1,4 +1,9 @@
+#[cfg(feature = "write-sqlite")]
+use crate::DuckLakeError;
 use crate::Result;
+use async_trait::async_trait;
+#[cfg(feature = "write-sqlite")]
+use std::future::Future;
 
 // SQL queries for DuckLake catalog tables
 // These queries are database-agnostic and work with DuckDB, SQLite, PostgreSQL, MySQL
@@ -541,27 +546,28 @@ pub struct DeleteFileChange {
     pub snapshot_id: i64,
 }
 
+#[async_trait]
 pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     /// Get the current snapshot ID (dynamic, not cached)
-    fn get_current_snapshot(&self) -> Result<i64>;
+    async fn get_current_snapshot(&self) -> Result<i64>;
 
     /// Get the data path from catalog metadata (not snapshot-dependent)
-    fn get_data_path(&self) -> Result<String>;
+    async fn get_data_path(&self) -> Result<String>;
 
     /// List all snapshots in the catalog
-    fn list_snapshots(&self) -> Result<Vec<SnapshotMetadata>>;
+    async fn list_snapshots(&self) -> Result<Vec<SnapshotMetadata>>;
 
     /// List schemas for a specific snapshot
-    fn list_schemas(&self, snapshot_id: i64) -> Result<Vec<SchemaMetadata>>;
+    async fn list_schemas(&self, snapshot_id: i64) -> Result<Vec<SchemaMetadata>>;
 
     /// List tables for a specific snapshot
-    fn list_tables(&self, schema_id: i64, snapshot_id: i64) -> Result<Vec<TableMetadata>>;
+    async fn list_tables(&self, schema_id: i64, snapshot_id: i64) -> Result<Vec<TableMetadata>>;
 
     /// Get table structure (columns) - not snapshot-dependent as column definitions don't change
-    fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;
+    async fn get_table_structure(&self, table_id: i64) -> Result<Vec<DuckLakeTableColumn>>;
 
     /// Get table files for a specific snapshot
-    fn get_table_files_for_select(
+    async fn get_table_files_for_select(
         &self,
         table_id: i64,
         snapshot_id: i64,
@@ -571,10 +577,14 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     // Dynamic lookup methods for on-demand metadata retrieval
 
     /// Get schema by name for a specific snapshot
-    fn get_schema_by_name(&self, name: &str, snapshot_id: i64) -> Result<Option<SchemaMetadata>>;
+    async fn get_schema_by_name(
+        &self,
+        name: &str,
+        snapshot_id: i64,
+    ) -> Result<Option<SchemaMetadata>>;
 
     /// Get table by name for a specific snapshot
-    fn get_table_by_name(
+    async fn get_table_by_name(
         &self,
         schema_id: i64,
         name: &str,
@@ -582,25 +592,25 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     ) -> Result<Option<TableMetadata>>;
 
     /// Check if table exists for a specific snapshot
-    fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<bool>;
+    async fn table_exists(&self, schema_id: i64, name: &str, snapshot_id: i64) -> Result<bool>;
 
     // Bulk query methods for information_schema
 
     /// List all tables across all schemas for a snapshot
-    fn list_all_tables(&self, snapshot_id: i64) -> Result<Vec<TableWithSchema>>;
+    async fn list_all_tables(&self, snapshot_id: i64) -> Result<Vec<TableWithSchema>>;
 
     /// List all columns across all tables for a snapshot
-    fn list_all_columns(&self, snapshot_id: i64) -> Result<Vec<ColumnWithTable>>;
+    async fn list_all_columns(&self, snapshot_id: i64) -> Result<Vec<ColumnWithTable>>;
 
     /// List all files across all tables for a snapshot
-    fn list_all_files(&self, snapshot_id: i64) -> Result<Vec<FileWithTable>>;
+    async fn list_all_files(&self, snapshot_id: i64) -> Result<Vec<FileWithTable>>;
 
     // Change tracking methods for table_changes (CDC) functionality
 
     /// Get data files added between two snapshots (exclusive start, inclusive end)
     /// Returns files where begin_snapshot > start_snapshot AND begin_snapshot <= end_snapshot
     /// These represent INSERT changes - new rows added to the table
-    fn get_data_files_added_between_snapshots(
+    async fn get_data_files_added_between_snapshots(
         &self,
         table_id: i64,
         start_snapshot: i64,
@@ -610,7 +620,7 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     /// Get delete files added between two snapshots (exclusive start, inclusive end)
     /// Returns delete files where begin_snapshot > start_snapshot AND begin_snapshot <= end_snapshot
     /// These represent DELETE changes - rows removed from the table
-    fn get_delete_files_added_between_snapshots(
+    async fn get_delete_files_added_between_snapshots(
         &self,
         table_id: i64,
         start_snapshot: i64,
@@ -618,13 +628,57 @@ pub trait MetadataProvider: Send + Sync + std::fmt::Debug {
     ) -> Result<Vec<DeleteFileChange>>;
 }
 
-#[cfg(any(feature = "metadata-postgres", feature = "metadata-mysql", feature = "metadata-sqlite"))]
-/// Helper function to bridge async sqlx operations to sync MetadataProvider trait
-pub(crate) fn block_on<F, T>(f: F) -> T
+/// Runs async metadata work from sync-only call sites imposed by DataFusion APIs.
+#[cfg(feature = "write-sqlite")]
+pub(crate) fn sync_call<F, T>(future: F) -> Result<T>
 where
-    F: std::future::Future<Output = T>,
+    F: Future<Output = Result<T>> + Send,
+    T: Send,
 {
-    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(f))
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => match handle.runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| handle.block_on(future))
+            },
+            tokio::runtime::RuntimeFlavor::CurrentThread => run_on_dedicated_runtime(future),
+            _ => run_on_dedicated_runtime(future),
+        },
+        Err(_) => run_on_fresh_runtime(future),
+    }
+}
+
+#[cfg(feature = "write-sqlite")]
+fn run_on_dedicated_runtime<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>> + Send,
+    T: Send,
+{
+    std::thread::scope(|scope| {
+        let join_handle = scope.spawn(|| run_on_fresh_runtime(future));
+        match join_handle.join() {
+            Ok(result) => result,
+            Err(_) => Err(DuckLakeError::Internal(
+                "Sync metadata bridge thread panicked".to_string(),
+            )),
+        }
+    })
+}
+
+#[cfg(feature = "write-sqlite")]
+fn run_on_fresh_runtime<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>> + Send,
+    T: Send,
+{
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| {
+            DuckLakeError::Internal(format!(
+                "Failed to build Tokio runtime for sync metadata bridge: {e}"
+            ))
+        })?;
+    runtime.block_on(future)
 }
 
 #[cfg(test)]

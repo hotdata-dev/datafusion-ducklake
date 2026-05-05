@@ -283,8 +283,8 @@ async fn test_minio_object_store_integration() -> anyhow::Result<()> {
     let ctx = SessionContext::new_with_config_rt(session_config, runtime);
 
     // Create DuckLake catalog provider
-    let provider = DuckdbMetadataProvider::new(&catalog_path_str)?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)?);
+    let provider = DuckdbMetadataProvider::new(&catalog_path_str).await?;
+    let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
     ctx.register_catalog("ducklake", catalog);
 
     // Test 1: Query table without deletes
@@ -398,8 +398,8 @@ async fn test_local_filesystem_with_s3_style_paths() -> anyhow::Result<()> {
     let ctx = SessionContext::new();
 
     // Create DuckLake catalog provider
-    let provider = DuckdbMetadataProvider::new(&catalog_path_str)?;
-    let catalog = Arc::new(DuckLakeCatalog::new(provider)?);
+    let provider = DuckdbMetadataProvider::new(&catalog_path_str).await?;
+    let catalog = Arc::new(DuckLakeCatalog::new(provider).await?);
     ctx.register_catalog("ducklake", catalog);
 
     // Test basic query

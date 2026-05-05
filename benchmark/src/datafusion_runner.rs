@@ -15,8 +15,9 @@ pub struct DataFusionRunner {
 impl DataFusionRunner {
     pub async fn new(catalog_path: &Path) -> Result<Self> {
         // Create metadata provider
-        let provider =
-            DuckdbMetadataProvider::new(catalog_path.to_str().unwrap()).with_context(|| {
+        let provider = DuckdbMetadataProvider::new(catalog_path.to_str().unwrap())
+            .await
+            .with_context(|| {
                 format!("Failed to create metadata provider for {:?}", catalog_path)
             })?;
 
@@ -24,8 +25,9 @@ impl DataFusionRunner {
         let runtime = Arc::new(RuntimeEnv::default());
 
         // Create DuckLake catalog
-        let catalog =
-            DuckLakeCatalog::new(provider).context("Failed to create DuckLake catalog")?;
+        let catalog = DuckLakeCatalog::new(provider)
+            .await
+            .context("Failed to create DuckLake catalog")?;
 
         // Create session with default catalog and schema configured
         let ctx = SessionContext::new_with_config_rt(
